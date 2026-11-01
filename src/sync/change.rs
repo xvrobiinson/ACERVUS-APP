@@ -664,6 +664,19 @@ mod tests {
     }
 
     #[test]
+    fn queued_changes_keep_their_cloud_call_when_read_back() {
+        let mut s = linked();
+        for (change, mutation) in [
+            (Change::AssignClients { clients: vec![7], collector: None }, "clients:assign"),
+            (Change::ConfirmPending { pending: "pp1".into() }, "payments:confirm"),
+            (Change::RejectPending { pending: "pp1".into(), reason: "Twice".into() }, "payments:reject"),
+        ] {
+            s.save(&change, today()).unwrap();
+            assert_eq!(s.outbox_waiting().unwrap().last().unwrap().op.mutation, mutation);
+        }
+    }
+
+    #[test]
     fn a_pending_payment_prints_as_pending_without_balances() {
         let s = as_collector();
         let p = crate::services::receipt::PendingLines {

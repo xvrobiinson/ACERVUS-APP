@@ -1,6 +1,6 @@
 [package]
 name = "acervus"
-version = "0.12.0"
+version = "0.12.1"
 edition = "2024"
 description = "Acervus Finance by VZ Labs: a private lending portfolio manager for Windows"
 license = "Proprietary"

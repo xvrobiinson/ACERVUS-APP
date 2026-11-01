@@ -64,6 +64,9 @@ fn mutation_name(name: &str) -> &'static str {
     // to the same static string.
     const ALL: &[&str] = &[
         "clients:create",
+        "clients:assign",
+        "payments:confirm",
+        "payments:reject",
         "clients:update",
         "clients:setArchived",
         "clients:remove",
