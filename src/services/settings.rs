@@ -30,6 +30,8 @@ pub const CURRENCIES: &[Currency] = &[
     Currency { code: "COP", symbol: "COL$", name_en: "Colombian peso", name_es: "Peso colombiano" },
     Currency { code: "GBP", symbol: "£", name_en: "Pound sterling", name_es: "Libra esterlina" },
     Currency { code: "CAD", symbol: "CA$", name_en: "Canadian dollar", name_es: "Dólar canadiense" },
+    // Curaçao and Sint Maarten; replaced the Netherlands Antillean guilder (ANG).
+    Currency { code: "XCG", symbol: "Cg", name_en: "Caribbean guilder", name_es: "Florín del Caribe" },
 ];
 
 pub fn currency(code: &str) -> Currency {

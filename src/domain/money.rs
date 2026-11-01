@@ -196,11 +196,17 @@ impl MoneyFormat {
     }
 
     /// "$1,234.56"; negatives as "−$1,234.56".
+    /// The symbol before an amount. A symbol that ends in a letter ("Cg")
+    /// is kept apart from the digits by a no-break space: "Cg 1,250.00".
+    fn lead(&self) -> String {
+        if self.symbol.chars().last().is_some_and(char::is_alphabetic) { format!("{}\u{a0}", self.symbol) } else { self.symbol.clone() }
+    }
+
     pub fn format(&self, cents: Cents) -> String {
         let (_, dec) = self.style.separators();
         let neg = cents < 0;
         let abs = cents.unsigned_abs();
-        let s = format!("{}{}{}{dec}{:02}", if neg { "\u{2212}" } else { "" }, self.symbol, self.group(abs / 100), abs % 100);
+        let s = format!("{}{}{}{dec}{:02}", if neg { "\u{2212}" } else { "" }, self.lead(), self.group(abs / 100), abs % 100);
         s
     }
 
@@ -213,7 +219,7 @@ impl MoneyFormat {
     pub fn format_whole(&self, cents: Cents) -> String {
         let neg = cents < 0;
         let units = (cents.unsigned_abs() + 50) / 100;
-        format!("{}{}{}", if neg { "\u{2212}" } else { "" }, self.symbol, self.group(units))
+        format!("{}{}{}", if neg { "\u{2212}" } else { "" }, self.lead(), self.group(units))
     }
 
     /// Compact axis label: "$1.2k", "$3.4M".
@@ -229,7 +235,7 @@ impl MoneyFormat {
         } else {
             format!("{abs:.0}")
         };
-        format!("{sign}{}{}", self.symbol, body.replace('.', &dec.to_string()))
+        format!("{sign}{}{}", self.lead(), body.replace('.', &dec.to_string()))
     }
 
     /// Plain amount for an editable input ("1250.00"), no symbol or grouping.
@@ -297,6 +303,15 @@ mod tests {
         assert_eq!(f.format_whole(1_250_049), "$12,500");
         let eu = MoneyFormat { symbol: "€".into(), style: NumberStyle::DotComma };
         assert_eq!(eu.format(123_456_789), "€1.234.567,89");
+        // A symbol of letters (the Caribbean guilder) keeps a space before the digits.
+        let xcg = MoneyFormat { symbol: "Cg".into(), style: NumberStyle::DotComma };
+        assert_eq!(xcg.format(123_456_789), "Cg\u{a0}1.234.567,89");
+        assert_eq!(xcg.format(-1_000), "\u{2212}Cg\u{a0}10,00");
+        assert_eq!(xcg.format_signed(1_000), "+Cg\u{a0}10,00");
+        assert_eq!(xcg.format_whole(1_250_049), "Cg\u{a0}12.500");
+        assert_eq!(xcg.format_compact(1_250_000), "Cg\u{a0}12,5k");
+        // Typed back in with the symbol, it reads the same amount.
+        assert_eq!(parse_money("Cg 1,234.50"), Ok(123_450));
         assert_eq!(percent_label(1_234, 10_000), Some("12.3%".into()));
         assert_eq!(percent_label(1, 0), None);
     }

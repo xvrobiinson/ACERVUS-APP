@@ -300,6 +300,24 @@ fn receipts_print_only_the_parts_chosen() {
 }
 
 #[test]
+fn a_business_in_caribbean_guilders_lends_collects_and_prints_in_cg() {
+    let (mut s, _, lid) = open_loan();
+    let mut st = s.snapshot().unwrap().settings.clone();
+    st.currency_code = "XCG".into();
+    s.save_settings(&st).unwrap();
+    let pid = pay_open(&mut s, lid, 60_000, d(2026, 2, 1));
+    let snap = s.snapshot().unwrap();
+    assert_eq!(snap.settings.currency_code, "XCG", "kept after saving");
+    // Amounts are the same records in any currency: only the symbol changes.
+    let pos = snap.book_loan(lid).unwrap().position(d(2026, 2, 1));
+    let (r, html) = receipt(&s, pid);
+    assert_eq!(r.amount, 60_000);
+    assert!(html.contains("Cg&nbsp;600.00") || html.contains("Cg\u{a0}600.00"), "the payment in Cg");
+    assert!(!html.contains("RD$"), "no other symbol on the receipt");
+    assert!(snap.settings.money().format(pos.payoff()).starts_with("Cg\u{a0}"));
+}
+
+#[test]
 fn receipt_parts_survive_a_restart() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("data").join("portfolio.db");
