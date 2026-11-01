@@ -404,7 +404,13 @@ impl PaymentForm {
                         return;
                     }
                     let paid = app.settings().money().format(amount);
-                    let msg = if closed {
+                    let collector = app.role() == Some(crate::sync::wire::Role::Collector);
+                    let msg = if collector {
+                        tr!(
+                            "Collected {paid}. It counts once the office confirms it.",
+                            "Cobrado {paid}. Cuenta cuando la oficina lo confirme."
+                        )
+                    } else if closed {
                         tr!("Payment of {paid} recorded. The loan is paid off.", "Pago de {paid} registrado. El préstamo quedó saldado.")
                     } else {
                         tr!("Payment of {paid} recorded", "Pago de {paid} registrado")

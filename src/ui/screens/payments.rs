@@ -208,8 +208,10 @@ impl VzApp {
                 .into_any_element()
         };
 
+        let to_confirm = self.confirm_card(window, cx);
         v_flex()
             .child(header)
+            .children(to_confirm.map(|c| div().pb(px(space::L)).child(c)))
             .child(
                 div().pb(px(space::L)).child(
                     div()

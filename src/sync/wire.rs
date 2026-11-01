@@ -74,6 +74,36 @@ pub struct Snapshot {
     pub capital: Vec<Capital>,
     pub entries: Vec<Entry>,
     pub status_events: Vec<StatusEvent>,
+    /// Payments collectors recorded, waiting for an admin (and recently
+    /// decided ones). A collector gets only their own.
+    #[serde(default)]
+    pub pending: Vec<Pending>,
+    /// The team: names, and who can be given clients.
+    #[serde(default)]
+    pub people: Vec<Person>,
+}
+
+impl Snapshot {
+    /// Whether the business has any collector: without one, every client is
+    /// the admins' own and nothing about collectors is shown.
+    pub fn has_collectors(&self) -> bool {
+        self.people.iter().any(|p| p.active && p.role == Some(Role::Collector))
+    }
+
+    /// A person's name ("" when unknown).
+    pub fn name_of(&self, user_id: &str) -> &str {
+        self.people.iter().find(|p| p.user_id == user_id).map_or("", |p| p.name.as_str())
+    }
+
+    /// The payments still waiting for an admin.
+    pub fn waiting(&self) -> impl Iterator<Item = &Pending> {
+        self.pending.iter().filter(|p| p.status == "waiting")
+    }
+
+    /// Who collects from a client (by its record number here), if anyone.
+    pub fn collector_of(&self, client_no: i64) -> Option<&str> {
+        self.clients.iter().find(|c| c.record_no == client_no).and_then(|c| c.collector_id.as_deref())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -150,6 +180,72 @@ pub struct Client {
     pub has_photo: bool,
     pub created_at: i64,
     pub version: i64,
+    /// The collector (or admin) who collects from this client; none: nobody yet.
+    #[serde(default)]
+    pub collector_id: Option<String>,
+}
+
+/// A payment a collector recorded (`pendingPayments` in the cloud). It
+/// counts for nothing until an admin confirms it.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Pending {
+    #[serde(rename = "_id")]
+    pub id: String,
+    pub loan_id: String,
+    pub client_id: String,
+    /// Receipt number, kept by the payment once confirmed.
+    pub record_no: i64,
+    pub paid_on: Day,
+    pub amount: i64,
+    pub notes: String,
+    pub collected_by: String,
+    pub collector_name: String,
+    /// "waiting", "confirmed" or "rejected".
+    pub status: String,
+    pub reason: String,
+    pub created_at: i64,
+    #[serde(default)]
+    pub decided_at: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Person {
+    pub user_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub role: Option<Role>,
+    #[serde(default = "yes")]
+    pub active: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// A message in the bell (`messages:mine`); the words are put together
+/// here, in this PC's language.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Message {
+    #[serde(rename = "_id")]
+    pub id: String,
+    /// due_unassigned, assigned, unassigned, collected, confirmed, rejected.
+    pub kind: String,
+    pub client_names: Vec<String>,
+    pub from_name: String,
+    #[serde(default)]
+    pub amount: Option<i64>,
+    #[serde(default)]
+    pub due_on: Option<Day>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub pending_id: Option<String>,
+    pub created_at: i64,
+    #[serde(default)]
+    pub read_at: Option<i64>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -313,5 +409,31 @@ mod tests {
         assert_eq!(p.paid_on.0, chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap());
         assert_eq!(p.targets.unwrap()[0], Target { seq: 1, amount: 300000 });
         assert_eq!(p.target_seq, None);
+    }
+
+    #[test]
+    fn collectors_read_from_convex_json_and_older_clouds_still_read() {
+        let c: Client = serde_json::from_value(normalize(json!({
+            "_id": "c1", "recordNo": 3.0, "fullName": "María", "phone": "", "email": "", "idNumber": "", "address": "",
+            "notes": "", "archivedAt": null, "hasPhoto": false, "createdAt": 1.0, "version": 1.0, "collectorId": "user_ana"
+        })))
+        .unwrap();
+        assert_eq!(c.collector_id.as_deref(), Some("user_ana"));
+        let p: Pending = serde_json::from_value(normalize(json!({
+            "_id": "p1", "businessId": "b", "loanId": "l1", "clientId": "c1", "recordNo": 18.0, "paidOn": "2026-10-31",
+            "amount": 250000.0, "fee": 0.0, "notes": "", "mode": "auto", "collectedBy": "user_ana", "collectorName": "Ana",
+            "status": "waiting", "reason": "", "recordedOffline": false, "createdAt": 1.0
+        })))
+        .unwrap();
+        assert_eq!((p.record_no, p.amount, p.status.as_str(), p.decided_at), (18, 250000, "waiting", None));
+        // A person from a cloud that didn't send roles yet.
+        let who: Person = serde_json::from_value(json!({ "userId": "u", "name": "Ana", "email": "" })).unwrap();
+        assert_eq!((who.role, who.active), (None, true));
+        let m: Message = serde_json::from_value(normalize(json!({
+            "_id": "m1", "businessId": "b", "toUserId": "u", "kind": "collected", "clientNames": ["María"], "fromName": "Ana",
+            "amount": 250000.0, "pendingId": "p1", "createdAt": 5.0
+        })))
+        .unwrap();
+        assert_eq!((m.kind.as_str(), m.amount, m.read_at), ("collected", Some(250000), None));
     }
 }

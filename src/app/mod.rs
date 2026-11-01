@@ -139,6 +139,8 @@ pub struct VzApp {
     pub(crate) loan_sort: crate::ui::kit::Sort<crate::ui::screens::loans::LoanColumn>,
     pub(crate) loan_filter: LoanFilter,
     pub(crate) show_archived: bool,
+    /// The Clients list's filter by collector.
+    pub(crate) collector_filter: crate::ui::screens::collect::CollectorFilter,
     pub(crate) chart_hover: Option<usize>,
     pub(crate) analytics_hover: Option<usize>,
     pub(crate) load_error: Option<String>,
@@ -271,6 +273,7 @@ impl VzApp {
             loan_sort: Default::default(),
             loan_filter: LoanFilter::default(),
             show_archived: false,
+            collector_filter: Default::default(),
             chart_hover: None,
             analytics_hover: None,
             load_error,
@@ -304,6 +307,24 @@ impl VzApp {
                 "new-income" => app.open_entry_form(EntryKind::Income, None, window, cx),
                 "wording" => app.open_receipt_text_form(window, cx),
                 "sign-in" => app.open_sign_in(window, cx),
+                "payments" => app.navigate(Route::Payments, window, cx),
+                // The bell, once the cloud's messages have had time to arrive.
+                "messages" => cx
+                    .spawn_in(window, async move |this, cx| {
+                        cx.background_executor().timer(std::time::Duration::from_secs(6)).await;
+                        let _ = this.update_in(cx, |app, window, cx| app.open_messages(window, cx));
+                    })
+                    .detach(),
+                s if s.starts_with("loan-") => {
+                    if let Ok(id) = s[5..].parse() {
+                        app.navigate(Route::Loan(id), window, cx);
+                    }
+                }
+                s if s.starts_with("client-") => {
+                    if let Ok(id) = s[7..].parse() {
+                        app.navigate(Route::Client(id), window, cx);
+                    }
+                }
                 _ => {}
             });
         }
@@ -636,6 +657,31 @@ impl VzApp {
     /// shows the print dialog.
     pub fn open_receipt(&mut self, payment_id: i64, window: &mut Window, cx: &mut Context<Self>) {
         match self.store.write_receipt(payment_id) {
+            Ok(path) => self.open_path(path, false, window, cx),
+            Err(e) => {
+                let msg = tr!("Could not create the receipt: {e:#}", "No se pudo crear el recibo: {e:#}");
+                self.notify_error(msg, window, cx);
+            }
+        }
+    }
+
+    /// Opens the receipt of a collector's payment that waits for an admin
+    /// (its cloud id), stamped "Pending confirmation".
+    pub fn open_pending_receipt(&mut self, pending_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let lines = self.cloud_copy().and_then(|snap| {
+            let p = snap.pending.iter().find(|p| p.id == pending_id)?;
+            let loan_id = snap.loans.iter().find(|l| l.id == p.loan_id)?.record_no;
+            Some(crate::services::receipt::PendingLines {
+                loan_id,
+                number: p.record_no,
+                paid_on: p.paid_on.0,
+                amount: p.amount,
+                notes: p.notes.clone(),
+                collector: p.collector_name.clone(),
+            })
+        });
+        let Some(lines) = lines else { return };
+        match self.store.write_pending_receipt(&lines) {
             Ok(path) => self.open_path(path, false, window, cx),
             Err(e) => {
                 let msg = tr!("Could not create the receipt: {e:#}", "No se pudo crear el recibo: {e:#}");

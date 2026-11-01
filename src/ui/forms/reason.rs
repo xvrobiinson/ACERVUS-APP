@@ -23,6 +23,8 @@ pub enum ReasonKind {
     DeleteClient(i64),
     /// Loan id and installment number.
     WaiveFee(i64, u32),
+    /// A collector's payment waiting for confirmation, by its receipt number.
+    RejectPending(i64),
 }
 
 impl ReasonKind {
@@ -35,6 +37,7 @@ impl ReasonKind {
             ReasonKind::DeleteEntry(_) => t("Delete entry", "Eliminar movimiento"),
             ReasonKind::DeleteClient(_) => t("Delete client", "Eliminar cliente"),
             ReasonKind::WaiveFee(..) => t("Waive late fee", "Perdonar cargo por mora"),
+            ReasonKind::RejectPending(_) => t("Reject this payment?", "¿Rechazar este pago?"),
         }
     }
 
@@ -64,6 +67,10 @@ impl ReasonKind {
                 "The late fee no longer counts and the loan's payments are worked out again. It stays in the list, marked as waived, and can be restored.",
                 "El cargo por mora deja de contar y los pagos del préstamo se recalculan. Queda en la lista marcado como perdonado y se puede restaurar.",
             ),
+            ReasonKind::RejectPending(_) => t(
+                "It never counted, so nothing else changes. The collector sees the reason you give.",
+                "Nunca contó, así que nada más cambia. El cobrador ve el motivo que escribas.",
+            ),
         }
     }
 
@@ -71,6 +78,7 @@ impl ReasonKind {
         match self {
             ReasonKind::MarkDefaulted(_) => t("Mark as defaulted", "Marcar incobrable"),
             ReasonKind::WaiveFee(..) => t("Waive", "Perdonar"),
+            ReasonKind::RejectPending(_) => t("Reject", "Rechazar"),
             _ => t("Delete", "Eliminar"),
         }
     }
@@ -88,6 +96,7 @@ impl ReasonKind {
             ReasonKind::DeleteCapital(_) | ReasonKind::DeleteEntry(_) => t("Movement deleted", "Movimiento eliminado"),
             ReasonKind::DeleteClient(_) => t("Client deleted", "Cliente eliminado"),
             ReasonKind::WaiveFee(..) => t("Late fee waived", "Cargo por mora perdonado"),
+            ReasonKind::RejectPending(_) => t("Payment rejected. The collector was told why.", "Pago rechazado. El cobrador sabe por qué."),
         }
     }
 }
@@ -106,6 +115,9 @@ impl ReasonForm {
         let reason = cx.new(|cx| {
             InputState::new(window, cx).placeholder(match kind {
                 ReasonKind::MarkDefaulted(_) => t("Optional: what happened", "Opcional: qué pasó"),
+                ReasonKind::RejectPending(_) => {
+                    t("Required: e.g. recorded twice, never handed over", "Obligatorio: ej. registrado dos veces, no se entregó")
+                }
                 _ => t("Optional: e.g. entered twice, wrong client", "Opcional: ej. registrado dos veces, cliente equivocado"),
             })
         });
@@ -137,6 +149,16 @@ impl ReasonForm {
                 ReasonKind::DeleteEntry(id) => Change::DeleteEntry { id, reason },
                 ReasonKind::DeleteClient(id) => Change::DeleteClient { id, reason },
                 ReasonKind::WaiveFee(loan_id, seq) => Change::WaiveLateFee { loan_id, seq, waived: true, reason },
+                ReasonKind::RejectPending(number) => {
+                    if reason.trim().is_empty() {
+                        return Err(t("Say why, for the collector.", "Di por qué, para el cobrador.").to_string());
+                    }
+                    let Some(pending) = app.waiting_pending_id(number) else {
+                        return Err(t("Someone already confirmed or rejected this payment.", "Alguien ya confirmó o rechazó este pago.")
+                            .to_string());
+                    };
+                    Change::RejectPending { pending, reason }
+                }
             };
             match app.save(change, window, cx) {
                 Ok(_) => {

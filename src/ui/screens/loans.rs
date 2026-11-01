@@ -915,6 +915,11 @@ impl VzApp {
                 .children(tx_rows)
                 .into_any_element()
         };
-        Card::new().overflow_hidden().title(t("Payments", "Pagos")).child(body).into_any_element()
+        Card::new()
+            .overflow_hidden()
+            .title(t("Payments", "Pagos"))
+            .children(self.pending_on_loan(id, w == Width::Compact, cx))
+            .child(body)
+            .into_any_element()
     }
 }

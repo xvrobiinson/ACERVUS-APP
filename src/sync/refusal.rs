@@ -52,6 +52,7 @@ pub fn describe(e: &Value, s: &Settings) -> String {
             "Las cuotas no suman el préstamo. Revisa el plan de pagos.",
         ),
         "loan_closed" => t("This loan is closed", "Este préstamo está cerrado"),
+        "already_decided" => t("Someone already confirmed or rejected this payment.", "Alguien ya confirmó o rechazó este pago."),
         "archived_client" => t("This client is archived. Restore the client first.", "Este cliente está archivado. Restáuralo primero."),
         "client_has_loans" => t(
             "This client has loans. Delete the loans, or move them to another client, first.",

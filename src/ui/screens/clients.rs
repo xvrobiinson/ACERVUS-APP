@@ -109,12 +109,17 @@ impl VzApp {
         let money = self.settings().money();
         let query = self.client_search.read(cx).value().to_lowercase();
         let archived_count = self.snap.clients.iter().filter(|c| c.is_archived()).count();
+        // Who collects from each client, when the business has collectors.
+        let team = self.manages_collectors();
+        let show_collector = team && w >= Width::Medium;
+        let collector_view = self.cloud_copy().is_some_and(|s| s.me.role == crate::sync::wire::Role::Collector);
         let with_loans = self.snap.clients.iter().filter(|c| self.client_stats(c.id).active_loans > 0).count();
         let mut visible: Vec<(&Client, ClientStats)> = self
             .snap
             .clients
             .iter()
             .filter(|c| self.show_archived || !c.is_archived())
+            .filter(|c| !team || self.passes_collector_filter(c.id))
             .filter(|c| {
                 let opt = |v: &Option<String>| v.clone().unwrap_or_default();
                 lists::matches(&query, &[&c.full_name, &opt(&c.phone), &opt(&c.email), &opt(&c.id_number), &opt(&c.address), &c.notes])
@@ -170,6 +175,7 @@ impl VzApp {
                     .max_w(px(380.))
                     .child(Input::new(&self.client_search).prefix(icon(IconName::Search, p.faint, 14.)).cleanable(true)),
             )
+            .when(team, |d| d.child(div().flex_none().child(self.collector_filter_menu(cx))))
             .when(archived_count > 0, |d| {
                 d.child(
                     Button::new("toggle-archived")
@@ -222,6 +228,7 @@ impl VzApp {
                 let head =
                     table_header(&p)
                         .child(div().flex_1().min_w_0().child(header_cell("sort-name", t("Client", "Cliente"), ClientColumn::Name, cx)))
+                        .when(show_collector, |d| d.child(div().w(px(200.)).flex_none().child(th(&p, t("Collector", "Cobrador")))))
                         .when(show_count, |d| {
                             d.child(
                                 ncolumn(90.).flex().justify_end().child(
@@ -253,7 +260,13 @@ impl VzApp {
                         );
                 let rows = visible.iter().map(|(c, st)| {
                     let id = c.id;
-                    let contact = [c.phone.clone(), c.email.clone()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+                    let mut contact = [c.phone.clone(), c.email.clone()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+                    // A collector sees which of their clients nobody has been given yet.
+                    if collector_view && self.cloud_copy().is_some_and(|s| s.collector_of(id).is_none()) {
+                        let open = t("No collector yet", "Aún sin cobrador");
+                        contact = if contact.is_empty() { open.to_string() } else { format!("{open} · {contact}") };
+                    }
+                    let menu = show_collector.then(|| self.collector_menu(("cl-collector", id as u64), id, cx));
                     table_row(&p, ("client", id as u64), true)
                         .child(
                             h_flex().flex_1().min_w_0().gap(px(space::M)).child(avatar(&p, &c.full_name, c.id, 32.)).child(
@@ -273,6 +286,17 @@ impl VzApp {
                                     }))),
                             ),
                         )
+                        .when_some(menu, |d, menu| {
+                            // Picking a collector doesn't open the client.
+                            d.child(
+                                div()
+                                    .id(("cl-collector-cell", id as u64))
+                                    .w(px(200.))
+                                    .flex_none()
+                                    .on_click(|_, _, cx| cx.stop_propagation())
+                                    .child(menu),
+                            )
+                        })
                         .when(show_count, |d| d.child(ncolumn(90.).child(sel(st.active_loans.to_string()))))
                         .when(show_history, |d| d.child(ncolumn(140.).text_color(p.muted).child(sel(money.format(st.borrowed)))))
                         .child(ncolumn(140.).child(sel(money.format(st.outstanding))))
@@ -341,7 +365,16 @@ impl VzApp {
                         contact
                     }))),
             )
-            .child(h_flex().flex_none().gap(px(space::S)).children(self.client_actions(id, archived, &st, w, cx)));
+            .child(
+                h_flex()
+                    .flex_none()
+                    .gap(px(space::S))
+                    .when(self.manages_collectors(), |d| {
+                        d.child(div().typeset(text::CAPTION).text_color(p.muted).child(t("Collector", "Cobrador")))
+                            .child(self.collector_menu("client-collector", id, cx))
+                    })
+                    .children(self.client_actions(id, archived, &st, w, cx)),
+            );
 
         // Four figures: one row when wide, two by two below that.
         let per_row = if side_by_side { 4 } else { 2 };

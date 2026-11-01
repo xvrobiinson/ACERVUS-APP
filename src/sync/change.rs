@@ -32,6 +32,20 @@ pub enum Change {
         input: ClientInput,
         photo: PhotoChange,
     },
+    /// Gives clients (by their numbers here) to a collector or admin (their
+    /// cloud user id), or back to nobody. The cloud's copy shows the result.
+    AssignClients {
+        clients: Vec<i64>,
+        collector: Option<String>,
+    },
+    /// An admin confirms a collector's payment (its cloud id) reached them.
+    ConfirmPending {
+        pending: String,
+    },
+    RejectPending {
+        pending: String,
+        reason: String,
+    },
     EditClient {
         id: i64,
         input: ClientInput,
@@ -180,6 +194,12 @@ impl Change {
         )
     }
 
+    /// A new payment: from a collector it waits for an admin's confirmation
+    /// and counts for nothing until then.
+    pub fn waits_for_admin(&self) -> bool {
+        matches!(self, Change::NewPayment { .. })
+    }
+
     /// What the change needs from the person's role: the same kinds as
     /// `works_offline`, except that an ID photo is for admins only.
     pub fn need(&self) -> Need {
@@ -195,6 +215,8 @@ impl Change {
         use Change::*;
         Ok(match self {
             NewClient { input, photo } => Some(s.save_client(None, input, photo)?),
+            // Cloud-only: the next copy from the cloud shows them.
+            AssignClients { .. } | ConfirmPending { .. } | RejectPending { .. } => None,
             EditClient { id, input, photo } => s.save_client(Some(*id), input, photo).map(|_| None)?,
             ArchiveClient { id, archived } => s.set_client_archived(*id, *archived).map(|_| None)?,
             DeleteClient { id, reason } => s.delete_client(*id, reason).map(|_| None)?,
@@ -249,6 +271,12 @@ impl Change {
         let id = |entity, local: i64| remote_id(conn, entity, local, 0);
         let (mutation, args) = match self {
             NewClient { input, photo } => ("clients:create", with_photo(client(input), photo)),
+            AssignClients { clients, collector } => {
+                let ids = clients.iter().map(|c| id(Entity::Client, *c).map(|(r, _)| r)).collect::<Result<Vec<_>>>()?;
+                ("clients:assign", json!({ "clientIds": ids, "collectorId": collector }))
+            }
+            ConfirmPending { pending } => ("payments:confirm", json!({ "pendingId": pending })),
+            RejectPending { pending, reason } => ("payments:reject", json!({ "pendingId": pending, "reason": reason })),
             EditClient { id: local, input, photo } => {
                 let (cid, version) = id(Entity::Client, *local)?;
                 let mut a = with_photo(client(input), photo);
@@ -581,6 +609,76 @@ mod tests {
         assert!(Role::Collector.allows(Need::Record) && !Role::Collector.allows(Need::Manage));
         assert!(!Role::Viewer.allows(Need::Record));
         assert!(Role::Admin.allows(Need::Manage));
+    }
+
+    /// The test book as a collector sees it, with one of their payments
+    /// waiting for an admin.
+    fn as_collector() -> Store {
+        let mut b = book();
+        b["me"]["role"] = json!("collector");
+        b["clients"][0]["collectorId"] = json!("u1");
+        b["pending"] = json!([{
+            "_id": "pp1", "loanId": "l3", "clientId": "c7", "recordNo": 20.0, "paidOn": "2026-03-09", "amount": 20000.0,
+            "fee": 0.0, "notes": "", "mode": "auto", "collectedBy": "u1", "collectorName": "Ana", "status": "waiting",
+            "reason": "", "recordedOffline": false, "createdAt": 1.0
+        }]);
+        let mut s = Store::in_memory();
+        s.apply_cloud(&snap(b)).unwrap();
+        s
+    }
+
+    #[test]
+    fn a_collectors_payment_is_sent_but_counts_for_nothing_here() {
+        let mut s = as_collector();
+        let (id, q) = s.save(&payment(20000), today()).unwrap();
+        assert_eq!(id, None, "nothing saved in these books");
+        assert_eq!(payments(&s), 1, "only the payment the cloud has");
+        assert_eq!(q.unwrap().op.mutation, "payments:record");
+        // A new copy from the cloud doesn't bring it back while it waits.
+        let mut b = book();
+        b["me"]["role"] = json!("collector");
+        s.apply_cloud(&snap(b)).unwrap();
+        assert_eq!(payments(&s), 1);
+    }
+
+    #[test]
+    fn assigning_confirming_and_rejecting_go_to_the_cloud_only() {
+        let mut s = linked();
+        let before = payments(&s);
+        let assign = Change::AssignClients { clients: vec![7, 9], collector: Some("u2".into()) };
+        let (_, q) = s.save(&assign, today()).unwrap();
+        let q = q.unwrap();
+        assert_eq!(q.op.mutation, "clients:assign");
+        assert_eq!((&q.op.args["clientIds"], &q.op.args["collectorId"]), (&json!(["c7", "c9"]), &json!("u2")));
+        let nobody = Change::AssignClients { clients: vec![7], collector: None };
+        assert_eq!(s.save(&nobody, today()).unwrap().1.unwrap().op.args["collectorId"], json!(null));
+        let (_, q) = s.save(&Change::ConfirmPending { pending: "pp1".into() }, today()).unwrap();
+        assert_eq!((q.as_ref().unwrap().op.mutation, &q.unwrap().op.args["pendingId"]), ("payments:confirm", &json!("pp1")));
+        let (_, q) = s.save(&Change::RejectPending { pending: "pp1".into(), reason: "Twice".into() }, today()).unwrap();
+        assert_eq!((q.as_ref().unwrap().op.mutation, &q.unwrap().op.args["reason"]), ("payments:reject", &json!("Twice")));
+        assert_eq!(payments(&s), before, "the next copy from the cloud shows the result");
+        for c in [assign, Change::ConfirmPending { pending: "x".into() }] {
+            assert_eq!(c.need(), Need::Manage);
+            assert!(!c.works_offline());
+        }
+    }
+
+    #[test]
+    fn a_pending_payment_prints_as_pending_without_balances() {
+        let s = as_collector();
+        let p = crate::services::receipt::PendingLines {
+            loan_id: 3,
+            number: 20,
+            paid_on: NaiveDate::from_ymd_opt(2026, 3, 9).unwrap(),
+            amount: 20000,
+            notes: String::new(),
+            collector: "Ana".into(),
+        };
+        let html = crate::services::receipt::render_pending(&p, &s.snapshot().unwrap()).unwrap();
+        assert!(html.contains("Pendiente de confirmación") || html.contains("Pending confirmation"));
+        assert!(html.contains("000020"));
+        assert!(html.contains("Ana"));
+        assert!(!html.contains("Saldo después") && !html.contains("Balance after"), "no balances while it waits");
     }
 
     #[test]

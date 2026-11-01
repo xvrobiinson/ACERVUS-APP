@@ -1069,6 +1069,90 @@ fn contact_rows(c: &CompanyLines) -> usize {
     usize::from(c.address.is_some() || c.phone.is_some())
 }
 
+/// A payment a collector recorded that waits for an admin: what the client
+/// is handed meanwhile.
+pub struct PendingLines {
+    pub loan_id: i64,
+    /// Receipt number; the confirmed payment keeps it.
+    pub number: i64,
+    pub paid_on: NaiveDate,
+    pub amount: Cents,
+    pub notes: String,
+    pub collector: String,
+}
+
+/// The receipt for a payment waiting for confirmation: the amount and date,
+/// stamped as pending, without balances (it doesn't count yet; the
+/// confirmed receipt, with the same number, shows them).
+pub fn render_pending(p: &PendingLines, snap: &Snapshot) -> Option<String> {
+    let loan = snap.loan(p.loan_id)?;
+    let client = snap.client(loan.client_id)?;
+    let money = snap.settings.money();
+    let ds = snap.settings.date_style;
+    let show = snap.settings.receipt_show;
+    let company = snap.settings.receipt_company_lines();
+    let lender = company_tags(snap.settings.receipt_title(), &company).company;
+    let number = format!("{:06}", p.number);
+    let collector = &p.collector;
+    let paid = [
+        row(t("Amount received", "Monto recibido"), esc(&money.format(p.amount)), "total"),
+        row(t("Received by", "Recibido por"), esc(&tr!("{collector}, collector", "{collector}, cobrador")), ""),
+    ]
+    .join("");
+    let notes = if p.notes.trim().is_empty() {
+        String::new()
+    } else {
+        format!("<p class=\"muted\">{} {}</p>", esc(t("Note:", "Nota:")), esc(&p.notes))
+    };
+    let title = tr!("Receipt {number} (pending)", "Recibo {number} (pendiente)");
+    let css = r#"
+  .stamp { display:inline-block; margin:8pt 0 0; padding:3pt 8pt; border:1pt solid var(--warn); color:var(--warn); background:var(--warn-bg); border-radius:3pt; font-weight:700; font-size:8.5pt; letter-spacing:0.06em; text-transform:uppercase; }
+  .signs { display:grid; grid-template-columns:1fr 1fr; gap:36pt; margin-top:40pt; color:var(--muted); font-size:8.5pt; text-align:center; }
+  .signs span { border-top:0.5pt solid var(--muted); padding-top:4pt; }
+"#;
+    let body = format!(
+        r#"{header}
+<p class="stamp">{stamp}</p>
+<div class="cols">{client}{loan}</div>
+<div class="cols"><div class="block"><p class="label">{paid_l}</p><table class="kv">{paid}</table></div></div>
+<p class="note">{why}</p>
+{notes}
+<div class="signs"><span>{client_l}</span><span>{collector_l}</span></div>
+<div class="end"><span>{lender}</span><span>{reference}</span></div>"#,
+        header =
+            header(snap, &company, t("Payment receipt", "Recibo de pago"), &number, t("Date paid", "Fecha de pago"), &ds.format(p.paid_on)),
+        stamp = esc(t("Pending confirmation", "Pendiente de confirmación")),
+        client = client_block(&ClientLines::new(client, snap.settings.receipt_client)),
+        loan = loan_block(
+            loan.id,
+            loan.terms.method,
+            &loan.terms.rate_line(),
+            esc(&money.format(loan.terms.principal)),
+            esc(&ds.format(loan.terms.start_date)),
+            show
+        ),
+        paid_l = esc(t("This payment", "Este pago")),
+        why = esc(&tr!(
+            "{lender} applies this payment to the loan once it is confirmed, counted from the date above. The new balance is on the confirmed receipt, with the same number.",
+            "{lender} aplica este pago al préstamo cuando lo confirme, contado desde la fecha de arriba. El nuevo saldo aparece en el recibo confirmado, con el mismo número."
+        )),
+        client_l = esc(t("Client", "Cliente")),
+        collector_l = esc(t("Collector", "Cobrador")),
+        lender = esc(&lender),
+        reference = {
+            let receipt = format!("{} {number}", esc(t("Receipt", "Recibo")));
+            if show.loan_number { format!("{} #{} · {receipt}", esc(t("Loan", "Préstamo")), loan.id) } else { receipt }
+        },
+    );
+    Some(page(&title, css, &body))
+}
+
+/// Writes the receipt for a payment waiting for confirmation.
+pub fn write_pending(snap: &Snapshot, p: &PendingLines, dir: &Path) -> Result<PathBuf> {
+    let html = render_pending(p, snap).ok_or_else(|| anyhow!("loan {} not found", p.loan_id))?;
+    save(dir, &format!("receipt-{:06}-pending.html", p.number), &html)
+}
+
 /// Writes the receipt for `payment_id` into `dir` and returns its path.
 pub fn write(snap: &Snapshot, payment_id: i64, dir: &Path) -> Result<PathBuf> {
     let d = data(snap, payment_id).ok_or_else(|| anyhow!("payment {payment_id} not found"))?;

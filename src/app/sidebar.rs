@@ -151,6 +151,19 @@ impl VzApp {
         let items = nav();
         // Analytics shows the business's totals: admins only.
         let analytics = self.can(crate::sync::wire::Need::Manage);
+        // The bell: messages in the business this PC follows.
+        let unread = self.messages().iter().filter(|m| m.read_at.is_none()).count();
+        let bell = self.is_linked().then(|| {
+            NavItem::new(
+                "messages",
+                IconName::Bell,
+                t("Messages", "Mensajes"),
+                t("Messages", "Mensajes"),
+                cx.listener(|this, _, w, cx| this.open_messages(w, cx)),
+            )
+            .collapsed(collapsed)
+            .badge((unread > 0).then(|| pill(&p, unread.to_string(), Tone::Accent).h(px(20.)).px(px(6.))))
+        });
         let nav = items.iter().filter(|(route, ..)| *route != Route::Analytics || analytics).map(|(route, icon_name, label, keys)| {
             let route = *route;
             let badge = (route == Route::Loans && overdue > 0).then(|| pill(&p, overdue.to_string(), Tone::Negative).h(px(20.)).px(px(6.)));
@@ -233,6 +246,7 @@ impl VzApp {
                             .collapsed(true),
                         )
                     })
+                    .children(bell)
                     .child(
                         NavItem::new(
                             "backup",

@@ -90,6 +90,7 @@ impl VzApp {
         v_flex()
             .gap(gap)
             .child(page_header(&p, greeting(), Some(self.finding(&p, &s)), self.header_actions(w, cx)).pb_0())
+            .children(self.pending_banner(&p, cx))
             .children(self.render_setup(&p, w, cx))
             .child(self.kpi_cards(&p, &s, w, cx))
             // The business's totals are for admins; collectors see their work.

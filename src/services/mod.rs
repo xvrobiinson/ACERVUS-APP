@@ -321,11 +321,18 @@ impl Store {
     /// returned for sending. A change naming a record the cloud doesn't have
     /// yet is refused before anything is saved.
     pub fn save(&mut self, change: &CloudChange, today: NaiveDate) -> Result<(Saved, Option<Queued>)> {
-        let op = match self.cloud_link()? {
+        let link = self.cloud_link()?;
+        let op = match &link {
             Some(_) => Some(change.op(&self.conn)?),
             None => None,
         };
-        let saved = change.run(self, today)?;
+        // A collector's payment counts once an admin confirms it, so it isn't
+        // added to these books meanwhile (the cloud's copy lists it as pending).
+        let saved = if link.is_some_and(|l| l.role == crate::sync::wire::Role::Collector) && change.waits_for_admin() {
+            None
+        } else {
+            change.run(self, today)?
+        };
         let queued = op.map(|op| outbox::push(&self.conn, op)).transpose()?;
         Ok((saved, queued))
     }
@@ -335,7 +342,11 @@ impl Store {
     pub fn apply_cloud(&mut self, snap: &crate::sync::wire::Snapshot) -> Result<()> {
         crate::sync::replica::apply(&mut self.conn, snap)?;
         let today = NaiveDate::parse_from_str(&snap.today, "%Y-%m-%d")?;
+        let collector = snap.me.role == crate::sync::wire::Role::Collector;
         for change in outbox::replayable(&self.conn)? {
+            if collector && change.waits_for_admin() {
+                continue;
+            }
             if let Err(e) = change.run(self, today) {
                 log::info!("waiting change no longer fits the books: {e:#}");
             }
@@ -637,6 +648,12 @@ impl Store {
     pub fn write_receipt(&self, payment_id: i64) -> Result<PathBuf> {
         let snap = self.snapshot()?;
         receipt::write(&snap, payment_id, &self.receipts_dir())
+    }
+
+    /// Writes the receipt for a collector's payment that waits for an admin.
+    pub fn write_pending_receipt(&self, p: &receipt::PendingLines) -> Result<PathBuf> {
+        let snap = self.snapshot()?;
+        receipt::write_pending(&snap, p, &self.receipts_dir())
     }
 
     /// Writes the printable receipt for a loan and returns its path.

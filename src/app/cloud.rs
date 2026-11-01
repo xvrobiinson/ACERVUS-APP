@@ -119,6 +119,8 @@ pub(crate) struct Cloud {
     pub(crate) update_required: Option<String>,
     /// Receipts and pages waiting for the cloud's number.
     waiting: Vec<Waiting>,
+    /// The bell: this person's messages in the linked business.
+    pub(crate) messages: Vec<crate::sync::wire::Message>,
     /// Backups to Google Drive.
     pub(crate) drive: super::drive::Drive,
     _events: Task<()>,
@@ -176,12 +178,34 @@ impl VzApp {
             last_op: None,
             update_required: None,
             waiting: Vec::new(),
+            messages: Vec::new(),
             drive: Default::default(),
             _events: events,
         });
         if let Some(id) = linked {
             self.link_business(&id, window, cx);
         }
+    }
+
+    /// The last copy of the linked business from the cloud (collectors, the
+    /// payments waiting for an admin), once it has arrived.
+    pub(crate) fn cloud_copy(&self) -> Option<&Snapshot> {
+        self.cloud.as_ref().filter(|c| c.linked.is_some())?.last.as_deref()
+    }
+
+    /// The bell's messages, newest first.
+    pub(crate) fn messages(&self) -> &[crate::sync::wire::Message] {
+        self.cloud.as_ref().filter(|c| c.linked.is_some()).map_or(&[], |c| c.messages.as_slice())
+    }
+
+    /// Marks the bell's messages as read (in the cloud too).
+    pub(crate) fn read_messages(&mut self) {
+        let Some(c) = self.cloud.as_mut() else { return };
+        let Some(id) = c.linked.clone() else { return };
+        if c.messages.iter().all(|m| m.read_at.is_some()) {
+            return;
+        }
+        drop(c.worker.call("messages:markRead", serde_json::json!({ "businessId": id })));
     }
 
     /// True when this PC follows a business in the cloud.
@@ -437,6 +461,7 @@ impl VzApp {
         if let Some(c) = &mut self.cloud {
             c.linked = Some(business_id.to_string());
             c.last = None;
+            c.messages.clear();
             c.worker.open(business_id);
         }
         self.pump(window, cx);
@@ -501,6 +526,7 @@ impl VzApp {
         if let Some(c) = &mut self.cloud {
             c.linked = None;
             c.last = None;
+            c.messages.clear();
         }
         self.swap_store(local, window, cx);
     }
@@ -679,6 +705,7 @@ impl VzApp {
                     }
                 }
             }
+            Event::Messages(list) => c.messages = list,
             Event::Downloaded { file, bytes } => {
                 if c.linked.is_some() {
                     match self.store.save_download(&file, &bytes) {
@@ -708,7 +735,16 @@ impl VzApp {
         self.reload(cx);
         let Some(c) = &mut self.cloud else { return };
         let mut ready = Vec::new();
+        let mut pending = Vec::new();
         for w in std::mem::take(&mut c.waiting) {
+            // A collector's payment: its receipt says it waits for the office.
+            if matches!(w.then, Then::PaymentReceipt)
+                && let Some(r) = w.remote.as_deref()
+                && snap.pending.iter().any(|p| p.id == r)
+            {
+                pending.push(r.to_string());
+                continue;
+            }
             let local = w.remote.as_deref().zip(w.then.record()).and_then(|(r, e)| self.store.cloud_local_id(e, r).ok().flatten());
             match local {
                 Some(id) => ready.push((w.then, id)),
@@ -717,6 +753,9 @@ impl VzApp {
         }
         for (then, id) in ready {
             self.then(then, id, window, cx);
+        }
+        for id in pending {
+            self.open_pending_receipt(&id, window, cx);
         }
     }
 
@@ -755,7 +794,8 @@ impl VzApp {
                                 cx,
                             );
                         }
-                        let remote = ["paymentId", "loanId", "clientId"]
+                        // A collector's payment comes back as a pending one.
+                        let remote = ["paymentId", "pendingId", "loanId", "clientId"]
                             .iter()
                             .find_map(|k| result[*k].as_str())
                             .or(result.as_str())
