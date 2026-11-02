@@ -365,7 +365,8 @@ impl VzApp {
         let facts = self.settings_facts().clone();
         let backups = facts.backups.clone();
 
-        let lang_opts = [(Lang::En, Lang::En.label()), (Lang::Es, Lang::Es.label())];
+        let lang_opts =
+            [(Lang::En, Lang::En.label()), (Lang::Es, Lang::Es.label()), (Lang::Pap, Lang::Pap.label()), (Lang::Nl, Lang::Nl.label())];
         let number_opts: Vec<(NumberStyle, &str)> =
             [NumberStyle::CommaDot, NumberStyle::DotComma, NumberStyle::SpaceComma].iter().map(|n| (*n, n.label())).collect();
         let date_labels: Vec<(DateStyle, String)> = DateStyle::ALL.iter().map(|d| (*d, d.format(today))).collect();

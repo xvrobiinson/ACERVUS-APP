@@ -60,7 +60,9 @@ the same springs. Searching and sorting rules live in `ui::lists`.
   tables and columns are right-aligned. Money is never truncated.
 - Layout: branch on `theme::Width` (`Compact`/`Medium`/`Wide`/`Ultra`) from
   `VzApp::content_width`. The content column uses the full window width.
-- Text is bilingual: every string goes through `t(...)` / `tr!(...)`.
+- Text: every string goes through `t(...)` / `tr!(...)` with English and Spanish.
+  Papiamentu and Dutch (Beta) come from `src/translations.json`, keyed by the
+  English text; a new string needs its entry there or `cargo test` fails.
 
 ## Checks before handing back
 

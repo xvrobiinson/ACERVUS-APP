@@ -68,7 +68,7 @@ impl DateStyle {
         match self {
             DateStyle::Medium => match lang {
                 Lang::En => format!("{} {}, {}", short_month_in(d.month(), lang), d.day(), d.year()),
-                Lang::Es => format!("{} {} {}", d.day(), short_month_in(d.month(), lang), d.year()),
+                _ => format!("{} {} {}", d.day(), short_month_in(d.month(), lang), d.year()),
             },
             DateStyle::Iso => d.format("%Y-%m-%d").to_string(),
             DateStyle::DayMonthYear => d.format("%d/%m/%Y").to_string(),
@@ -86,7 +86,7 @@ impl DateStyle {
         match self {
             DateStyle::Medium if d.year() == today.year() => match lang {
                 Lang::En => format!("{} {}", short_month_in(d.month(), lang), d.day()),
-                Lang::Es => format!("{} {}", d.day(), short_month_in(d.month(), lang)),
+                _ => format!("{} {}", d.day(), short_month_in(d.month(), lang)),
             },
             _ => self.format_in(d, lang),
         }
@@ -100,6 +100,8 @@ fn short_month_in(m: u32, lang: Lang) -> String {
     match lang {
         Lang::En => EN[i].to_string(),
         Lang::Es => ES[i].to_string(),
+        Lang::Pap => ["yan", "feb", "mar", "apr", "mei", "yün", "yül", "oug", "sèp", "òkt", "nov", "des"][i].to_string(),
+        Lang::Nl => ["jan", "feb", "mrt", "apr", "mei", "jun", "jul", "aug", "sep", "okt", "nov", "dec"][i].to_string(),
     }
 }
 
@@ -124,15 +126,16 @@ pub fn short_month(d: NaiveDate) -> String {
 /// mm/dd/yyyy in English.
 pub fn input_format(lang: Lang) -> &'static str {
     match lang {
-        Lang::Es => "%d/%m/%Y",
         Lang::En => "%m/%d/%Y",
+        _ => "%d/%m/%Y",
     }
 }
 
 pub fn input_placeholder(lang: Lang) -> &'static str {
     match lang {
-        Lang::Es => "dd/mm/aaaa",
         Lang::En => "mm/dd/yyyy",
+        Lang::Es | Lang::Pap => "dd/mm/aaaa",
+        Lang::Nl => "dd/mm/jjjj",
     }
 }
 
@@ -152,8 +155,8 @@ pub fn parse_input(s: &str, lang: Lang) -> Option<NaiveDate> {
     }
     let nums: Vec<u32> = parts.iter().map(|p| p.parse().ok()).collect::<Option<_>>()?;
     let (day, month) = match lang {
-        Lang::Es => (nums[0], nums[1]),
         Lang::En => (nums[1], nums[0]),
+        _ => (nums[0], nums[1]),
     };
     let year = if nums[2] < 100 { 2000 + nums[2] as i32 } else { nums[2] as i32 };
     NaiveDate::from_ymd_opt(year, month, day)
