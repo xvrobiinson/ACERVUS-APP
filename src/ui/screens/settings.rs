@@ -44,6 +44,7 @@ const PANEL_MAX: f32 = 760.0;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SettingsPanel {
     Receipts,
+    Team,
     Appearance,
     Formats,
     Lending,
@@ -57,6 +58,7 @@ impl SettingsPanel {
     fn title(self) -> &'static str {
         match self {
             Self::Receipts => t("Receipts", "Recibos"),
+            Self::Team => t("Team", "Equipo"),
             Self::Appearance => t("Appearance", "Apariencia"),
             Self::Formats => t("Regional formats", "Formatos regionales"),
             Self::Lending => t("Lending defaults", "Valores de préstamos"),
@@ -70,6 +72,7 @@ impl SettingsPanel {
     fn summary(self) -> &'static str {
         match self {
             Self::Receipts => t("What prints, when to print, wording", "Qué se imprime, cuándo y con qué texto"),
+            Self::Team => t("People, roles, invitations, what collectors see", "Personas, roles, invitaciones, qué ven los cobradores"),
             Self::Appearance => t("Light or dark, dashboard chart", "Claro u oscuro, gráfico del panel"),
             Self::Formats => t("Currency, numbers and dates", "Moneda, números y fechas"),
             Self::Lending => t("Rate, payments and late fees for new loans", "Tasa, pagos y mora para préstamos nuevos"),
@@ -83,6 +86,7 @@ impl SettingsPanel {
     fn icon(self) -> IconName {
         match self {
             Self::Receipts => IconName::ReceiptText,
+            Self::Team => IconName::Users,
             Self::Appearance => IconName::Palette,
             Self::Formats => IconName::Globe,
             Self::Lending => IconName::HandCoins,
@@ -98,7 +102,7 @@ impl SettingsPanel {
         match self {
             Self::Receipts | Self::Lending => (p.accent_text, p.accent_tint),
             Self::Appearance | Self::Data => (p.info, p.info_tint),
-            Self::Formats | Self::Privacy => (p.positive, p.positive_tint),
+            Self::Formats | Self::Privacy | Self::Team => (p.positive, p.positive_tint),
             Self::Keyboard | Self::About => (p.muted, p.neutral_tint),
         }
     }
@@ -987,6 +991,7 @@ impl VzApp {
         // room; everything else behind a row that opens it in a popup.
         let panels: Vec<SettingsPanel> = [
             SettingsPanel::Receipts,
+            SettingsPanel::Team,
             SettingsPanel::Appearance,
             SettingsPanel::Formats,
             SettingsPanel::Lending,
@@ -998,9 +1003,20 @@ impl VzApp {
         .into_iter()
         // Formats and lending defaults are the business's: admins only.
         .filter(|x| manage || !matches!(x, SettingsPanel::Formats | SettingsPanel::Lending))
+        // The team lives in the cloud: only for a business this PC follows.
+        .filter(|x| *x != SettingsPanel::Team || (manage && self.is_linked()))
         .collect();
+        if self.settings_panel != Some(SettingsPanel::Team) {
+            self.team_view = None;
+        } else if self.team_view.is_none() {
+            let app = cx.entity().downgrade();
+            let (business, me) = self.cloud_copy().map_or((None, String::new()), |s| (Some(s.business.id.clone()), s.me.user_id.clone()));
+            self.team_view = Some(cx.new(|cx| crate::ui::screens::team::TeamView::new(app, business, me, window, cx)));
+        }
+        let team = self.team_view.clone();
         let popup = self.settings_panel.filter(|x| panels.contains(x)).map(|which| {
             let body = match which {
+                SettingsPanel::Team => team.clone().map_or_else(|| div().into_any_element(), IntoElement::into_any_element),
                 SettingsPanel::Receipts => receipts.into_any_element(),
                 SettingsPanel::Appearance => dashboard.into_any_element(),
                 SettingsPanel::Formats => general.into_any_element(),

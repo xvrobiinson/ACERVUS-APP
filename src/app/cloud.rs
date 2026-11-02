@@ -473,6 +473,16 @@ impl VzApp {
         self.cloud.as_ref().map(|c| c.worker.call(mutation, args))
     }
 
+    /// Reads a query once; None when not signed in.
+    pub(crate) fn cloud_query(&self, name: &'static str, args: serde_json::Value) -> Option<oneshot::Receiver<Outcome>> {
+        self.cloud.as_ref().map(|c| c.worker.query(name, args))
+    }
+
+    /// Runs an action; None when not signed in.
+    pub(crate) fn cloud_action(&self, name: &'static str, args: serde_json::Value) -> Option<oneshot::Receiver<Outcome>> {
+        self.cloud.as_ref().map(|c| c.worker.action(name, args))
+    }
+
     /// What the person needs to know when a call about businesses failed.
     pub(crate) fn call_failed(&self, outcome: &Outcome) -> String {
         match outcome {

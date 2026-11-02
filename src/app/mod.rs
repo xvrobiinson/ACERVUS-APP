@@ -124,6 +124,8 @@ pub struct VzApp {
     pub(crate) settings_facts: Option<crate::ui::screens::settings::SettingsFacts>,
     /// The Settings category open in a popup, if any.
     pub(crate) settings_panel: Option<crate::ui::screens::settings::SettingsPanel>,
+    /// Settings › Team while it is open.
+    pub(crate) team_view: Option<Entity<crate::ui::screens::team::TeamView>>,
     pub(crate) route: Route,
     history: Vec<Route>,
     pub(crate) focus: FocusHandle,
@@ -274,6 +276,7 @@ impl VzApp {
             loan_filter: LoanFilter::default(),
             show_archived: false,
             collector_filter: Default::default(),
+            team_view: None,
             chart_hover: None,
             analytics_hover: None,
             load_error,
@@ -308,6 +311,10 @@ impl VzApp {
                 "wording" => app.open_receipt_text_form(window, cx),
                 "sign-in" => app.open_sign_in(window, cx),
                 "payments" => app.navigate(Route::Payments, window, cx),
+                "settings-team" => {
+                    app.navigate(Route::Settings, window, cx);
+                    app.settings_panel = Some(crate::ui::screens::settings::SettingsPanel::Team);
+                }
                 // The bell, once the cloud's messages have had time to arrive.
                 "messages" => cx
                     .spawn_in(window, async move |this, cx| {

@@ -1,0 +1,406 @@
+//! Settings › Team: an admin's view of who works in the business. Invite
+//! people, change their role, remove them, and choose what each collector
+//! sees of the clients assigned to them. It talks to the cloud directly
+//! (these aren't changes to the books), so it needs a connection.
+
+use futures::channel::oneshot;
+use gpui_kit::assets::IconName;
+use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::switch::Switch;
+use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::*;
+use serde_json::{Value, json};
+
+use crate::app::VzApp;
+use crate::i18n::t;
+use crate::sync::outbox::Outcome;
+use crate::tr;
+use crate::ui::components::{Tone, pill, sel};
+use crate::ui::kit::{Button, Dropdown, DropdownItem};
+use crate::ui::theme::{Palette, Typeset as _, palette, space, text};
+
+/// A person in the business (`businesses:members`).
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Member {
+    #[serde(rename = "_id")]
+    pub id: String,
+    pub user_id: String,
+    pub name: String,
+    pub email: String,
+    pub role: String,
+    pub active: bool,
+    #[serde(default)]
+    pub collector_view: Option<serde_json::Map<String, Value>>,
+}
+
+/// An invitation not used yet (`invites:list`).
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Invite {
+    #[serde(rename = "_id")]
+    pub id: String,
+    pub email: String,
+    pub role: String,
+}
+
+/// A collector's switches: the cloud's key and its label.
+fn view_parts() -> [(&'static str, &'static str); 7] {
+    [
+        ("amountLent", t("Amount lent", "Monto prestado")),
+        ("rate", t("Interest rate", "Tasa de interés")),
+        ("contact", t("Client phone and address", "Teléfono y dirección del cliente")),
+        ("idNumber", t("Client ID number", "Cédula del cliente")),
+        ("history", t("Payment history", "Historial de pagos")),
+        ("lateFees", t("Late fees", "Mora")),
+        ("notes", t("Client notes", "Notas del cliente")),
+    ]
+}
+
+/// A switch's state: a missing one is on.
+fn view_on(m: &Member, key: &str) -> bool {
+    m.collector_view.as_ref().and_then(|v| v.get(key)).and_then(Value::as_bool).unwrap_or(true)
+}
+
+/// The whole set of switches with one changed, as the cloud takes it.
+fn view_with(m: &Member, key: &str, on: bool) -> Value {
+    let all: serde_json::Map<String, Value> =
+        view_parts().iter().map(|(k, _)| (k.to_string(), Value::Bool(if *k == key { on } else { view_on(m, k) }))).collect();
+    Value::Object(all)
+}
+
+fn role_label(role: &str) -> &'static str {
+    match role {
+        "admin" => t("Admin", "Administrador"),
+        "collector" => t("Collector", "Cobrador"),
+        _ => t("Viewer", "Solo lectura"),
+    }
+}
+
+const ROLES: [&str; 3] = ["admin", "collector", "viewer"];
+
+pub struct TeamView {
+    app: WeakEntity<VzApp>,
+    business: Option<String>,
+    me: String,
+    members: Option<Vec<Member>>,
+    invites: Vec<Invite>,
+    email: Entity<InputState>,
+    role: &'static str,
+    /// The invitation just made: its link, and whether it was emailed.
+    link: Option<(String, bool)>,
+    /// The person being asked about before removing them.
+    removing: Option<String>,
+    busy: bool,
+    error: Option<String>,
+}
+
+impl TeamView {
+    /// Built while the app draws, so what it needs from the app comes as
+    /// arguments and the first read of the team waits until after that.
+    pub fn new(app: WeakEntity<VzApp>, business: Option<String>, me: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let email = cx.new(|cx| InputState::new(window, cx).placeholder(t("Email address", "Correo electrónico")));
+        cx.defer_in(window, |view, window, cx| view.load(window, cx));
+        Self {
+            app,
+            business,
+            me,
+            members: None,
+            invites: Vec::new(),
+            email,
+            role: "collector",
+            link: None,
+            removing: None,
+            busy: false,
+            error: None,
+        }
+    }
+
+    fn app_read<R>(&self, cx: &App, f: impl FnOnce(&VzApp) -> R) -> Option<R> {
+        self.app.upgrade().map(|a| f(a.read(cx)))
+    }
+
+    /// Reads the team and the open invitations again.
+    fn load(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.business.clone() else { return };
+        let ask = self.app_read(cx, |a| {
+            (a.cloud_query("businesses:members", json!({ "businessId": id })), a.cloud_query("invites:list", json!({ "businessId": id })))
+        });
+        let Some((Some(members), Some(invites))) = ask else { return };
+        cx.spawn_in(window, async move |this, cx| {
+            let (members, invites) = (members.await.unwrap_or(Outcome::NotSent), invites.await.unwrap_or(Outcome::NotSent));
+            let _ = this.update_in(cx, |view, _, cx| {
+                match (members, invites) {
+                    (Outcome::Accepted(m), Outcome::Accepted(i)) => {
+                        view.members = serde_json::from_value::<Vec<Member>>(m).ok();
+                        view.invites = serde_json::from_value(i).unwrap_or_default();
+                    }
+                    (other, _) => view.error = view.app_read(cx, |a| a.call_failed(&other)),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Sends a call, shows what went wrong if it did, then reads the team again.
+    fn send(
+        &mut self,
+        answer: Option<oneshot::Receiver<Outcome>>,
+        then: impl FnOnce(&mut Self, &Value) + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.busy = true;
+        self.error = None;
+        cx.spawn_in(window, async move |this, cx| {
+            let outcome = match answer {
+                Some(a) => a.await.unwrap_or(Outcome::NotSent),
+                None => Outcome::NotSent,
+            };
+            let _ = this.update_in(cx, |view, window, cx| {
+                view.busy = false;
+                match &outcome {
+                    Outcome::Accepted(result) => then(view, result),
+                    other => view.error = view.app_read(cx, |a| a.call_failed(other)),
+                }
+                view.load(window, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn mutate(&mut self, mutation: &'static str, mut args: Value, window: &mut Window, cx: &mut Context<Self>) {
+        args["businessId"] = json!(self.business);
+        let answer = self.app_read(cx, |a| a.cloud_call(mutation, args)).flatten();
+        self.send(answer, |_, _| {}, window, cx);
+    }
+
+    fn invite(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let email = self.email.read(cx).value().trim().to_string();
+        if !email.contains('@') {
+            self.error = Some(t("Enter a valid email address", "Escribe un correo válido").to_string());
+            cx.notify();
+            return;
+        }
+        let args = json!({ "businessId": self.business, "email": email, "role": self.role });
+        let answer = self.app_read(cx, |a| a.cloud_action("invites:create", args)).flatten();
+        self.send(
+            answer,
+            |view, result| {
+                view.link = result["url"].as_str().map(|u| (u.to_string(), result["emailed"] == true));
+            },
+            window,
+            cx,
+        );
+        self.email.update(cx, |s, cx| s.set_value(String::new(), window, cx));
+    }
+
+    fn member_row(&self, p: &Palette, m: &Member, cx: &mut Context<Self>) -> Div {
+        let member = m.id.clone();
+        let me = m.user_id == self.me;
+        let name = if me { format!("{} · {}", m.name, t("you", "tú")) } else { m.name.clone() };
+        let menu =
+            Dropdown::new(SharedString::from(format!("team-role-{}", m.id))).small().label(role_label(&m.role)).items(ROLES.map(|r| {
+                let id = member.clone();
+                DropdownItem::new(
+                    role_label(r),
+                    cx.listener(move |view, _, w, cx| view.mutate("businesses:setRole", json!({ "memberId": id, "role": r }), w, cx)),
+                )
+                .selected(m.role == r)
+            }));
+        let asking = self.removing.as_deref() == Some(m.id.as_str());
+        let remove_id = member.clone();
+        let confirm_id = member.clone();
+        v_flex()
+            .py(px(space::M))
+            .gap(px(space::S))
+            .border_b_1()
+            .border_color(p.rule)
+            .child(
+                h_flex()
+                    .gap(px(space::M))
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(div().typeset(text::BODY).truncate().child(sel(name)))
+                            .child(div().typeset(text::CAPTION).text_color(p.muted).truncate().child(sel(m.email.clone()))),
+                    )
+                    .child(menu)
+                    .child(
+                        Button::new(SharedString::from(format!("team-remove-{}", m.id)))
+                            .danger_ghost()
+                            .small()
+                            .icon(IconName::Trash)
+                            .tooltip(t("Remove", "Quitar"))
+                            .on_click(cx.listener(move |view, _, _, cx| {
+                                view.removing = Some(remove_id.clone());
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .when(asking, |d| {
+                d.child(
+                    h_flex()
+                        .flex_wrap()
+                        .gap(px(space::S))
+                        .child(div().flex_1().min_w(px(240.)).typeset(text::CAPTION).text_color(p.muted).child(t(
+                            "They lose access to this business at once. Their past changes stay in the history.",
+                            "Pierde el acceso al negocio de inmediato. Sus cambios anteriores siguen en el historial.",
+                        )))
+                        .child(Button::new("team-remove-no").ghost().small().label(t("Cancel", "Cancelar")).on_click(cx.listener(
+                            |view, _, _, cx| {
+                                view.removing = None;
+                                cx.notify();
+                            },
+                        )))
+                        .child(Button::new("team-remove-yes").danger().small().label(t("Remove", "Quitar")).on_click(cx.listener(
+                            move |view, _, w, cx| {
+                                view.removing = None;
+                                view.mutate("businesses:removeMember", json!({ "memberId": confirm_id, "reason": "" }), w, cx);
+                            },
+                        ))),
+                )
+            })
+            .when(m.role == "collector", |d| d.child(self.collector_switches(p, m, cx)))
+    }
+
+    fn collector_switches(&self, p: &Palette, m: &Member, cx: &mut Context<Self>) -> Div {
+        let rows = view_parts().map(|(key, label)| {
+            let member = m.clone();
+            h_flex().w(px(310.)).min_h(px(32.)).gap(px(space::M)).child(div().flex_1().min_w_0().typeset(text::CAPTION).child(label)).child(
+                Switch::new(SharedString::from(format!("team-view-{}-{key}", m.id))).checked(view_on(m, key)).on_click(cx.listener(
+                    move |view, on: &bool, w, cx| {
+                        let args = json!({ "memberId": member.id, "view": view_with(&member, key, *on) });
+                        view.mutate("businesses:setCollectorView", args, w, cx);
+                    },
+                )),
+            )
+        });
+        v_flex()
+            .gap(px(space::XS))
+            .child(div().typeset(text::CAPTION).text_color(p.muted).child(t("Sees, for their assigned clients", "Ve, de sus clientes asignados")))
+            .child(h_flex().flex_wrap().gap_x(px(space::XL)).children(rows))
+            .child(div().typeset(text::CAPTION).text_color(p.faint).child(t(
+                "Phone, address, ID and notes never reach their device when off. The others are hidden on their screens and receipts.",
+                "Teléfono, dirección, cédula y notas no llegan a su dispositivo si están apagados. Los demás se ocultan en sus pantallas y recibos.",
+            )))
+    }
+}
+
+impl Render for TeamView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = palette(cx);
+        let members: Vec<Member> = self.members.iter().flatten().filter(|m| m.active).cloned().collect();
+        let rows: Vec<Div> = members.iter().map(|m| self.member_row(&p, m, cx)).collect();
+        let invites = self.invites.clone();
+        let role_menu = Dropdown::new("team-new-role").label(role_label(self.role)).items(ROLES.map(|r| {
+            DropdownItem::new(
+                role_label(r),
+                cx.listener(move |view, _, _, cx| {
+                    view.role = r;
+                    cx.notify();
+                }),
+            )
+            .selected(self.role == r)
+        }));
+        v_flex()
+            .gap(px(space::M))
+            .when_some(self.error.clone(), |d, e| d.child(div().text_color(p.negative).child(sel(e))))
+            .when(self.members.is_none() && self.error.is_none(), |d| d.child(div().text_color(p.muted).child(t("Loading…", "Cargando…"))))
+            .child(v_flex().children(rows))
+            .child(div().typeset(text::CAPTION).text_color(p.muted).child(t(
+                "Admin: everything. Collector: their assigned clients, payments, expenses, income and receipts. Viewer: read only.",
+                "Administrador: todo. Cobrador: sus clientes asignados, pagos, gastos, ingresos y recibos. Solo lectura: ver.",
+            )))
+            .child(div().typeset(text::BODY_STRONG).child(t("Invite someone", "Invitar a alguien")))
+            .child(
+                h_flex().gap(px(space::S)).child(div().flex_1().min_w_0().child(Input::new(&self.email))).child(role_menu).child(
+                    Button::new("team-invite")
+                        .primary()
+                        .icon(IconName::Mail)
+                        .label(t("Send invitation", "Enviar invitación"))
+                        .loading(self.busy)
+                        .on_click(cx.listener(|view, _, w, cx| view.invite(w, cx))),
+                ),
+            )
+            .when_some(self.link.clone(), |d, (url, emailed)| {
+                d.child(
+                    v_flex()
+                        .gap(px(space::XS))
+                        .child(div().typeset(text::CAPTION).text_color(p.muted).child(if emailed {
+                            t(
+                                "Invitation emailed. You can also share this link (valid 7 days, works once):",
+                                "Invitación enviada. También puedes compartir este enlace (válido 7 días, funciona una vez):",
+                            )
+                        } else {
+                            t("Share this link (valid 7 days, works once):", "Comparte este enlace (válido 7 días, funciona una vez):")
+                        }))
+                        .child(div().typeset(text::CAPTION).child(sel(url.clone())))
+                        .child(
+                            div().child(
+                                Button::new("team-copy").small().label(t("Copy link", "Copiar enlace")).on_click(
+                                    cx.listener(move |_, _, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(url.clone()))),
+                                ),
+                            ),
+                        ),
+                )
+            })
+            .children(invites.into_iter().map(|i| {
+                let (id, role) = (i.id.clone(), role_label(&i.role));
+                let line = tr!("{role}, invited", "{role}, invitado");
+                h_flex()
+                    .py(px(space::S))
+                    .gap(px(space::M))
+                    .border_b_1()
+                    .border_color(p.rule)
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(div().truncate().child(sel(i.email.clone())))
+                            .child(div().typeset(text::CAPTION).text_color(p.muted).child(line)),
+                    )
+                    .child(pill(&p, t("Invited", "Invitado"), Tone::Neutral))
+                    .child(
+                        Button::new(SharedString::from(format!("team-revoke-{}", i.id)))
+                            .ghost()
+                            .small()
+                            .label(t("Revoke", "Revocar"))
+                            .on_click(cx.listener(move |view, _, w, cx| view.mutate("invites:revoke", json!({ "inviteId": id }), w, cx))),
+                    )
+            }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    fn member(view: Option<Value>) -> Member {
+        let mut m =
+            json!({ "_id": "m1", "userId": "u", "name": "Ana", "email": "a@x", "role": "collector", "active": true, "joinedAt": 1 });
+        if let Some(v) = view {
+            m["collectorView"] = v;
+        }
+        serde_json::from_value(m).unwrap()
+    }
+
+    #[test]
+    fn switches_start_on_and_send_the_whole_set() {
+        let m = member(None);
+        assert!(view_on(&m, "rate"));
+        let sent = view_with(&m, "rate", false);
+        assert_eq!(sent["rate"], false);
+        assert_eq!(sent["notes"], true);
+        assert_eq!(sent.as_object().unwrap().len(), 7);
+        let m = member(Some(json!({ "rate": false })));
+        assert!(!view_on(&m, "rate"));
+        assert_eq!(view_with(&m, "notes", false)["rate"], false, "other switches keep their state");
+    }
+}

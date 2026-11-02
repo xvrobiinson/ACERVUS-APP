@@ -63,10 +63,31 @@ pub enum Event {
 
 enum Command {
     Open(String),
-    Send { mutation: &'static str, args: serde_json::Value, reply: oneshot::Sender<Outcome> },
-    Call { mutation: &'static str, args: serde_json::Value, reply: oneshot::Sender<Outcome> },
+    Send {
+        mutation: &'static str,
+        args: serde_json::Value,
+        reply: oneshot::Sender<Outcome>,
+    },
+    Call {
+        mutation: &'static str,
+        args: serde_json::Value,
+        reply: oneshot::Sender<Outcome>,
+    },
+    /// A query or action, answered once.
+    Ask {
+        kind: Ask,
+        name: &'static str,
+        args: serde_json::Value,
+        reply: oneshot::Sender<Outcome>,
+    },
     Download(Vec<Download>),
     Stop,
+}
+
+#[derive(Clone, Copy)]
+enum Ask {
+    Query,
+    Action,
 }
 
 pub struct Worker {
@@ -112,6 +133,20 @@ impl Worker {
     pub fn call(&self, mutation: &'static str, args: serde_json::Value) -> oneshot::Receiver<Outcome> {
         let (reply, rx) = oneshot::channel();
         let _ = self.commands.send(Command::Call { mutation, args, reply });
+        rx
+    }
+
+    /// Reads a query once (the team screen), with `args` as given.
+    pub fn query(&self, name: &'static str, args: serde_json::Value) -> oneshot::Receiver<Outcome> {
+        let (reply, rx) = oneshot::channel();
+        let _ = self.commands.send(Command::Ask { kind: Ask::Query, name, args, reply });
+        rx
+    }
+
+    /// Runs an action (sending an invitation), with `args` as given.
+    pub fn action(&self, name: &'static str, args: serde_json::Value) -> oneshot::Receiver<Outcome> {
+        let (reply, rx) = oneshot::channel();
+        let _ = self.commands.send(Command::Ask { kind: Ask::Action, name, args, reply });
         rx
     }
 
@@ -279,6 +314,21 @@ async fn call(client: &mut ConvexClient, mutation: &str, args: serde_json::Value
     }
 }
 
+async fn ask(mut client: ConvexClient, kind: Ask, name: &str, args: serde_json::Value) -> Outcome {
+    let serde_json::Value::Object(args) = args else { return Outcome::Refused(serde_json::json!({ "code": "invalid" })) };
+    let args: BTreeMap<String, Value> = args.into_iter().map(|(k, v)| (k, to_convex(v))).collect();
+    let answer = match kind {
+        Ask::Query => tokio::time::timeout(ANSWER, client.query(name, args)).await,
+        Ask::Action => tokio::time::timeout(ANSWER, client.action(name, args)).await,
+    };
+    match answer {
+        Ok(Ok(FunctionResult::Value(v))) => Outcome::Accepted(wire::normalize(serde_json::Value::from(v))),
+        Ok(Ok(FunctionResult::ConvexError(e))) => Outcome::Refused(wire::normalize(serde_json::Value::from(e.data))),
+        Ok(Ok(FunctionResult::ErrorMessage(m))) => Outcome::Refused(serde_json::json!({ "code": "server", "message": m })),
+        _ => Outcome::NoAnswer,
+    }
+}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Compat {
@@ -440,6 +490,12 @@ async fn run(config: Config, stored: Stored, mut commands: mpsc::UnboundedReceiv
                 Some(Command::Call { mutation, args, reply }) => if online {
                     let client = client.clone();
                     tokio::spawn(async move { let _ = reply.send(send_change(client, mutation, args).await); });
+                } else {
+                    let _ = reply.send(Outcome::NotSent);
+                },
+                Some(Command::Ask { kind, name, args, reply }) => if online {
+                    let client = client.clone();
+                    tokio::spawn(async move { let _ = reply.send(ask(client, kind, name, args).await); });
                 } else {
                     let _ = reply.send(Outcome::NotSent);
                 },
