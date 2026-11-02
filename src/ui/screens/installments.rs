@@ -25,7 +25,7 @@ impl VzApp {
         let money = self.settings().money();
         let ds = self.settings().date_style;
         let split = w >= Width::Wide;
-        let detail = w > Width::Compact;
+        let detail = w > Width::Compact && self.view().late_fees;
         let total_interest = state.interest_total();
         let total = state.principal + total_interest + state.fees_assessed();
         let rows = state.installments.iter().map(|x| {

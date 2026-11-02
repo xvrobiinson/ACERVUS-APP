@@ -12,9 +12,9 @@ use super::ncolumn;
 use crate::app::{Route, VzApp};
 use crate::i18n::{count, t};
 use crate::sync::change::Change;
-use crate::sync::wire::{Message, Need, Pending, Role, Snapshot};
+use crate::sync::wire::{Message, Need, Pending, Role, Snapshot, View};
 use crate::tr;
-use crate::ui::components::{Tone, avatar, icon, pill, sel, table_row, tone_colors};
+use crate::ui::components::{Tone, avatar, empty_state, icon, pill, sel, table_row, tone_colors};
 use crate::ui::forms::reason::ReasonKind;
 use crate::ui::kit::{Button, Card, Dropdown, DropdownItem};
 use crate::ui::theme::{Palette, RADIUS_CONTROL, Typeset as _, Width, palette, space, tabular, text};
@@ -49,6 +49,11 @@ fn rows(snap: &Snapshot, pick: impl Fn(&Pending) -> bool) -> Vec<Row> {
 }
 
 impl VzApp {
+    /// What this person may see: a collector's switches, or everything.
+    pub(crate) fn view(&self) -> View {
+        self.cloud_copy().and_then(|s| s.me.view).unwrap_or_default()
+    }
+
     /// Whether the business has collectors (then clients show who collects).
     pub(crate) fn has_collectors(&self) -> bool {
         self.cloud_copy().is_some_and(Snapshot::has_collectors)
@@ -425,6 +430,18 @@ impl VzApp {
         self.read_messages();
         window.open_dialog(cx, move |dialog, _, _| dialog.title(t("Messages", "Mensajes")).w(px(560.)).child(view.clone()));
     }
+}
+
+/// Stands in for payment lists a collector's switches hide.
+pub(crate) fn history_hidden(p: &Palette) -> AnyElement {
+    empty_state(
+        p,
+        IconName::Receipt,
+        t("Payment history is hidden", "El historial de pagos está oculto"),
+        t("An admin chose not to show it to your account.", "Un administrador decidió no mostrarlo en tu cuenta."),
+        None,
+    )
+    .into_any_element()
 }
 
 fn caption(p: &Palette, s: &str) -> Div {

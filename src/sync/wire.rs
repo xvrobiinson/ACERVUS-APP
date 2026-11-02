@@ -121,6 +121,26 @@ pub struct Me {
     pub user_id: String,
     pub role: Role,
     pub name: String,
+    /// A collector's switches; everything shows for anyone else.
+    #[serde(default)]
+    pub view: Option<View>,
+}
+
+/// What a collector sees of the clients assigned to them. The cloud leaves
+/// out phone, address, ID and notes when off; the rest is hidden on screen.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct View {
+    pub amount_lent: bool,
+    pub rate: bool,
+    pub history: bool,
+    pub late_fees: bool,
+}
+
+impl Default for View {
+    fn default() -> Self {
+        Self { amount_lent: true, rate: true, history: true, late_fees: true }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]

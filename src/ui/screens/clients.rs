@@ -112,6 +112,7 @@ impl VzApp {
         // Who collects from each client, when the business has collectors.
         let team = self.manages_collectors();
         let show_collector = team && w >= Width::Medium;
+        let view = self.view();
         let with_loans = self.snap.clients.iter().filter(|c| self.client_stats(c.id).active_loans > 0).count();
         let mut visible: Vec<(&Client, ClientStats)> = self
             .snap
@@ -292,7 +293,13 @@ impl VzApp {
                             )
                         })
                         .when(show_count, |d| d.child(ncolumn(90.).child(sel(st.active_loans.to_string()))))
-                        .when(show_history, |d| d.child(ncolumn(140.).text_color(p.muted).child(sel(money.format(st.borrowed)))))
+                        .when(show_history, |d| {
+                            d.child(ncolumn(140.).text_color(p.muted).child(sel(if view.amount_lent {
+                                money.format(st.borrowed)
+                            } else {
+                                "—".to_string()
+                            })))
+                        })
                         .child(ncolumn(140.).child(sel(money.format(st.outstanding))))
                         .when(show_history, |d| d.child(ncolumn(130.).text_color(p.muted).child(sel(money.format(st.interest_paid)))))
                         .child(column(130.).flex().justify_end().child(self.client_status_pill(&p, c, st)))
@@ -370,6 +377,7 @@ impl VzApp {
                     .children(self.client_actions(id, archived, &st, w, cx)),
             );
 
+        let view = self.view();
         // Four figures: one row when wide, two by two below that.
         let per_row = if side_by_side { 4 } else { 2 };
         let cells = vec![
@@ -385,7 +393,7 @@ impl VzApp {
                 .icon(IconName::TrendingUp)
                 .chip(p.positive, p.positive_tint)
                 .caption(sel(t("Income from this client", "Ganancia con este cliente"))),
-            Stat::new(t("Total borrowed", "Total prestado"), money.format(st.borrowed))
+            Stat::new(t("Total borrowed", "Total prestado"), if view.amount_lent { money.format(st.borrowed) } else { "—".to_string() })
                 .icon(IconName::Landmark)
                 .chip(p.accent_text, p.accent_tint)
                 .caption(sel({
@@ -406,7 +414,9 @@ impl VzApp {
             let q = l.delinquency(self.today);
             let status = l.display_status(self.today);
             let terms = self.snap.loan(lid).map(|x| x.terms.clone());
-            let desc = terms.map(|lt| format!("{} · {}", lt.rate_line(), ds.format(lt.start_date))).unwrap_or_default();
+            let desc = terms
+                .map(|lt| if view.rate { format!("{} · {}", lt.rate_line(), ds.format(lt.start_date)) } else { ds.format(lt.start_date) })
+                .unwrap_or_default();
             table_row(&p, ("cl-loan", lid as u64), true)
                 .child(
                     v_flex()
@@ -415,7 +425,13 @@ impl VzApp {
                         .child(div().typeset(text::BODY).truncate().child(sel(tr!("Loan #{lid}", "Préstamo #{lid}"))))
                         .child(div().typeset(text::CAPTION).font_features(tabular()).text_color(p.muted).truncate().child(sel(desc))),
                 )
-                .when(full_loans, |d| d.child(ncolumn(130.).text_color(p.muted).child(sel(money.format(l.facts.principal)))))
+                .when(full_loans, |d| {
+                    d.child(ncolumn(130.).text_color(p.muted).child(sel(if view.amount_lent {
+                        money.format(l.facts.principal)
+                    } else {
+                        "—".to_string()
+                    })))
+                })
                 .child(ncolumn(130.).child(sel(money.format(pos.payoff()))))
                 .when(full_loans, |d| {
                     d.child(
@@ -486,7 +502,9 @@ impl VzApp {
                         .child(sel(format!("+{}", money.format(x.amount)))),
                 )
         });
-        let timeline_card = Card::new().overflow_hidden().title(t("Payment history", "Historial de pagos")).child(if pays.is_empty() {
+        let timeline_card = Card::new().overflow_hidden().title(t("Payment history", "Historial de pagos")).child(if !view.history {
+            super::collect::history_hidden(&p)
+        } else if pays.is_empty() {
             empty_state(
                 &p,
                 IconName::Receipt,

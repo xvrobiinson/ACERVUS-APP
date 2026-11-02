@@ -79,7 +79,10 @@ impl VzApp {
         // narrower ones keep three icon buttons.
         let actions_w = if wide { 240. } else { 96. };
         let manage = self.can(Need::Manage);
-        let body = if self.snap.payments.is_empty() {
+        let view = self.view();
+        let body = if !view.history {
+            super::collect::history_hidden(&p)
+        } else if self.snap.payments.is_empty() {
             empty_state(
                 &p,
                 IconName::Receipt,
@@ -143,7 +146,7 @@ impl VzApp {
                     .child(dim(ncolumn(110.).whitespace_nowrap().text_color(p.muted)).child(sel(money.format(x.interest))))
                     .when(wide, |d| {
                         d.child(dim(ncolumn(120.).whitespace_nowrap().text_color(p.muted)).child(sel(money.format(x.principal)))).child(
-                            dim(ncolumn(90.).whitespace_nowrap().text_color(p.muted)).child(sel(if x.fee > 0 {
+                            dim(ncolumn(90.).whitespace_nowrap().text_color(p.muted)).child(sel(if x.fee > 0 && view.late_fees {
                                 money.format(x.fee)
                             } else {
                                 "—".into()

@@ -244,14 +244,20 @@ impl VzApp {
             let pos = l.position(today);
             let q = l.delinquency(today);
             let name = self.snap.client_name(l.client_id).to_string();
+            let view = self.view();
             let desc = match self.snap.loan(lid) {
                 Some(loan) => match loan.terms.installments {
                     Some(n) => {
-                        let rate = loan.terms.rate_line();
                         let every = loan.terms.frequency.label().to_lowercase();
-                        tr!("#{lid} · {rate} · {n} installments, {every}", "#{lid} · {rate} · {n} cuotas, {every}")
+                        if view.rate {
+                            let rate = loan.terms.rate_line();
+                            tr!("#{lid} · {rate} · {n} installments, {every}", "#{lid} · {rate} · {n} cuotas, {every}")
+                        } else {
+                            tr!("#{lid} · {n} installments, {every}", "#{lid} · {n} cuotas, {every}")
+                        }
                     }
-                    None => format!("#{lid} · {}", loan.terms.rate_line()),
+                    None if view.rate => format!("#{lid} · {}", loan.terms.rate_line()),
+                    None => format!("#{lid}"),
                 },
                 None => format!("#{lid}"),
             };
@@ -270,7 +276,13 @@ impl VzApp {
                             .child(div().typeset(text::CAPTION).text_color(p.muted).truncate().child(sel(desc))),
                     ),
                 )
-                .when(full, |d| d.child(ncolumn(130.).text_color(p.muted).child(sel(money.format(l.facts.principal)))))
+                .when(full, |d| {
+                    d.child(ncolumn(130.).text_color(p.muted).child(sel(if view.amount_lent {
+                        money.format(l.facts.principal)
+                    } else {
+                        "—".into()
+                    })))
+                })
                 .child(ncolumn(130.).child(sel(money.format(pos.payoff()))))
                 .when(show_next, |d| {
                     d.child(v_flex().w(px(130.)).flex_none().items_end().font_features(tabular()).child(div().child(sel(next))).when(
@@ -417,10 +429,11 @@ impl VzApp {
         };
         let lent = money.format(terms.principal);
         let rate_line = terms.rate_line();
+        let view = self.view();
         let interest_now = book.facts.rate.interest(owed_now.principal_outstanding);
         let installment_loan = plan_state.is_some();
         let third = if installment_loan {
-            let fees_due = owed_now.fees_outstanding;
+            let fees_due = if view.late_fees { owed_now.fees_outstanding } else { 0 };
             Stat::new(t("Overdue now", "Atrasado ahora"), money.format(q.overdue_amount)).icon(IconName::CircleAlert).caption(sel(
                 match (q.overdue_since, fees_due) {
                     (Some(_), f) if f > 0 => {
@@ -515,16 +528,18 @@ impl VzApp {
                     )
                     .child(
                         v_flex()
-                            .child(kv(&p, t("Amount lent", "Monto prestado"), sel(money.format(terms.principal))))
+                            .when(view.amount_lent, |d| {
+                                d.child(kv(&p, t("Amount lent", "Monto prestado"), sel(money.format(terms.principal))))
+                            })
                             .child(kv(&p, t("Loan type", "Tipo de préstamo"), sel(terms.method.short_label())))
-                            .child(kv(&p, t("Interest rate", "Tasa de interés"), sel(rate_line.clone())))
-                            .when_some(terms.period_rate().conversion_note(), |d, note| {
+                            .when(view.rate, |d| d.child(kv(&p, t("Interest rate", "Tasa de interés"), sel(rate_line.clone()))))
+                            .when_some(terms.period_rate().conversion_note().filter(|_| view.rate), |d, note| {
                                 d.child(kv(&p, t("Per payment", "Por pago"), sel(note)))
                             })
                             .when_some(terms.installments, |d, n| {
                                 let every = terms.frequency.label().to_lowercase();
                                 d.child(kv(&p, t("Installments", "Cuotas"), sel(format!("{n} · {every}"))))
-                                    .when(terms.late_fee_rate.0 > 0, |d| {
+                                    .when(terms.late_fee_rate.0 > 0 && view.late_fees, |d| {
                                         d.child(kv(&p, t("Late fee", "Cargo por mora"), sel(terms.late_fee_rate.percent_label())))
                                     })
                                     .when(loan.schedule_edited, |d| {
@@ -567,7 +582,7 @@ impl VzApp {
             Some(state) => self.installments_card(&p, state, today, w),
             None => self.periods_card(&p, &book, &loan, interest_now, w, side_by_side),
         };
-        let fees_card = plan_state.as_ref().and_then(|_| self.late_fees_card(&p, id, cx));
+        let fees_card = plan_state.as_ref().filter(|_| view.late_fees).and_then(|_| self.late_fees_card(&p, id, cx));
         let tx_card = self.loan_payments_card(&p, id, installment_loan, active, w, cx);
 
         // The installment table needs the full width; the summary sits next
@@ -606,6 +621,7 @@ impl VzApp {
         let rate_line = loan.terms.rate_line();
         let since = ds.format(loan.terms.start_date);
         let lent = money.format(loan.terms.principal);
+        let view = self.view();
         h_flex()
             .flex_wrap()
             .gap(px(6.))
@@ -619,7 +635,12 @@ impl VzApp {
                     .child(self.snap.client_name(client_id).to_string())
                     .on_click(cx.listener(move |this, _, w, cx| this.navigate(Route::Client(client_id), w, cx))),
             )
-            .child(sel(tr!("·  {lent} at {rate_line}  ·  since {since}", "·  {lent} al {rate_line}  ·  desde {since}")))
+            .child(sel(match (view.amount_lent, view.rate) {
+                (true, true) => tr!("·  {lent} at {rate_line}  ·  since {since}", "·  {lent} al {rate_line}  ·  desde {since}"),
+                (true, false) => tr!("·  {lent}  ·  since {since}", "·  {lent}  ·  desde {since}"),
+                (false, true) => tr!("·  {rate_line}  ·  since {since}", "·  {rate_line}  ·  desde {since}"),
+                (false, false) => tr!("·  since {since}", "·  desde {since}"),
+            }))
     }
 
     /// Page actions. Wide windows show them all; narrower ones fold the
@@ -802,6 +823,7 @@ impl VzApp {
         let actions_w = if full { 190. } else { 140. };
         let manage = self.can(Need::Manage);
         let payments: Vec<_> = self.snap.payments_for_loan(id).cloned().collect();
+        let view = self.view();
         let tx_rows = payments.iter().rev().map(|x| {
             let reversed = x.is_reversed();
             let pid = x.id;
@@ -812,7 +834,7 @@ impl VzApp {
                 let to: Vec<String> = x.applied.iter().map(|a| format!("#{}", a.seq)).collect();
                 let to = to.join(", ");
                 let mut line = if to.is_empty() { String::new() } else { tr!("To installment {to}", "A la cuota {to}") };
-                if x.fee > 0 {
+                if x.fee > 0 && view.late_fees {
                     let f = money.format(x.fee);
                     line = tr!("{line} · late fee {f}", "{line} · mora {f}");
                 }
@@ -880,7 +902,9 @@ impl VzApp {
                         }),
                 )
         });
-        let body = if payments.is_empty() {
+        let body = if !view.history {
+            super::collect::history_hidden(p)
+        } else if payments.is_empty() {
             empty_state(
                 p,
                 IconName::Receipt,
