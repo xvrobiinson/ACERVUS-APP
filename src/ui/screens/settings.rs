@@ -595,26 +595,30 @@ impl VzApp {
                 Some(t("This PC's language for the app and receipts", "El idioma de esta PC para la app y los recibos")),
                 select("lang", &lang_opts, s.language, cx, |app, v, w, cx| app.update_settings(|s| s.language = v, w, cx)),
             ))
-            .child(row(
-                &p,
-                t("Currency", "Moneda"),
-                Some(t("Changes the symbol shown. Amounts are never converted.", "Cambia el símbolo. Los montos nunca se convierten.")),
-                div().w(px(FIELD_W)).child(Select::new(&self.currency_select)),
-            ))
-            .child(row(
-                &p,
-                t("Number format", "Formato de números"),
-                None,
-                Segmented::pick("numfmt", number_opts.iter().copied(), s.number_style, cx, |app, v, w, cx| {
-                    app.update_settings(|s| s.number_style = v, w, cx)
-                }),
-            ))
-            .child(row(
-                &p,
-                t("Date format", "Formato de fecha"),
-                None,
-                select("datefmt", &date_opts, s.date_style, cx, |app, v, w, cx| app.update_settings(|s| s.date_style = v, w, cx)),
-            ));
+            // Language is this PC's; the formats are the business's.
+            .when(!manage, |d| d.child(admins_only()))
+            .when(manage, |d| {
+                d.child(row(
+                    &p,
+                    t("Currency", "Moneda"),
+                    Some(t("Changes the symbol shown. Amounts are never converted.", "Cambia el símbolo. Los montos nunca se convierten.")),
+                    div().w(px(FIELD_W)).child(Select::new(&self.currency_select)),
+                ))
+                .child(row(
+                    &p,
+                    t("Number format", "Formato de números"),
+                    None,
+                    Segmented::pick("numfmt", number_opts.iter().copied(), s.number_style, cx, |app, v, w, cx| {
+                        app.update_settings(|s| s.number_style = v, w, cx)
+                    }),
+                ))
+                .child(row(
+                    &p,
+                    t("Date format", "Formato de fecha"),
+                    None,
+                    select("datefmt", &date_opts, s.date_style, cx, |app, v, w, cx| app.update_settings(|s| s.date_style = v, w, cx)),
+                ))
+            });
 
         let lending = v_flex()
             .gap(px(space::L))
@@ -1114,8 +1118,9 @@ impl VzApp {
             SettingsPanel::About,
         ]
         .into_iter()
-        // Formats and lending defaults are the business's: admins only.
-        .filter(|x| manage || !matches!(x, SettingsPanel::Formats | SettingsPanel::Lending))
+        // Lending defaults are the business's: admins only. Everyone keeps
+        // Regional formats for this PC's language.
+        .filter(|x| manage || *x != SettingsPanel::Lending)
         // The team lives in the cloud: only for a business this PC follows.
         .filter(|x| *x != SettingsPanel::Team || (manage && self.is_linked()))
         .collect();
