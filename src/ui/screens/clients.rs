@@ -112,7 +112,6 @@ impl VzApp {
         // Who collects from each client, when the business has collectors.
         let team = self.manages_collectors();
         let show_collector = team && w >= Width::Medium;
-        let collector_view = self.cloud_copy().is_some_and(|s| s.me.role == crate::sync::wire::Role::Collector);
         let with_loans = self.snap.clients.iter().filter(|c| self.client_stats(c.id).active_loans > 0).count();
         let mut visible: Vec<(&Client, ClientStats)> = self
             .snap
@@ -260,12 +259,7 @@ impl VzApp {
                         );
                 let rows = visible.iter().map(|(c, st)| {
                     let id = c.id;
-                    let mut contact = [c.phone.clone(), c.email.clone()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
-                    // A collector sees which of their clients nobody has been given yet.
-                    if collector_view && self.cloud_copy().is_some_and(|s| s.collector_of(id).is_none()) {
-                        let open = t("No collector yet", "Aún sin cobrador");
-                        contact = if contact.is_empty() { open.to_string() } else { format!("{open} · {contact}") };
-                    }
+                    let contact = [c.phone.clone(), c.email.clone()].into_iter().flatten().collect::<Vec<_>>().join(" · ");
                     let menu = show_collector.then(|| self.collector_menu(("cl-collector", id as u64), id, cx));
                     table_row(&p, ("client", id as u64), true)
                         .child(
