@@ -235,8 +235,8 @@ impl VzApp {
             .gap(px(space::S))
             .child(div().typeset(text::BODY_STRONG).child(t("Shown on payment receipts", "En los recibos de pago")))
             .child(div().typeset(text::CAPTION).text_color(p.muted).child(t(
-                "The business name, amount paid, payment date and receipt number are always printed. Loan receipts are the client's agreement and keep every term.",
-                "El nombre del negocio, el monto pagado, la fecha y el número de recibo siempre se imprimen. El recibo del préstamo es el acuerdo con el cliente y conserva todos los términos.",
+                "These apply to payment and loan receipts. The business name, amounts paid, dates and receipt number always print. A loan receipt is the client's agreement: with the rate or amount off, it no longer shows those terms or the \"How payments work\" lines.",
+                "Se aplican a los recibos de pago y de préstamo. El nombre del negocio, los montos pagados, las fechas y el número de recibo siempre se imprimen. El recibo del préstamo es el acuerdo con el cliente: sin la tasa o el monto, ya no muestra esos términos ni las líneas de \"Cómo funcionan los pagos\".",
             )))
             .child(
                 div()

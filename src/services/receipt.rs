@@ -852,20 +852,36 @@ pub fn render_loan(d: &LoanReceipt, snap: &Snapshot) -> String {
     let number = format!("{:06}", d.loan_id);
     let installment_loan = d.method.has_installments();
 
-    let mut terms = vec![
-        row(t("Amount lent", "Monto prestado"), m(d.principal), "total"),
-        row(t("Loan type", "Tipo de préstamo"), esc(d.method.short_label()), ""),
-        row(t("Interest rate", "Tasa de interés"), esc(&d.rate_line), ""),
-        row(t("Payments", "Pagos"), esc(d.frequency.label()), ""),
-    ];
+    // The same switches as payment receipts (Settings › Receipts).
+    let show = snap.settings.receipt_show;
+    let schedule_shown = installment_loan && show.installments;
+    let mut terms = Vec::new();
+    if show.amount_lent {
+        terms.push(row(t("Amount lent", "Monto prestado"), m(d.principal), "total"));
+    }
+    if show.cycle {
+        terms.push(row(t("Loan type", "Tipo de préstamo"), esc(d.method.short_label()), ""));
+    }
+    if show.rate {
+        terms.push(row(t("Interest rate", "Tasa de interés"), esc(&d.rate_line), ""));
+    }
+    if show.cycle {
+        terms.push(row(t("Payments", "Pagos"), esc(d.frequency.label()), ""));
+    }
     let schedule_html: String = if installment_loan {
         let total_interest = d.total_interest();
-        terms.push(row(t("Installments", "Cuotas"), d.schedule.len().to_string(), ""));
-        terms.push(row(t("Total interest", "Interés total"), m(total_interest), ""));
-        if d.late_fee_rate.0 > 0 {
+        if show.installments {
+            terms.push(row(t("Installments", "Cuotas"), d.schedule.len().to_string(), ""));
+        }
+        if show.rate {
+            terms.push(row(t("Total interest", "Interés total"), m(total_interest), ""));
+        }
+        if d.late_fee_rate.0 > 0 && show.late_fees {
             terms.push(row(t("Late fee", "Cargo por mora"), esc(&d.late_fee_rate.percent_label()), ""));
         }
-        terms.push(row(t("Total to repay", "Total a pagar"), m(d.principal + total_interest), "total"));
+        if show.amount_lent && show.rate {
+            terms.push(row(t("Total to repay", "Total a pagar"), m(d.principal + total_interest), "total"));
+        }
         let mut left = d.principal;
         let rows: String = d
             .schedule
@@ -892,10 +908,12 @@ pub fn render_loan(d: &LoanReceipt, snap: &Snapshot) -> String {
             esc(t("Payment", "Cuota")),
             esc(t("Capital left", "Restante")),
         );
-        schedule_html
+        if show.installments { schedule_html } else { String::new() }
     } else {
         // An open loan has no schedule: no due dates are printed.
-        terms.push(row(t("Interest per payment", "Interés por pago"), m(d.interest_per_period), ""));
+        if show.rate {
+            terms.push(row(t("Interest per payment", "Interés por pago"), m(d.interest_per_period), ""));
+        }
         String::new()
     };
 
@@ -914,9 +932,14 @@ pub fn render_loan(d: &LoanReceipt, snap: &Snapshot) -> String {
         next_interest: plain(d.interest_after_half),
         ..company_tags(d.business.clone(), &d.company)
     };
-    let late_fee = installment_loan && d.late_fee_rate.0 > 0;
+    let late_fee = installment_loan && d.late_fee_rate.0 > 0 && show.late_fees;
     let edited = installment_loan && d.schedule_edited;
-    let rules = receipt_text::lines_for(&text.rules(RuleSet::of(d.method)), &tags, d.conversion.is_some(), late_fee, edited);
+    // Those lines quote the amount and the interest, so they go when either is hidden.
+    let rules = if show.amount_lent && show.rate {
+        receipt_text::lines_for(&text.rules(RuleSet::of(d.method)), &tags, d.conversion.is_some(), late_fee, edited)
+    } else {
+        Vec::new()
+    };
     let heading = tags.fill(&text.heading());
     let rules_html = if rules.is_empty() {
         String::new()
@@ -956,9 +979,17 @@ pub fn render_loan(d: &LoanReceipt, snap: &Snapshot) -> String {
         Some(name) => {
             let sign = if caption.trim().is_empty() { name.clone() } else { format!("{caption}: {name}") };
             let name = esc(name);
-            (tr!("{name} received {amount} on {date}.", "{name} recibió {amount} el {date}."), esc(&sign))
+            let line = if show.amount_lent {
+                tr!("{name} received {amount} on {date}.", "{name} recibió {amount} el {date}.")
+            } else {
+                tr!("{name} received this loan on {date}.", "{name} recibió este préstamo el {date}.")
+            };
+            (line, esc(&sign))
         }
-        None => (tr!("The client received {amount} on {date}.", "El cliente recibió {amount} el {date}."), esc(&caption)),
+        None if show.amount_lent => {
+            (tr!("The client received {amount} on {date}.", "El cliente recibió {amount} el {date}."), esc(&caption))
+        }
+        None => (tr!("The client received this loan on {date}.", "El cliente recibió este préstamo el {date}."), esc(&caption)),
     };
     let closing = tags.fill(&text.loan_footer());
     let closing = if closing.trim().is_empty() { String::new() } else { format!("<p class=\"closing\">{}</p>", esc(&closing)) };
@@ -969,10 +1000,10 @@ pub fn render_loan(d: &LoanReceipt, snap: &Snapshot) -> String {
     if contact_rows(&d.company) > 0 {
         used += LINE_PT;
     }
-    if installment_loan {
+    if schedule_shown {
         used += SCHEDULE_HEAD_PT + SCHEDULE_ROW_PT * d.schedule.len() as f32;
     }
-    let overflow = if d.schedule.len() > LOAN_PAGE_ROWS {
+    let overflow = if schedule_shown && d.schedule.len() > LOAN_PAGE_ROWS {
         overflow_note(
             d.schedule.len(),
             LOAN_PAGE_ROWS,
@@ -1014,7 +1045,7 @@ pub fn render_loan(d: &LoanReceipt, snap: &Snapshot) -> String {
         client = client_block(&d.client),
         terms_l = esc(&{
             let id = d.loan_id;
-            tr!("Loan #{id}", "Préstamo #{id}")
+            if show.loan_number { tr!("Loan #{id}", "Préstamo #{id}") } else { t("Loan", "Préstamo").to_string() }
         }),
         terms = terms.join(""),
         lender_sign = esc(&tags.fill(&text.lender_sign())),

@@ -318,6 +318,36 @@ fn a_business_in_caribbean_guilders_lends_collects_and_prints_in_cg() {
 }
 
 #[test]
+fn loan_receipts_follow_the_same_switches() {
+    let (mut s, _, lid) = open_loan();
+    let render = |s: &Store| {
+        let snap = s.snapshot().unwrap();
+        crate::services::receipt::render_loan(&crate::services::receipt::loan_data(&snap, lid).unwrap(), &snap)
+    };
+    let all = render(&s);
+    assert!(all.contains("<td>Interest rate</td>") || all.contains("<td>Tasa de interés</td>"));
+    let mut st = s.snapshot().unwrap().settings.clone();
+    st.receipt_show.rate = false;
+    st.receipt_show.amount_lent = false;
+    st.receipt_show.installments = false;
+    st.receipt_show.late_fees = false;
+    s.save_settings(&st).unwrap();
+    let html = render(&s);
+    for gone in [
+        "Interest rate",
+        "Tasa de interés",
+        "Amount lent",
+        "Monto prestado",
+        "Payment schedule",
+        "Calendario de pagos",
+        "Late fee",
+        "Cargo por mora",
+    ] {
+        assert!(!html.contains(gone), "{gone} is still printed");
+    }
+}
+
+#[test]
 fn receipt_parts_survive_a_restart() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("data").join("portfolio.db");
