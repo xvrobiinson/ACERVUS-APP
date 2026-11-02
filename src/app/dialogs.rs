@@ -55,6 +55,7 @@ submit_impl!(
     crate::ui::forms::reset::ResetForm,
     crate::ui::forms::receipt_text::ReceiptTextForm,
     crate::ui::forms::business::NewBusinessForm,
+    crate::ui::forms::business::BusinessDetailsForm,
     crate::ui::forms::business::DeleteBusinessForm
 );
 
@@ -531,6 +532,27 @@ impl VzApp {
             let handle = form.read(cx).confirm.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
             dialog.title(t("Reset all data", "Borrar todos los datos")).w(px(520.)).child(form.clone()).on_ok(confirm(&form))
+        });
+    }
+
+    /// Changes the name and time zone of the business this PC follows.
+    pub fn open_business_details(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((id, name, zone)) =
+            self.cloud_copy().map(|s| (s.business.id.clone(), s.business.name.clone(), s.business.timezone.clone()))
+        else {
+            return;
+        };
+        let app = cx.entity().downgrade();
+        let form = cx.new(|cx| crate::ui::forms::business::BusinessDetailsForm::new(app, id, name, zone, window, cx));
+        let first = Cell::new(true);
+        window.open_dialog(cx, move |dialog, window, cx| {
+            let handle = form.read(cx).name.focus_handle(cx);
+            focus_once(&first, &handle, window, cx);
+            dialog
+                .title(t("Business name and time zone", "Nombre del negocio y zona horaria"))
+                .w(px(520.))
+                .child(form.clone())
+                .on_ok(confirm(&form))
         });
     }
 

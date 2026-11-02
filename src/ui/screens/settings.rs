@@ -396,6 +396,18 @@ impl VzApp {
         let business = v_flex()
             .gap(px(space::L))
             .when(!manage, |d| d.child(admins_only()))
+            .when_some(self.cloud_copy().filter(|_| manage).map(|s| format!("{} · {}", s.business.name, s.business.timezone)), |d, line| {
+                d.child(row(
+                    &p,
+                    t("Business name and time zone", "Nombre del negocio y zona horaria"),
+                    Some(t("The name your team sees, and the “today” for due dates and late fees.", "El nombre que ve tu equipo y el “hoy” de vencimientos y mora.")),
+                    h_flex().gap(px(space::S)).child(div().text_color(p.muted).child(line)).child(
+                        Button::new("business-details")
+                            .label(t("Change", "Cambiar"))
+                            .on_click(cx.listener(|this, _, w, cx| this.open_business_details(w, cx))),
+                    ),
+                ))
+            })
             .when(manage, |d| d.child(row(
                 &p,
                 t("Company name", "Nombre de la empresa"),

@@ -11,6 +11,7 @@ use crate::app::VzApp;
 use crate::i18n::{is_es, t};
 use crate::sync::outbox::Outcome;
 use crate::tr;
+use crate::ui::kit::{Dropdown, DropdownItem};
 use crate::ui::theme::{Typeset as _, palette, space, text};
 
 /// Sends `mutation` and hands the answer back to the form (`NotSent` when
@@ -105,6 +106,114 @@ impl Render for NewBusinessForm {
                 &p,
                 t("Create business", "Crear negocio"),
                 !self.typed(cx).is_empty(),
+                self.busy,
+                cx.listener(|this, _, w, cx| this.submit(w, cx)),
+            ))
+    }
+}
+
+/// The time zones offered here; a business set to another one (in the phone
+/// app) keeps it, listed first.
+const ZONES: [&str; 16] = [
+    "America/Santo_Domingo",
+    "America/Curacao",
+    "America/Puerto_Rico",
+    "America/Port_of_Spain",
+    "America/Bogota",
+    "America/Caracas",
+    "America/Mexico_City",
+    "America/Panama",
+    "America/New_York",
+    "America/Chicago",
+    "America/Denver",
+    "America/Los_Angeles",
+    "America/Toronto",
+    "Europe/London",
+    "Europe/Madrid",
+    "Europe/Amsterdam",
+];
+
+/// The business's name and time zone, in the cloud (Settings › Business).
+pub struct BusinessDetailsForm {
+    app: WeakEntity<VzApp>,
+    business_id: String,
+    pub name: Entity<InputState>,
+    timezone: String,
+    busy: bool,
+    error: Option<String>,
+    _subs: Vec<Subscription>,
+}
+
+impl BusinessDetailsForm {
+    pub fn new(
+        app: WeakEntity<VzApp>,
+        business_id: String,
+        name: String,
+        timezone: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let name = cx.new(|cx| InputState::new(window, cx).default_value(name));
+        let subs = vec![changed(&name, window, cx)];
+        Self { app, business_id, name, timezone, busy: false, error: None, _subs: subs }
+    }
+
+    pub fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = value(&self.name, cx).trim().to_string();
+        if name.is_empty() || self.busy {
+            return;
+        }
+        let args = json!({ "businessId": self.business_id, "name": name, "timezone": self.timezone });
+        self.busy = true;
+        self.error = None;
+        cx.notify();
+        send(&self.app, "businesses:update", args, window, cx, move |this, outcome, window, cx| {
+            this.busy = false;
+            if !matches!(outcome, Outcome::Accepted(_)) {
+                this.error = this.app.read_with(cx, |app, _| app.call_failed(&outcome)).ok();
+                return cx.notify();
+            }
+            window.close_dialog(cx);
+            let _ = this.app.update(cx, |app, cx| app.notify_success(t("Business saved", "Negocio guardado"), window, cx));
+        });
+    }
+}
+
+impl Render for BusinessDetailsForm {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = palette(cx);
+        let mut zones: Vec<String> = ZONES.iter().map(|z| z.to_string()).collect();
+        if !zones.contains(&self.timezone) {
+            zones.insert(0, self.timezone.clone());
+        }
+        let current = self.timezone.clone();
+        let menu = Dropdown::new("business-zone").label(current.clone()).items(zones.into_iter().map(|z| {
+            let selected = z == current;
+            let pick = z.clone();
+            DropdownItem::new(
+                z,
+                cx.listener(move |this, _, _, cx| {
+                    this.timezone = pick.clone();
+                    cx.notify();
+                }),
+            )
+            .selected(selected)
+        }));
+        v_flex()
+            .gap(px(space::L))
+            .children(error_banner(&p, &self.error))
+            .child(field(&p, t("Business name", "Nombre del negocio"), Input::new(&self.name), None, None))
+            .child(field(
+                &p,
+                t("Time zone", "Zona horaria"),
+                menu,
+                Some(t("“Today” for due dates and late fees.", "El “hoy” de vencimientos y mora.").to_string()),
+                None,
+            ))
+            .child(footer(
+                &p,
+                t("Save", "Guardar"),
+                !value(&self.name, cx).trim().is_empty(),
                 self.busy,
                 cx.listener(|this, _, w, cx| this.submit(w, cx)),
             ))
