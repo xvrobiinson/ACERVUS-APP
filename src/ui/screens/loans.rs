@@ -477,7 +477,11 @@ impl VzApp {
             Stat::new(t("Capital owed", "Capital adeudado"), money.format(owed_now.principal_outstanding))
                 .icon(IconName::HandCoins)
                 .chip(p.info, p.info_tint)
-                .caption(sel(tr!("of {lent} lent", "de {lent} prestado"))),
+                .caption(sel(if view.amount_lent {
+                    tr!("of {lent} lent", "de {lent} prestado")
+                } else {
+                    t("Capital still to repay", "Capital por pagar").to_string()
+                })),
             third,
             Stat::new(t("Interest paid", "Interés pagado"), money.format(pos.interest_paid))
                 .icon(IconName::TrendingUp)
