@@ -1,12 +1,13 @@
-//! Settings › Team: an admin's view of who works in the business. Invite
-//! people, change their role, remove them, and choose what each collector
-//! sees of the clients assigned to them. It talks to the cloud directly
+//! Settings › Team: an admin's view of who works in the business. The list
+//! groups people by role; a person's page changes their role, removes them,
+//! and for a collector chooses what they see of the clients assigned to
+//! them. Invitations are made from the list. It talks to the cloud directly
 //! (these aren't changes to the books), so it needs a connection.
 
 use futures::channel::oneshot;
 use gpui_kit::assets::IconName;
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputState};
-use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -16,8 +17,8 @@ use crate::app::VzApp;
 use crate::i18n::t;
 use crate::sync::outbox::Outcome;
 use crate::tr;
-use crate::ui::components::{Tone, pill, sel};
-use crate::ui::kit::{Button, Dropdown, DropdownItem};
+use crate::ui::components::{Tone, icon, pill, sel};
+use crate::ui::kit::{Button, Dropdown, DropdownItem, ListRow};
 use crate::ui::theme::{Palette, Typeset as _, palette, space, text};
 
 /// A person in the business (`businesses:members`).
@@ -80,6 +81,20 @@ fn role_label(role: &str) -> &'static str {
 
 const ROLES: [&str; 3] = ["admin", "collector", "viewer"];
 
+/// A role's group heading, its pill's tone and its icon on the list.
+fn role_look(role: &str) -> (&'static str, Tone, IconName) {
+    match role {
+        "admin" => (t("Admins", "Administradores"), Tone::Accent, IconName::ShieldCheck),
+        "collector" => (t("Collectors", "Cobradores"), Tone::Positive, IconName::HandCoins),
+        _ => (t("Viewers", "Solo lectura"), Tone::Neutral, IconName::Eye),
+    }
+}
+
+/// A heading over a group of people.
+fn group_title(p: &Palette, title: &str) -> Div {
+    div().pt(px(space::S)).typeset(text::CAPTION).font_weight(FontWeight::SEMIBOLD).text_color(p.muted).child(title.to_uppercase())
+}
+
 pub struct TeamView {
     app: WeakEntity<VzApp>,
     business: Option<String>,
@@ -90,6 +105,8 @@ pub struct TeamView {
     role: &'static str,
     /// The invitation just made: its link, and whether it was emailed.
     link: Option<(String, bool)>,
+    /// The person whose page is open.
+    open: Option<String>,
     /// The person being asked about before removing them.
     removing: Option<String>,
     busy: bool,
@@ -111,10 +128,28 @@ impl TeamView {
             email,
             role: "collector",
             link: None,
+            open: None,
             removing: None,
             busy: false,
             error: None,
         }
+    }
+
+    /// The name over the open person's page, if one is open.
+    pub fn person_title(&self) -> Option<SharedString> {
+        let id = self.open.as_ref()?;
+        self.members.iter().flatten().find(|m| &m.id == id && m.active).map(|m| m.name.clone().into())
+    }
+
+    /// Back from a person's page to the list; false when the list is showing.
+    pub fn back(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.open.take().is_none() {
+            return false;
+        }
+        self.removing = None;
+        self.error = None;
+        cx.notify();
+        true
     }
 
     fn app_read<R>(&self, cx: &App, f: impl FnOnce(&VzApp) -> R) -> Option<R> {
@@ -135,6 +170,11 @@ impl TeamView {
                     (Outcome::Accepted(m), Outcome::Accepted(i)) => {
                         view.members = serde_json::from_value::<Vec<Member>>(m).ok();
                         view.invites = serde_json::from_value(i).unwrap_or_default();
+                        // Someone removed (here or elsewhere) has no page.
+                        let gone = |id: &String| !view.members.iter().flatten().any(|m| &m.id == id && m.active);
+                        if view.open.as_ref().is_some_and(gone) {
+                            view.open = None;
+                        }
                     }
                     (other, _) => view.error = view.app_read(cx, |a| a.call_failed(&other)),
                 }
@@ -199,12 +239,35 @@ impl TeamView {
         self.email.update(cx, |s, cx| s.set_value(String::new(), window, cx));
     }
 
-    fn member_row(&self, p: &Palette, m: &Member, cx: &mut Context<Self>) -> Div {
-        let member = m.id.clone();
+    /// A person on the list: name, email and role; opens their page.
+    fn person_row(&self, p: &Palette, m: &Member, cx: &mut Context<Self>) -> ListRow {
         let me = m.user_id == self.me;
         let name = if me { format!("{} · {}", m.name, t("you", "tú")) } else { m.name.clone() };
+        let (_, tone, mark) = role_look(&m.role);
+        let id = m.id.clone();
+        ListRow::new(SharedString::from(format!("team-person-{}", m.id)))
+            .boxed(true)
+            .leading(icon(mark, p.muted, 18.))
+            .title(name)
+            .subtitle(m.email.clone())
+            .trailing(h_flex().gap(px(space::S)).child(pill(p, role_label(&m.role), tone)).child(icon(
+                IconName::ChevronRight,
+                p.muted,
+                16.,
+            )))
+            .on_click(cx.listener(move |view, _, _, cx| {
+                view.open = Some(id.clone());
+                view.removing = None;
+                view.error = None;
+                cx.notify();
+            }))
+    }
+
+    /// A person's page: their role, what a collector sees, and removing them.
+    fn person_page(&self, p: &Palette, m: &Member, cx: &mut Context<Self>) -> Div {
+        let member = m.id.clone();
         let menu =
-            Dropdown::new(SharedString::from(format!("team-role-{}", m.id))).small().label(role_label(&m.role)).items(ROLES.map(|r| {
+            Dropdown::new(SharedString::from(format!("team-role-{}", m.id))).label(role_label(&m.role)).align_end().items(ROLES.map(|r| {
                 let id = member.clone();
                 DropdownItem::new(
                     role_label(r),
@@ -213,90 +276,105 @@ impl TeamView {
                 .selected(m.role == r)
             }));
         let asking = self.removing.as_deref() == Some(m.id.as_str());
-        let remove_id = member.clone();
-        let confirm_id = member.clone();
+        let (remove_id, confirm_id) = (member.clone(), member.clone());
         v_flex()
-            .py(px(space::M))
-            .gap(px(space::S))
-            .border_b_1()
-            .border_color(p.rule)
+            .gap(px(space::L))
+            .child(div().typeset(text::CAPTION).text_color(p.muted).child(sel(m.email.clone())))
             .child(
                 h_flex()
+                    .flex_wrap()
+                    .justify_between()
                     .gap(px(space::M))
                     .child(
                         v_flex()
                             .flex_1()
-                            .min_w_0()
-                            .child(div().typeset(text::BODY).truncate().child(sel(name)))
-                            .child(div().typeset(text::CAPTION).text_color(p.muted).truncate().child(sel(m.email.clone()))),
+                            .min_w(px(240.))
+                            .gap(px(2.))
+                            .child(div().typeset(text::BODY_STRONG).child(t("Role", "Rol")))
+                            .child(div().typeset(text::CAPTION).text_color(p.muted).child(t(
+                                "Admin: everything. Collector: their assigned clients, payments, expenses, income and receipts. Viewer: read only.",
+                                "Administrador: todo. Cobrador: sus clientes asignados, pagos, gastos, ingresos y recibos. Solo lectura: ver.",
+                            ))),
                     )
-                    .child(menu)
-                    .child(
-                        Button::new(SharedString::from(format!("team-remove-{}", m.id)))
-                            .danger_ghost()
-                            .small()
-                            .icon(IconName::Trash)
-                            .tooltip(t("Remove", "Quitar"))
-                            .on_click(cx.listener(move |view, _, _, cx| {
-                                view.removing = Some(remove_id.clone());
-                                cx.notify();
-                            })),
-                    ),
+                    .child(menu),
             )
-            .when(asking, |d| {
-                d.child(
-                    h_flex()
-                        .flex_wrap()
-                        .gap(px(space::S))
-                        .child(div().flex_1().min_w(px(240.)).typeset(text::CAPTION).text_color(p.muted).child(t(
-                            "They lose access to this business at once. Their past changes stay in the history.",
-                            "Pierde el acceso al negocio de inmediato. Sus cambios anteriores siguen en el historial.",
-                        )))
-                        .child(Button::new("team-remove-no").ghost().small().label(t("Cancel", "Cancelar")).on_click(cx.listener(
-                            |view, _, _, cx| {
+            .when(m.role == "collector", |d| d.child(self.permissions(p, m, cx)))
+            .child(
+                v_flex()
+                    .gap(px(space::S))
+                    .pt(px(space::M))
+                    .border_t_1()
+                    .border_color(p.rule)
+                    .child(div().typeset(text::CAPTION).text_color(p.muted).child(t(
+                        "They lose access to this business at once. Their past changes stay in the history.",
+                        "Pierde el acceso al negocio de inmediato. Sus cambios anteriores siguen en el historial.",
+                    )))
+                    .child(if asking {
+                        h_flex()
+                            .gap(px(space::S))
+                            .child(Button::new("team-remove-no").label(t("Cancel", "Cancelar")).on_click(cx.listener(|view, _, _, cx| {
                                 view.removing = None;
                                 cx.notify();
-                            },
-                        )))
-                        .child(Button::new("team-remove-yes").danger().small().label(t("Remove", "Quitar")).on_click(cx.listener(
-                            move |view, _, w, cx| {
-                                view.removing = None;
-                                view.mutate("businesses:removeMember", json!({ "memberId": confirm_id, "reason": "" }), w, cx);
-                            },
-                        ))),
-                )
-            })
-            .when(m.role == "collector", |d| d.child(self.collector_switches(p, m, cx)))
+                            })))
+                            .child(Button::new("team-remove-yes").danger().icon(IconName::Trash).label(t("Remove", "Quitar")).loading(self.busy).on_click(
+                                cx.listener(move |view, _, w, cx| {
+                                    view.removing = None;
+                                    view.mutate("businesses:removeMember", json!({ "memberId": confirm_id, "reason": "" }), w, cx);
+                                }),
+                            ))
+                    } else {
+                        h_flex().child(
+                            Button::new("team-remove")
+                                .danger_ghost()
+                                .icon(IconName::Trash)
+                                .label(t("Remove from the team", "Quitar del equipo"))
+                                .on_click(cx.listener(move |view, _, _, cx| {
+                                    view.removing = Some(remove_id.clone());
+                                    cx.notify();
+                                })),
+                        )
+                    }),
+            )
     }
 
-    fn collector_switches(&self, p: &Palette, m: &Member, cx: &mut Context<Self>) -> Div {
-        let rows = view_parts().map(|(key, label)| {
+    /// What a collector sees of their assigned clients, one checkbox each.
+    /// The cloud stores and enforces them; this only sends the choice.
+    fn permissions(&self, p: &Palette, m: &Member, cx: &mut Context<Self>) -> Div {
+        let boxes = view_parts().map(|(key, label)| {
             let member = m.clone();
-            h_flex().w(px(310.)).min_h(px(32.)).gap(px(space::M)).child(div().flex_1().min_w_0().typeset(text::CAPTION).child(label)).child(
-                Switch::new(SharedString::from(format!("team-view-{}-{key}", m.id))).checked(view_on(m, key)).on_click(cx.listener(
-                    move |view, on: &bool, w, cx| {
-                        let args = json!({ "memberId": member.id, "view": view_with(&member, key, *on) });
-                        view.mutate("businesses:setCollectorView", args, w, cx);
-                    },
-                )),
+            Checkbox::new(SharedString::from(format!("team-view-{}-{key}", m.id))).label(label).checked(view_on(m, key)).on_click(
+                cx.listener(move |view, on: &bool, w, cx| {
+                    let args = json!({ "memberId": member.id, "view": view_with(&member, key, *on) });
+                    view.mutate("businesses:setCollectorView", args, w, cx);
+                }),
             )
         });
         v_flex()
-            .gap(px(space::XS))
-            .child(div().typeset(text::CAPTION).text_color(p.muted).child(t("Sees, for their assigned clients", "Ve, de sus clientes asignados")))
-            .child(h_flex().flex_wrap().gap_x(px(space::XL)).children(rows))
+            .gap(px(space::S))
+            .child(div().typeset(text::BODY_STRONG).child(t("Sees, for their assigned clients", "Ve, de sus clientes asignados")))
+            .child(v_flex().gap(px(space::S)).children(boxes))
             .child(div().typeset(text::CAPTION).text_color(p.faint).child(t(
                 "Phone, address, ID and notes never reach their device when off. The others are hidden on their screens and receipts.",
                 "Teléfono, dirección, cédula y notas no llegan a su dispositivo si están apagados. Los demás se ocultan en sus pantallas y recibos.",
             )))
     }
-}
 
-impl Render for TeamView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let p = palette(cx);
-        let members: Vec<Member> = self.members.iter().flatten().filter(|m| m.active).cloned().collect();
-        let rows: Vec<Div> = members.iter().map(|m| self.member_row(&p, m, cx)).collect();
+    /// Everyone by role, then inviting and the open invitations.
+    fn list(&self, p: &Palette, members: &[Member], cx: &mut Context<Self>) -> Div {
+        let mut groups = v_flex().gap(px(space::S));
+        for role in ROLES {
+            let people: Vec<&Member> = members.iter().filter(|m| m.role == role).collect();
+            // Every business has an admin; collectors and viewers show even when empty.
+            if people.is_empty() && role == "admin" {
+                continue;
+            }
+            groups = groups.child(group_title(p, role_look(role).0));
+            groups = if people.is_empty() {
+                groups.child(div().typeset(text::CAPTION).text_color(p.faint).child(t("No one yet", "Nadie todavía")))
+            } else {
+                groups.children(people.into_iter().map(|m| self.person_row(p, m, cx)))
+            };
+        }
         let invites = self.invites.clone();
         let role_menu = Dropdown::new("team-new-role").label(role_label(self.role)).items(ROLES.map(|r| {
             DropdownItem::new(
@@ -310,14 +388,8 @@ impl Render for TeamView {
         }));
         v_flex()
             .gap(px(space::M))
-            .when_some(self.error.clone(), |d, e| d.child(div().text_color(p.negative).child(sel(e))))
-            .when(self.members.is_none() && self.error.is_none(), |d| d.child(div().text_color(p.muted).child(t("Loading…", "Cargando…"))))
-            .child(v_flex().children(rows))
-            .child(div().typeset(text::CAPTION).text_color(p.muted).child(t(
-                "Admin: everything. Collector: their assigned clients, payments, expenses, income and receipts. Viewer: read only.",
-                "Administrador: todo. Cobrador: sus clientes asignados, pagos, gastos, ingresos y recibos. Solo lectura: ver.",
-            )))
-            .child(div().typeset(text::BODY_STRONG).child(t("Invite someone", "Invitar a alguien")))
+            .child(groups)
+            .child(div().pt(px(space::S)).typeset(text::BODY_STRONG).child(t("Invite someone", "Invitar a alguien")))
             .child(
                 h_flex().gap(px(space::S)).child(div().flex_1().min_w_0().child(Input::new(&self.email))).child(role_menu).child(
                     Button::new("team-invite")
@@ -365,7 +437,7 @@ impl Render for TeamView {
                             .child(div().truncate().child(sel(i.email.clone())))
                             .child(div().typeset(text::CAPTION).text_color(p.muted).child(line)),
                     )
-                    .child(pill(&p, t("Invited", "Invitado"), Tone::Neutral))
+                    .child(pill(p, t("Invited", "Invitado"), Tone::Neutral))
                     .child(
                         Button::new(SharedString::from(format!("team-revoke-{}", i.id)))
                             .ghost()
@@ -374,6 +446,22 @@ impl Render for TeamView {
                             .on_click(cx.listener(move |view, _, w, cx| view.mutate("invites:revoke", json!({ "inviteId": id }), w, cx))),
                     )
             }))
+    }
+}
+
+impl Render for TeamView {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = palette(cx);
+        let members: Vec<Member> = self.members.iter().flatten().filter(|m| m.active).cloned().collect();
+        let open = self.open.as_ref().and_then(|id| members.iter().find(|m| &m.id == id)).cloned();
+        v_flex()
+            .gap(px(space::M))
+            .when_some(self.error.clone(), |d, e| d.child(div().text_color(p.negative).child(sel(e))))
+            .when(self.members.is_none() && self.error.is_none(), |d| d.child(div().text_color(p.muted).child(t("Loading…", "Cargando…"))))
+            .map(|d| match &open {
+                Some(m) => d.child(self.person_page(&p, m, cx)),
+                None => d.when(self.members.is_some(), |d| d.child(self.list(&p, &members, cx))),
+            })
     }
 }
 

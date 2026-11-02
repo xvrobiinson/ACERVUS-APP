@@ -1,8 +1,9 @@
 use std::cell::Cell;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use gpui_kit::component::dialog::DialogButtonProps;
-use gpui_kit::component::{WindowExt as _, button::ButtonVariant};
+use gpui_kit::component::{WindowExt as _, button::ButtonVariant, h_flex, v_flex};
 use gpui_kit::*;
 
 use super::VzApp;
@@ -19,6 +20,81 @@ use crate::ui::forms::focus_once;
 use crate::ui::forms::loan::LoanForm;
 use crate::ui::forms::payment::PaymentForm;
 use crate::ui::forms::reason::{ReasonForm, ReasonKind};
+
+/// Whether anything was typed into a form. Escape or a click outside then
+/// asks before the typing is thrown away; the form's own Cancel button and
+/// the X close it as before.
+#[derive(Clone, Default)]
+pub(crate) struct Changed(Rc<Cell<bool>>);
+
+impl Changed {
+    /// The form, watched for typing.
+    pub(crate) fn watch(&self, form: impl IntoElement) -> Div {
+        let typed = self.0.clone();
+        div()
+            .capture_key_down(move |e: &KeyDownEvent, _, _| {
+                if changes_text(&e.keystroke) {
+                    typed.set(true);
+                }
+            })
+            .child(form)
+    }
+
+    /// The dialog's cancel check: closes at once when nothing was typed.
+    pub(crate) fn ask(&self) -> impl Fn(&ClickEvent, &mut Window, &mut App) -> bool + 'static {
+        let typed = self.0.clone();
+        move |_, window, cx| {
+            if !typed.get() {
+                return true;
+            }
+            ask_discard(window, cx);
+            false
+        }
+    }
+}
+
+/// A key that edits text: a character, Backspace, Delete, or paste, cut
+/// and undo. Moving around (Tab, arrows) and Enter don't count.
+fn changes_text(k: &Keystroke) -> bool {
+    let m = &k.modifiers;
+    if m.control || m.platform || m.alt {
+        return matches!(k.key.as_str(), "v" | "x" | "z");
+    }
+    matches!(k.key.as_str(), "backspace" | "delete")
+        || k.key_char.as_ref().is_some_and(|c| !c.is_empty() && !c.chars().any(char::is_control))
+}
+
+/// Over a form with typing in it: keep editing, or close both.
+fn ask_discard(window: &mut Window, cx: &mut App) {
+    window.open_dialog(cx, |dialog, _, cx| {
+        let p = crate::ui::theme::palette(cx);
+        dialog.title(t("Discard changes?", "¿Descartar los cambios?")).w(px(440.)).child(
+            v_flex()
+                .gap(px(crate::ui::theme::space::L))
+                .child(
+                    div()
+                        .text_color(p.muted)
+                        .child(t("What you typed in this form will be lost.", "Lo que escribiste en este formulario se perderá.")),
+                )
+                .child(
+                    h_flex()
+                        .justify_end()
+                        .gap(px(crate::ui::theme::space::S))
+                        .child(
+                            crate::ui::kit::Button::new("keep-editing")
+                                .label(t("Keep editing", "Seguir editando"))
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(crate::ui::kit::Button::new("discard").danger().label(t("Discard", "Descartar")).on_click(
+                            |_, window, cx| {
+                                window.close_dialog(cx);
+                                window.close_dialog(cx);
+                            },
+                        )),
+                ),
+        )
+    });
+}
 
 /// Routes the dialog's Confirm action (Enter) to the form's submit. Returns
 /// false so the dialog stays open; the form closes it after a successful save.
@@ -94,10 +170,11 @@ impl VzApp {
         let title = if existing.is_some() { t("Edit client", "Editar cliente") } else { t("New client", "Nuevo cliente") };
         let first = Cell::new(true);
         let dialog_form = form.clone();
+        let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
             let handle = dialog_form.read(cx).name.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
-            dialog.title(title).w(px(560.)).child(dialog_form.clone()).on_ok(confirm(&dialog_form))
+            dialog.title(title).w(px(560.)).child(changed.watch(dialog_form.clone())).on_ok(confirm(&dialog_form)).on_cancel(changed.ask())
         });
         form
     }
@@ -127,10 +204,16 @@ impl VzApp {
         };
         let first = Cell::new(true);
         let dialog_form = form.clone();
+        let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
             let handle = dialog_form.read(cx).first_focus(cx);
             focus_once(&first, &handle, window, cx);
-            dialog.title(title.clone()).w(px(1120.)).child(dialog_form.clone()).on_ok(confirm(&dialog_form))
+            dialog
+                .title(title.clone())
+                .w(px(1120.))
+                .child(changed.watch(dialog_form.clone()))
+                .on_ok(confirm(&dialog_form))
+                .on_cancel(changed.ask())
         });
         form
     }
@@ -152,10 +235,11 @@ impl VzApp {
             None => t("Record payment", "Registrar pago"),
         };
         let first = Cell::new(true);
+        let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
             let handle = form.read(cx).first_focus(cx);
             focus_once(&first, &handle, window, cx);
-            dialog.title(title).w(px(600.)).child(form.clone()).on_ok(confirm(&form))
+            dialog.title(title).w(px(600.)).child(changed.watch(form.clone())).on_ok(confirm(&form)).on_cancel(changed.ask())
         });
     }
 
@@ -177,10 +261,11 @@ impl VzApp {
             (None, CapitalKind::Withdrawal) => t("Withdraw capital", "Retirar capital"),
         };
         let first = Cell::new(true);
+        let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
             let handle = form.read(cx).amount.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
-            dialog.title(title).w(px(520.)).child(form.clone()).on_ok(confirm(&form))
+            dialog.title(title).w(px(520.)).child(changed.watch(form.clone())).on_ok(confirm(&form)).on_cancel(changed.ask())
         });
     }
 
@@ -192,10 +277,11 @@ impl VzApp {
         let form = cx.new(|cx| EntryForm::new(app, snap, kind, editing, window, cx));
         let title = EntryForm::title(kind, editing.is_some());
         let first = Cell::new(true);
+        let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
             let handle = form.read(cx).amount.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
-            dialog.title(title).w(px(560.)).child(form.clone()).on_ok(confirm(&form))
+            dialog.title(title).w(px(560.)).child(changed.watch(form.clone())).on_ok(confirm(&form)).on_cancel(changed.ask())
         });
     }
 
@@ -204,10 +290,16 @@ impl VzApp {
         let snap = self.snap.clone();
         let form = cx.new(|cx| AdjustForm::new(app, snap, window, cx));
         let first = Cell::new(true);
+        let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
             let handle = form.read(cx).capital.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
-            dialog.title(t("Adjust balances", "Ajustar saldos")).w(px(600.)).child(form.clone()).on_ok(confirm(&form))
+            dialog
+                .title(t("Adjust balances", "Ajustar saldos"))
+                .w(px(600.))
+                .child(changed.watch(form.clone()))
+                .on_ok(confirm(&form))
+                .on_cancel(changed.ask())
         });
     }
 
@@ -216,10 +308,11 @@ impl VzApp {
         let form = cx.new(|cx| ReasonForm::new(app, kind, window, cx));
         let title = kind.title();
         let first = Cell::new(true);
+        let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
             let handle = form.read(cx).reason.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
-            dialog.title(title).w(px(480.)).child(form.clone()).on_ok(confirm(&form))
+            dialog.title(title).w(px(480.)).child(changed.watch(form.clone())).on_ok(confirm(&form)).on_cancel(changed.ask())
         });
     }
 
@@ -513,10 +606,16 @@ impl VzApp {
         let settings = self.settings().clone();
         let form = cx.new(|cx| crate::ui::forms::receipt_text::ReceiptTextForm::new(app, &settings, window, cx));
         let first = Cell::new(true);
+        let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
             let handle = form.read(cx).heading.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
-            dialog.title(t("Receipt wording", "Texto de los recibos")).w(px(720.)).child(form.clone()).on_ok(confirm(&form))
+            dialog
+                .title(t("Receipt wording", "Texto de los recibos"))
+                .w(px(720.))
+                .child(changed.watch(form.clone()))
+                .on_ok(confirm(&form))
+                .on_cancel(changed.ask())
         });
     }
 
@@ -529,10 +628,16 @@ impl VzApp {
         let app = cx.entity().downgrade();
         let form = cx.new(|cx| crate::ui::forms::reset::ResetForm::new(app, window, cx));
         let first = Cell::new(true);
+        let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
             let handle = form.read(cx).confirm.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
-            dialog.title(t("Reset all data", "Borrar todos los datos")).w(px(520.)).child(form.clone()).on_ok(confirm(&form))
+            dialog
+                .title(t("Reset all data", "Borrar todos los datos"))
+                .w(px(520.))
+                .child(changed.watch(form.clone()))
+                .on_ok(confirm(&form))
+                .on_cancel(changed.ask())
         });
     }
 
@@ -546,14 +651,16 @@ impl VzApp {
         let app = cx.entity().downgrade();
         let form = cx.new(|cx| crate::ui::forms::business::BusinessDetailsForm::new(app, id, name, zone, window, cx));
         let first = Cell::new(true);
+        let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
             let handle = form.read(cx).name.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
             dialog
                 .title(t("Business name and time zone", "Nombre del negocio y zona horaria"))
                 .w(px(520.))
-                .child(form.clone())
+                .child(changed.watch(form.clone()))
                 .on_ok(confirm(&form))
+                .on_cancel(changed.ask())
         });
     }
 
@@ -561,8 +668,14 @@ impl VzApp {
     pub fn open_delete_account(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let app = cx.entity().downgrade();
         let form = cx.new(|cx| crate::ui::forms::business::DeleteAccountForm::new(app, window, cx));
+        let changed = Changed::default();
         window.open_dialog(cx, move |dialog, _, _| {
-            dialog.title(t("Delete my account", "Borrar mi cuenta")).w(px(520.)).child(form.clone()).on_ok(confirm(&form))
+            dialog
+                .title(t("Delete my account", "Borrar mi cuenta"))
+                .w(px(520.))
+                .child(changed.watch(form.clone()))
+                .on_ok(confirm(&form))
+                .on_cancel(changed.ask())
         });
     }
 
@@ -571,10 +684,16 @@ impl VzApp {
         let app = cx.entity().downgrade();
         let form = cx.new(|cx| crate::ui::forms::business::NewBusinessForm::new(app, window, cx));
         let first = Cell::new(true);
+        let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
             let handle = form.read(cx).name.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
-            dialog.title(t("New business", "Nuevo negocio")).w(px(520.)).child(form.clone()).on_ok(confirm(&form))
+            dialog
+                .title(t("New business", "Nuevo negocio"))
+                .w(px(520.))
+                .child(changed.watch(form.clone()))
+                .on_ok(confirm(&form))
+                .on_cancel(changed.ask())
         });
     }
 
@@ -583,10 +702,88 @@ impl VzApp {
         let app = cx.entity().downgrade();
         let form = cx.new(|cx| crate::ui::forms::business::DeleteBusinessForm::new(app, business_id, name, window, cx));
         let first = Cell::new(true);
+        let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
             let handle = form.read(cx).confirm.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
-            dialog.title(t("Delete this business?", "¿Eliminar este negocio?")).w(px(520.)).child(form.clone()).on_ok(confirm(&form))
+            dialog
+                .title(t("Delete this business?", "¿Eliminar este negocio?"))
+                .w(px(520.))
+                .child(changed.watch(form.clone()))
+                .on_ok(confirm(&form))
+                .on_cancel(changed.ask())
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    // The kit's glob import also brings GPUI's `test` macro; keep the
+    // built-in one for what `#[gpui::test]` expands to.
+    use ::gpui;
+    use core::prelude::v1::test;
+
+    use super::*;
+    use crate::ui::forms::test_app;
+
+    fn key(s: &str) -> Keystroke {
+        Keystroke::parse(s).unwrap()
+    }
+
+    #[test]
+    fn only_editing_keys_count_as_typing() {
+        let mut a = key("a");
+        a.key_char = Some("a".into());
+        assert!(changes_text(&a));
+        assert!(changes_text(&key("backspace")));
+        assert!(changes_text(&key("ctrl-v")));
+        for k in ["tab", "shift-tab", "enter", "escape", "down", "ctrl-a"] {
+            assert!(!changes_text(&key(k)), "{k}");
+        }
+    }
+
+    /// A form nobody typed in closes on Escape (as on a click outside); one
+    /// with typing stays and asks first.
+    #[gpui::test]
+    fn typing_keeps_a_form_open_until_discarded(cx: &mut TestAppContext) {
+        let (app, cx) = test_app(cx, Store::in_memory());
+        cx.update(|window, cx| app.update(cx, |a, cx| a.open_entry_form(EntryKind::Expense, None, window, cx)));
+        cx.run_until_parked();
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(!cx.update(|window, cx| window.has_active_dialog(cx)), "an untouched form just closes");
+
+        cx.update(|window, cx| app.update(cx, |a, cx| a.open_entry_form(EntryKind::Expense, None, window, cx)));
+        cx.run_until_parked();
+        cx.simulate_keystrokes("1 2");
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(cx.update(|window, cx| window.has_active_dialog(cx)), "typing is not thrown away");
+        // Discard closes the question and the form.
+        cx.update(|window, cx| {
+            window.close_dialog(cx);
+            window.close_dialog(cx);
+        });
+        assert!(!cx.update(|window, cx| window.has_active_dialog(cx)));
+    }
+
+    /// Escape climbs one level inside a settings popup, then closes it.
+    #[gpui::test]
+    fn escape_goes_back_then_closes_settings(cx: &mut TestAppContext) {
+        use crate::ui::screens::settings::{SettingsPage, SettingsPanel};
+        let (app, cx) = test_app(cx, Store::in_memory());
+        cx.update(|_, cx| {
+            app.update(cx, |a, cx| {
+                a.settings_panel = Some(SettingsPanel::Receipts);
+                a.settings_page = Some(SettingsPage::ReceiptLook);
+                cx.notify();
+            })
+        });
+        cx.run_until_parked();
+        cx.simulate_keystrokes("escape");
+        let state = |cx: &mut VisualTestContext| cx.update(|_, cx| (app.read(cx).settings_panel, app.read(cx).settings_page));
+        assert_eq!(state(cx), (Some(SettingsPanel::Receipts), None), "back to Receipts");
+        cx.simulate_keystrokes("escape");
+        assert_eq!(state(cx), (None, None), "then closed");
     }
 }

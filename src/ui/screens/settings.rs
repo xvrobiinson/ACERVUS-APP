@@ -40,9 +40,10 @@ enum CompanyPart {
 const PANEL_MAX: f32 = 760.0;
 
 /// A group of settings that opens in a popup from its row on the Settings
-/// page. Business and Cloud sync stay on the page itself.
+/// page. Cloud sync stays on the page itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SettingsPanel {
+    Business,
     Receipts,
     Team,
     Appearance,
@@ -57,6 +58,7 @@ pub(crate) enum SettingsPanel {
 impl SettingsPanel {
     fn title(self) -> &'static str {
         match self {
+            Self::Business => t("Business", "Negocio"),
             Self::Receipts => t("Receipts", "Recibos"),
             Self::Team => t("Team", "Equipo"),
             Self::Appearance => t("Appearance", "Apariencia"),
@@ -71,6 +73,7 @@ impl SettingsPanel {
 
     fn summary(self) -> &'static str {
         match self {
+            Self::Business => t("Company details and logo", "Datos de la empresa y logo"),
             Self::Receipts => t("What prints, when to print, wording", "Qué se imprime, cuándo y con qué texto"),
             Self::Team => t("People, roles, invitations, what collectors see", "Personas, roles, invitaciones, qué ven los cobradores"),
             Self::Appearance => t("Light or dark, dashboard chart", "Claro u oscuro, gráfico del panel"),
@@ -85,6 +88,7 @@ impl SettingsPanel {
 
     fn icon(self) -> IconName {
         match self {
+            Self::Business => IconName::Building2,
             Self::Receipts => IconName::ReceiptText,
             Self::Team => IconName::Users,
             Self::Appearance => IconName::Palette,
@@ -100,10 +104,39 @@ impl SettingsPanel {
     /// (icon color, square fill) for its row.
     fn hue(self, p: &Palette) -> (Hsla, Hsla) {
         match self {
-            Self::Receipts | Self::Lending => (p.accent_text, p.accent_tint),
+            Self::Business | Self::Receipts | Self::Lending => (p.accent_text, p.accent_tint),
             Self::Appearance | Self::Data => (p.info, p.info_tint),
             Self::Formats | Self::Privacy | Self::Team => (p.positive, p.positive_tint),
             Self::Keyboard | Self::About => (p.muted, p.neutral_tint),
+        }
+    }
+}
+
+/// A page inside a category's popup, opened from a row on it. Its back
+/// button returns to the category.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SettingsPage {
+    ReceiptLook,
+    ReceiptParts,
+}
+
+impl SettingsPage {
+    fn title(self) -> &'static str {
+        match self {
+            Self::ReceiptLook => t("Receipt customization", "Personalizar recibos"),
+            Self::ReceiptParts => t("Payment receipt settings", "Ajustes del recibo de pago"),
+        }
+    }
+    fn summary(self) -> &'static str {
+        match self {
+            Self::ReceiptLook => t("Company info, wording and client info", "Datos de la empresa, texto y datos del cliente"),
+            Self::ReceiptParts => t("What payment and loan receipts show", "Qué muestran los recibos de pago y de préstamo"),
+        }
+    }
+    fn icon(self) -> IconName {
+        match self {
+            Self::ReceiptLook => IconName::Pencil,
+            Self::ReceiptParts => IconName::ReceiptText,
         }
     }
 }
@@ -237,7 +270,6 @@ impl VzApp {
         let two = w >= Width::Medium;
         v_flex()
             .gap(px(space::S))
-            .child(div().typeset(text::BODY_STRONG).child(t("Shown on payment receipts", "En los recibos de pago")))
             .child(div().typeset(text::CAPTION).text_color(p.muted).child(t(
                 "These apply to payment and loan receipts. The business name, amounts paid, dates and receipt number always print. A loan receipt is the client's agreement: with the rate or amount off, it no longer shows those terms or the \"How payments work\" lines.",
                 "Se aplican a los recibos de pago y de préstamo. El nombre del negocio, los montos pagados, las fechas y el número de recibo siempre se imprimen. El recibo del préstamo es el acuerdo con el cliente: sin la tasa o el monto, ya no muestra esos términos ni las líneas de \"Cómo funcionan los pagos\".",
@@ -259,11 +291,21 @@ impl VzApp {
             )
     }
 
-    /// A category's popup: its title, a close button and its settings,
-    /// scrolling inside when they are taller than the window. Escape or
-    /// the button closes it; a click outside doesn't, so picking from a
-    /// menu inside can never close it by accident.
-    fn settings_popup(&self, p: &Palette, which: SettingsPanel, body: AnyElement, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    /// A category's popup: its title (or, on a page inside it, a back
+    /// button and the page's title), a close button and its settings,
+    /// scrolling inside when they are taller than the window. A click
+    /// outside, the button or Escape closes it (Escape goes back first on a
+    /// page inside). Menus open from it draw above the veil, so picking from
+    /// one never reaches it.
+    fn settings_popup(
+        &self,
+        p: &Palette,
+        which: SettingsPanel,
+        page: Option<SharedString>,
+        body: AnyElement,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let vp = window.viewport_size();
         let (vw, vh) = (f32::from(vp.width), f32::from(vp.height));
         div()
@@ -276,9 +318,11 @@ impl VzApp {
             .justify_center()
             .items_start()
             .pt(px(56.))
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_settings_panel(cx)))
             .child(
                 v_flex()
                     .id("settings-popup")
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .w(px((vw - 48.).clamp(320., PANEL_MAX)))
                     .max_h(px((vh - 104.).max(240.)))
                     .bg(crate::ui::kit::face(p))
@@ -295,8 +339,26 @@ impl VzApp {
                             .py(px(space::L))
                             .border_b_1()
                             .border_color(p.rule)
-                            .child(icon_square(which.icon(), which.hue(p), 34.))
-                            .child(div().flex_1().min_w_0().typeset(text::HEADING).text_size(px(17.)).child(which.title()))
+                            .map(|d| match page.clone() {
+                                Some(title) => d
+                                    .child(
+                                        Button::new("settings-back")
+                                            .ghost()
+                                            .small()
+                                            .icon(IconName::ArrowLeft)
+                                            .tooltip({
+                                                let parent = which.title();
+                                                tr!("Back to {parent}", "Volver a {parent}")
+                                            })
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.settings_back(cx);
+                                            })),
+                                    )
+                                    .child(div().flex_1().min_w_0().truncate().typeset(text::HEADING).text_size(px(17.)).child(title)),
+                                None => d
+                                    .child(icon_square(which.icon(), which.hue(p), 34.))
+                                    .child(div().flex_1().min_w_0().typeset(text::HEADING).text_size(px(17.)).child(which.title())),
+                            })
                             .child(
                                 Button::new("settings-close")
                                     .ghost()
@@ -312,9 +374,36 @@ impl VzApp {
     }
 
     pub(crate) fn close_settings_panel(&mut self, cx: &mut Context<Self>) {
+        self.settings_page = None;
         if self.settings_panel.take().is_some() {
             cx.notify();
         }
+    }
+
+    /// One level up inside the popup; false when it is already at the top.
+    pub(crate) fn settings_back(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.settings_page.take().is_some() {
+            cx.notify();
+            return true;
+        }
+        match self.team_view.clone().filter(|_| self.settings_panel == Some(SettingsPanel::Team)) {
+            Some(team) => team.update(cx, |view, cx| view.back(cx)),
+            None => false,
+        }
+    }
+
+    /// A row on a category's popup that opens a page inside it.
+    fn page_row(&self, p: &Palette, page: SettingsPage, cx: &mut Context<Self>) -> ListRow {
+        ListRow::new(SharedString::from(format!("settings-page-{page:?}")))
+            .boxed(true)
+            .leading(icon_square(page.icon(), (p.accent_text, p.accent_tint), 32.))
+            .title(page.title())
+            .subtitle(page.summary())
+            .trailing(icon(IconName::ChevronRight, p.muted, 16.))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.settings_page = Some(page);
+                cx.notify();
+            }))
     }
 
     /// Category rows, two to a line when there is room, each opening its popup.
@@ -332,6 +421,7 @@ impl VzApp {
                     .trailing(icon(IconName::ChevronRight, p.muted, 16.))
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.settings_panel = Some(which);
+                        this.settings_page = None;
                         cx.notify();
                     }))
                     .into_any_element()
@@ -495,16 +585,16 @@ impl VzApp {
                                 .on_click(cx.listener(|this, _, w, cx| this.remove_logo(w, cx))),
                         )
                     }),
-            )))
-            .child(row(
-                &p,
-                t("Language", "Idioma"),
-                None,
-                Segmented::pick("lang", lang_opts.iter().copied(), s.language, cx, |app, v, w, cx| app.update_settings(|s| s.language = v, w, cx)),
-            ));
+            )));
 
         let general = v_flex()
             .gap(px(space::L))
+            .child(row(
+                &p,
+                t("Language", "Idioma"),
+                Some(t("This PC's language for the app and receipts", "El idioma de esta PC para la app y los recibos")),
+                select("lang", &lang_opts, s.language, cx, |app, v, w, cx| app.update_settings(|s| s.language = v, w, cx)),
+            ))
             .child(row(
                 &p,
                 t("Currency", "Moneda"),
@@ -572,31 +662,8 @@ impl VzApp {
                     )),
             );
 
-        let receipts =
-            v_flex()
-                .gap(px(space::L))
-                .when(manage, |d| {
-                    d.child(row(
-                &p,
-                t("Open the receipt after each payment", "Abrir el recibo después de cada pago"),
-                Some(t("It opens in your browser, ready to print", "Se abre en tu navegador, listo para imprimir")),
-                Switch::new("rcpt-after").checked(s.receipt_after_payment).on_click(cx.listener(|this, checked: &bool, w, cx| {
-                    let v = *checked;
-                    this.update_settings(|s| s.receipt_after_payment = v, w, cx)
-                })),
-            ))
-            .child(row(
-                &p,
-                t("Open the loan receipt after each new loan", "Abrir el recibo del préstamo al crear cada préstamo"),
-                Some(t(
-                    "Amount, rate, the installment schedule and signature lines for the client",
-                    "Monto, tasa, el calendario de cuotas y líneas de firma para el cliente",
-                )),
-                Switch::new("rcpt-loan").checked(s.receipt_after_loan).on_click(cx.listener(|this, checked: &bool, w, cx| {
-                    let v = *checked;
-                    this.update_settings(|s| s.receipt_after_loan = v, w, cx)
-                })),
-            ))
+        let receipt_look = v_flex()
+            .gap(px(space::L))
             .child(row(
                 &p,
                 t("Company info to add to every receipt", "Datos de la empresa en cada recibo"),
@@ -686,20 +753,52 @@ impl VzApp {
                         }))
                     }),
                 ),
+            ));
+        let receipt_parts = self.receipt_parts(&p, s.receipt_show, w, cx);
+        let receipt_pages = manage.then(|| {
+            v_flex().gap(px(space::S)).child(self.page_row(&p, SettingsPage::ReceiptLook, cx)).child(self.page_row(
+                &p,
+                SettingsPage::ReceiptParts,
+                cx,
             ))
-            .child(self.receipt_parts(&p, s.receipt_show, w, cx))
-                })
+        });
+        let receipts = v_flex()
+            .gap(px(space::L))
+            .when(manage, |d| {
+                d.child(row(
+                    &p,
+                    t("Open the receipt after each payment", "Abrir el recibo después de cada pago"),
+                    Some(t("It opens in your browser, ready to print", "Se abre en tu navegador, listo para imprimir")),
+                    Switch::new("rcpt-after").checked(s.receipt_after_payment).on_click(cx.listener(|this, checked: &bool, w, cx| {
+                        let v = *checked;
+                        this.update_settings(|s| s.receipt_after_payment = v, w, cx)
+                    })),
+                ))
                 .child(row(
                     &p,
-                    t("Receipts folder", "Carpeta de recibos"),
-                    Some(t("Every receipt is also saved here", "Cada recibo también se guarda aquí")),
-                    Button::new("open-receipts").ghost().icon(IconName::FolderOpen).label(t("Open folder", "Abrir carpeta")).on_click(
-                        cx.listener(move |this, _, w, cx| {
-                            let _ = std::fs::create_dir_all(&receipts_dir);
-                            this.open_path(receipts_dir.clone(), false, w, cx);
-                        }),
-                    ),
-                ));
+                    t("Open the loan receipt after each new loan", "Abrir el recibo del préstamo al crear cada préstamo"),
+                    Some(t(
+                        "Amount, rate, the installment schedule and signature lines for the client",
+                        "Monto, tasa, el calendario de cuotas y líneas de firma para el cliente",
+                    )),
+                    Switch::new("rcpt-loan").checked(s.receipt_after_loan).on_click(cx.listener(|this, checked: &bool, w, cx| {
+                        let v = *checked;
+                        this.update_settings(|s| s.receipt_after_loan = v, w, cx)
+                    })),
+                ))
+            })
+            .when_some(receipt_pages, |d, pages| d.child(pages))
+            .child(row(
+                &p,
+                t("Receipts folder", "Carpeta de recibos"),
+                Some(t("Every receipt is also saved here", "Cada recibo también se guarda aquí")),
+                Button::new("open-receipts").ghost().icon(IconName::FolderOpen).label(t("Open folder", "Abrir carpeta")).on_click(
+                    cx.listener(move |this, _, w, cx| {
+                        let _ = std::fs::create_dir_all(&receipts_dir);
+                        this.open_path(receipts_dir.clone(), false, w, cx);
+                    }),
+                ),
+            ));
 
         let dashboard = v_flex()
             .gap(px(space::L))
@@ -801,7 +900,7 @@ impl VzApp {
                                 .text_color(p.muted)
                                 .child(t("Backups in the backups folder", "Copias en la carpeta de copias")),
                         )
-                        .children(backups.iter().take(5).enumerate().map(|(i, (path, when))| {
+                        .children(backups.iter().take(2).enumerate().map(|(i, (path, when))| {
                             let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                             let when = chrono::DateTime::<chrono::Local>::from(*when).format("%Y-%m-%d %H:%M").to_string();
                             let path = path.clone();
@@ -1000,9 +1099,10 @@ impl VzApp {
                 .child(kbd(&p, k))
         }));
 
-        // Business and Cloud sync on the page, side by side when there is
-        // room; everything else behind a row that opens it in a popup.
+        // Cloud sync on the page; everything else behind a row that opens
+        // it in a popup.
         let panels: Vec<SettingsPanel> = [
+            SettingsPanel::Business,
             SettingsPanel::Receipts,
             SettingsPanel::Team,
             SettingsPanel::Appearance,
@@ -1028,9 +1128,19 @@ impl VzApp {
         }
         let team = self.team_view.clone();
         let popup = self.settings_panel.filter(|x| panels.contains(x)).map(|which| {
+            let page: Option<SharedString> = match which {
+                SettingsPanel::Receipts => self.settings_page.map(|x| x.title().into()),
+                SettingsPanel::Team => team.as_ref().and_then(|v| v.read(cx).person_title()),
+                _ => None,
+            };
             let body = match which {
+                SettingsPanel::Business => business.into_any_element(),
                 SettingsPanel::Team => team.clone().map_or_else(|| div().into_any_element(), IntoElement::into_any_element),
-                SettingsPanel::Receipts => receipts.into_any_element(),
+                SettingsPanel::Receipts => match self.settings_page {
+                    Some(SettingsPage::ReceiptLook) => receipt_look.into_any_element(),
+                    Some(SettingsPage::ReceiptParts) => receipt_parts.into_any_element(),
+                    None => receipts.into_any_element(),
+                },
                 SettingsPanel::Appearance => dashboard.into_any_element(),
                 SettingsPanel::Formats => general.into_any_element(),
                 SettingsPanel::Lending => lending.into_any_element(),
@@ -1048,9 +1158,8 @@ impl VzApp {
                 SettingsPanel::Keyboard => shortcuts.into_any_element(),
                 SettingsPanel::About => about.into_any_element(),
             };
-            self.settings_popup(&p, which, body, window, cx)
+            self.settings_popup(&p, which, page, body, window, cx)
         });
-        let wide = w >= Width::Wide;
         let page = v_flex()
             .w_full()
             .gap(px(w.gap()))
@@ -1063,35 +1172,12 @@ impl VzApp {
                 )
                 .pb_0(),
             )
-            .child(
-                div()
-                    .flex()
-                    .gap(px(w.gap()))
-                    .when(wide, |d| d.flex_row().items_start())
-                    .when(!wide, |d| d.flex_col())
-                    .child(
-                        section(
-                            &p,
-                            t("Business", "Negocio"),
-                            t("Company details, logo and language", "Datos de la empresa, logo e idioma"),
-                            business,
-                        )
-                        .flex_1()
-                        .flex_basis(px(0.))
-                        .min_w_0(),
-                    )
-                    .child(
-                        section(
-                            &p,
-                            t("Cloud sync", "Sincronización en la nube"),
-                            t("Your business on this PC and the phone app", "Tu negocio en esta PC y en la app del teléfono"),
-                            sync,
-                        )
-                        .flex_1()
-                        .flex_basis(px(0.))
-                        .min_w_0(),
-                    ),
-            )
+            .child(section(
+                &p,
+                t("Cloud sync", "Sincronización en la nube"),
+                t("Your business on this PC and the phone app", "Tu negocio en esta PC y en la app del teléfono"),
+                sync,
+            ))
             .child(subhead(&p, t("Preferences and configuration", "Preferencias y configuración")))
             .child(self.category_rows(&p, &panels, w, cx))
             .into_any_element();

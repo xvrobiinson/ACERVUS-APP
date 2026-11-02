@@ -124,6 +124,8 @@ pub struct VzApp {
     pub(crate) settings_facts: Option<crate::ui::screens::settings::SettingsFacts>,
     /// The Settings category open in a popup, if any.
     pub(crate) settings_panel: Option<crate::ui::screens::settings::SettingsPanel>,
+    /// A page inside the open settings popup.
+    pub(crate) settings_page: Option<crate::ui::screens::settings::SettingsPage>,
     /// Settings › Team while it is open.
     pub(crate) team_view: Option<Entity<crate::ui::screens::team::TeamView>>,
     pub(crate) route: Route,
@@ -261,6 +263,7 @@ impl VzApp {
             file_dialog: None,
             settings_facts: None,
             settings_panel: None,
+            settings_page: None,
             route: Route::Overview,
             history: Vec::new(),
             focus,
@@ -311,6 +314,19 @@ impl VzApp {
                 "wording" => app.open_receipt_text_form(window, cx),
                 "sign-in" => app.open_sign_in(window, cx),
                 "payments" => app.navigate(Route::Payments, window, cx),
+                "settings-business" | "settings-formats" | "settings-data" | "settings-receipt-look" | "settings-receipt-parts" => {
+                    use crate::ui::screens::settings::{SettingsPage, SettingsPanel};
+                    app.navigate(Route::Settings, window, cx);
+                    let (panel, page) = match start.as_str() {
+                        "settings-business" => (SettingsPanel::Business, None),
+                        "settings-formats" => (SettingsPanel::Formats, None),
+                        "settings-data" => (SettingsPanel::Data, None),
+                        "settings-receipt-look" => (SettingsPanel::Receipts, Some(SettingsPage::ReceiptLook)),
+                        _ => (SettingsPanel::Receipts, Some(SettingsPage::ReceiptParts)),
+                    };
+                    app.settings_panel = Some(panel);
+                    app.settings_page = page;
+                }
                 "settings-team" => {
                     app.navigate(Route::Settings, window, cx);
                     app.settings_panel = Some(crate::ui::screens::settings::SettingsPanel::Team);
@@ -468,6 +484,7 @@ impl VzApp {
         let route = if route == Route::Analytics && !self.can(Need::Manage) { Route::Overview } else { route };
         // A settings popup belongs to the Settings page.
         self.settings_panel = None;
+        self.settings_page = None;
         if route != self.route {
             self.history.push(self.route);
             if self.history.len() > 50 {
@@ -922,10 +939,13 @@ impl Render for VzApp {
             })
             .on_action(cx.listener(Self::toggle_sidebar))
             .on_action(cx.listener(Self::go_back))
-            // Escape closes an open settings popup.
+            // Escape goes back from a page inside a settings popup, then
+            // closes the popup.
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
                 if e.keystroke.key == "escape" && this.settings_panel.is_some() {
-                    this.close_settings_panel(cx);
+                    if !this.settings_back(cx) {
+                        this.close_settings_panel(cx);
+                    }
                     cx.stop_propagation();
                 }
             }))
