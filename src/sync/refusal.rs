@@ -52,6 +52,10 @@ pub fn describe(e: &Value, s: &Settings) -> String {
             "Las cuotas no suman el préstamo. Revisa el plan de pagos.",
         ),
         "loan_closed" => t("This loan is closed", "Este préstamo está cerrado"),
+        "sole_admin" => t(
+            "You're the only admin of a business. Make someone else an admin or delete the business first.",
+            "Eres el único administrador de un negocio. Haz administrador a otra persona o borra el negocio primero.",
+        ),
         "last_admin" => t("A business needs at least one admin.", "Un negocio necesita al menos un administrador."),
         "already_member" => t("That person is already a member.", "Esa persona ya es miembro."),
         "already_decided" => t("Someone already confirmed or rejected this payment.", "Alguien ya confirmó o rechazó este pago."),

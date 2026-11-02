@@ -3,6 +3,7 @@
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{WindowExt as _, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::json;
 
@@ -217,6 +218,105 @@ impl Render for BusinessDetailsForm {
                 self.busy,
                 cx.listener(|this, _, w, cx| this.submit(w, cx)),
             ))
+    }
+}
+
+/// Deleting your own account (Settings › Cloud sync): it waits 7 days and
+/// can be cancelled meanwhile, here or in the phone app.
+pub struct DeleteAccountForm {
+    app: WeakEntity<VzApp>,
+    /// What the cloud said: when it deletes, and where the person is the only admin.
+    deletes_at: Option<i64>,
+    sole_admin_of: Vec<String>,
+    loaded: bool,
+    busy: bool,
+    error: Option<String>,
+}
+
+impl DeleteAccountForm {
+    pub fn new(app: WeakEntity<VzApp>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let this = Self { app, deletes_at: None, sole_admin_of: Vec::new(), loaded: false, busy: false, error: None };
+        cx.defer_in(window, |form, window, cx| form.load(window, cx));
+        this
+    }
+
+    fn load(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let answer = self.app.read_with(cx, |app, _| app.cloud_query("account:status", json!({}))).ok().flatten();
+        cx.spawn_in(window, async move |this, cx| {
+            let outcome = match answer {
+                Some(a) => a.await.unwrap_or(Outcome::NotSent),
+                None => Outcome::NotSent,
+            };
+            let _ = this.update_in(cx, |form, _, cx| {
+                match &outcome {
+                    Outcome::Accepted(v) => {
+                        form.deletes_at = v["deletesAt"].as_i64();
+                        form.sole_admin_of =
+                            v["soleAdminOf"].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
+                        form.loaded = true;
+                    }
+                    other => form.error = form.app.read_with(cx, |app, _| app.call_failed(other)).ok(),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn call(&mut self, mutation: &'static str, window: &mut Window, cx: &mut Context<Self>) {
+        self.busy = true;
+        self.error = None;
+        cx.notify();
+        send(&self.app, mutation, json!({}), window, cx, |this, outcome, window, cx| {
+            this.busy = false;
+            if !matches!(outcome, Outcome::Accepted(_)) {
+                this.error = this.app.read_with(cx, |app, _| app.call_failed(&outcome)).ok();
+            }
+            this.load(window, cx);
+            cx.notify();
+        });
+    }
+
+    pub fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.loaded && !self.busy && self.deletes_at.is_none() && self.sole_admin_of.is_empty() {
+            self.call("account:requestDeletion", window, cx);
+        }
+    }
+}
+
+impl Render for DeleteAccountForm {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let p = palette(cx);
+        let body = v_flex().gap(px(space::L)).children(error_banner(&p, &self.error));
+        if !self.loaded {
+            return body.when(self.error.is_none(), |d| d.child(div().text_color(p.muted).child(t("Loading…", "Cargando…"))));
+        }
+        if let Some(ms) = self.deletes_at {
+            let when = chrono::DateTime::from_timestamp_millis(ms).map(|d| d.with_timezone(&chrono::Local).date_naive());
+            let ds = self.app.read_with(cx, |app, _| app.settings().date_style).ok();
+            let when = when.zip(ds).map(|(d, s)| s.format(d)).unwrap_or_default();
+            return body
+                .child(div().typeset(text::BODY).child(tr!("Your account will be deleted on {when}.", "Tu cuenta se borrará el {when}.")))
+                .child(footer(
+                    &p,
+                    t("Keep my account", "Conservar mi cuenta"),
+                    true,
+                    self.busy,
+                    cx.listener(|this, _, w, cx| this.call("account:cancelDeletion", w, cx)),
+                ));
+        }
+        if !self.sole_admin_of.is_empty() {
+            let names = self.sole_admin_of.join(", ");
+            return body.child(div().typeset(text::BODY).child(tr!(
+                "You're the only admin of {names}. Make someone else an admin or delete the business before deleting your account.",
+                "Eres el único administrador de {names}. Haz administrador a otra persona o borra el negocio antes de borrar tu cuenta."
+            )));
+        }
+        body.child(div().typeset(text::BODY).text_color(p.muted).child(t(
+            "After 7 days your sign-in and personal details are deleted and you leave every business. The records you made stay with each business, shown as “Former team member”. Encrypted backups expire within 90 days. Until then, you can cancel.",
+            "Después de 7 días se borran tu acceso y tus datos personales y sales de todos los negocios. Los registros que hiciste quedan en cada negocio, como “Antiguo miembro del equipo”. Los respaldos cifrados vencen en 90 días. Hasta entonces, puedes cancelar.",
+        )))
+        .child(danger_footer("delete-account", t("Delete my account", "Borrar mi cuenta"), !self.busy, cx.listener(|this, _, w, cx| this.submit(w, cx))))
     }
 }
 

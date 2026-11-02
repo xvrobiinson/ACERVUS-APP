@@ -89,6 +89,12 @@ impl VzApp {
             .gap(px(space::M))
             .child(div().text_color(p.muted).child(tr!("Signed in as {email}", "Sesión iniciada como {email}")))
             .child(
+                Button::new("sync-delete-account")
+                    .danger_ghost()
+                    .label(t("Delete my account", "Borrar mi cuenta"))
+                    .on_click(cx.listener(|this, _, w, cx| this.open_delete_account(w, cx))),
+            )
+            .child(
                 Button::new("sync-sign-out")
                     .ghost()
                     .label(t("Sign out", "Cerrar sesión"))

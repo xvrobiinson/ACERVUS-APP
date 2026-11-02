@@ -56,6 +56,7 @@ submit_impl!(
     crate::ui::forms::receipt_text::ReceiptTextForm,
     crate::ui::forms::business::NewBusinessForm,
     crate::ui::forms::business::BusinessDetailsForm,
+    crate::ui::forms::business::DeleteAccountForm,
     crate::ui::forms::business::DeleteBusinessForm
 );
 
@@ -553,6 +554,15 @@ impl VzApp {
                 .w(px(520.))
                 .child(form.clone())
                 .on_ok(confirm(&form))
+        });
+    }
+
+    /// Deleting your own account, or cancelling that.
+    pub fn open_delete_account(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let app = cx.entity().downgrade();
+        let form = cx.new(|cx| crate::ui::forms::business::DeleteAccountForm::new(app, window, cx));
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog.title(t("Delete my account", "Borrar mi cuenta")).w(px(520.)).child(form.clone()).on_ok(confirm(&form))
         });
     }
 
