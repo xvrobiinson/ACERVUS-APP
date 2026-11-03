@@ -157,6 +157,7 @@ impl ReasonForm {
                         return Err(t("Someone already confirmed or rejected this payment.", "Alguien ya confirmó o rechazó este pago.")
                             .to_string());
                     };
+                    app.motion.mark_deciding(pending.clone());
                     Change::RejectPending { pending, reason }
                 }
             };

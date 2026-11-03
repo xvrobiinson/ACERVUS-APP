@@ -62,3 +62,48 @@ pub fn pop(t: f32) -> f32 {
 pub fn swing(t: f32) -> f32 {
     (t * std::f32::consts::PI * 5.0).sin() * 0.28 * (1.0 - t).powi(2)
 }
+
+/// A row that rises in as row `index` of its list, and glows `tint` for a
+/// moment behind its content when it was just added.
+pub fn row_in(row: impl IntoElement, id: impl Into<ElementId>, index: usize, glow: Option<Hsla>) -> AnyElement {
+    let id = id.into();
+    let row = match glow {
+        Some(tint) => div()
+            .child(row)
+            .with_animation(super::interact::scoped(&id, "glow"), Animation::new(motion::GLOW), move |d, t| {
+                let a = if t < 0.35 { 1.0 } else { 1.0 - ease_out((t - 0.35) / 0.65) };
+                d.bg(super::interact::faded(tint, a))
+            })
+            .into_any_element(),
+        None => row.into_any_element(),
+    };
+    rise_nth(row, super::interact::scoped(&id, "rise"), index)
+}
+
+/// How long a removed row takes to slide out and close its gap.
+pub const FOLD: Duration = Duration::from_millis(440);
+
+/// A row on its way out: it slides right while fading, then its height
+/// closes so the rows below move up.
+pub fn fold_away(el: impl IntoElement, id: impl Into<ElementId>) -> AnyElement {
+    div()
+        .overflow_hidden()
+        .child(el)
+        .with_animation(id, Animation::new(FOLD), |d, t| {
+            let out = ease_out((t / 0.5).min(1.0));
+            let close = ease_out(((t - 0.5) / 0.5).max(0.0));
+            d.opacity(1.0 - out).relative().left(px(48.0 * out)).max_h(px(72.0 * (1.0 - close)))
+        })
+        .into_any_element()
+}
+
+/// Content that slides in sideways while fading: from the right for a page
+/// opened (`dir` 1), from the left for one gone back to (-1), in place (0).
+pub fn slide(el: impl IntoElement, id: impl Into<ElementId>, dir: i8) -> AnyElement {
+    div()
+        .child(el)
+        .with_animation(id, arrival(Duration::ZERO), move |d, t| {
+            d.opacity(t.clamp(0.0, 1.0)).relative().left(px(24.0 * f32::from(dir) * (1.0 - t)))
+        })
+        .into_any_element()
+}

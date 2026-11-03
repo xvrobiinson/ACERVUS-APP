@@ -307,7 +307,11 @@ impl VzApp {
                 });
                 v_flex()
                     .child(head)
-                    .children(rows)
+                    .children(
+                        rows.zip(visible.iter())
+                            .enumerate()
+                            .map(|(i, (r, (c, _)))| crate::ui::kit::motion::row_in(r, ("client-in", c.id as u64), i, None)),
+                    )
                     .child(div().px(px(space::XL)).py(px(space::M)).typeset(text::CAPTION).text_color(p.faint).child(sel({
                         let n = visible.len();
                         tr!("{n} shown", "{n} en la lista")
@@ -401,7 +405,7 @@ impl VzApp {
                     tr!("{n} in total", "{n} en total")
                 })),
         ];
-        let strip = StatCards::new(per_row).spacing(w.gap()).stats(cells);
+        let strip = StatCards::new(per_row).lifting("client-figures").spacing(w.gap()).stats(cells);
 
         // Loans, active first. Compact drops the amount lent and the next
         // due date; balance and status stay.
@@ -468,7 +472,12 @@ impl VzApp {
                         .when(full_loans, |d| d.child(ncolumn(120.).child(th(&p, t("Next payment", "Próximo pago")))))
                         .child(ncolumn(130.).child(th(&p, t("Status", "Estado")))),
                 )
-                .children(loan_rows)
+                .children(
+                    loan_rows
+                        .zip(loans.iter())
+                        .enumerate()
+                        .map(|(i, (r, l))| crate::ui::kit::motion::row_in(r, ("cl-loan-in", l.id as u64), i, None)),
+                )
                 .into_any_element()
         });
 
@@ -517,7 +526,17 @@ impl VzApp {
             )
             .into_any_element()
         } else {
-            v_flex().pb(px(space::S)).children(timeline).into_any_element()
+            v_flex()
+                .pb(px(space::S))
+                .children(timeline.zip(pays.iter()).enumerate().map(|(i, (r, x))| {
+                    crate::ui::kit::motion::row_in(
+                        r,
+                        ("cl-pay-in", x.id as u64),
+                        i,
+                        self.motion.is_fresh(crate::app::motion::Fresh::Payment(x.id)).then_some(p.accent_tint),
+                    )
+                }))
+                .into_any_element()
         });
 
         let notes_card = Card::new()

@@ -593,8 +593,7 @@ impl VzApp {
                 fill: false,
             });
         }
-        let animated = matches!(slot, ChartSlot::Overview);
-        let chart = LineChart { labels, hover_labels, series, height, money: self.settings().money(), animated };
+        let chart = LineChart { labels, hover_labels, series, height, money: self.settings().money(), animated: true };
         let weak = cx.entity().downgrade();
         let handler = Rc::new(move |h: Option<usize>, _: &mut Window, cx: &mut App| {
             let _ = weak.update(cx, |app, cx| {

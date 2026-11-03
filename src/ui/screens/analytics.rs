@@ -105,7 +105,7 @@ impl VzApp {
         ];
         // Full money figures are never truncated to fit a row: four need a
         // wide column, six need an ultra one.
-        let returns = StatCards::new(if w >= Width::Wide { 4 } else { 2 }).spacing(w.gap()).stats(return_cells);
+        let returns = StatCards::new(if w >= Width::Wide { 4 } else { 2 }).lifting("an-returns").spacing(w.gap()).stats(return_cells);
         let capital_cells = vec![
             cell(
                 IconName::Landmark,
@@ -169,6 +169,7 @@ impl VzApp {
             Width::Medium | Width::Wide => 3,
             Width::Ultra => 6,
         })
+        .lifting("an-capital")
         .spacing(w.gap())
         .stats(capital_cells);
 

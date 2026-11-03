@@ -28,13 +28,14 @@ with a filled selected item, `StatCards` (replaced the old `StatStrip`),
 boxed `ListRow`s on Overview, and the sign-in night sky behind every screen
 in dark mode only.
 
-Motion and Customize (2026-11-03, round 1, on Overview and the app frame,
-waiting for approval to roll out): the Overview can be arranged (blocks shown,
-hidden, reordered, half or full width; figures shown, hidden, reordered),
-saved as this PC's `overview_layout` setting. Not yet on other screens: rows
-rising and new-row glow on Clients/Loans/Payments, removed rows folding away,
-Settings pages sliding, loan paid-back bars, the animated chart on Analytics,
-card lift on other screens' `StatCards`.
+Motion and Customize (2026-11-03, approved and rolled out): the Overview can
+be arranged (blocks shown, hidden, reordered, half or full width; figures
+shown, hidden, reordered), saved as this PC's `overview_layout` setting.
+Lists rise in (`kit::motion::row_in`, a just-recorded payment glows),
+confirmed or rejected collector payments fold away, Settings pages slide,
+loan paid-back bars fill (`components::filling_bar`), both growth charts are
+animated, and every `StatCards` lifts under the pointer. Debug builds
+optimize dependencies (`[profile.dev.package."*"]`) so motion stays smooth.
 
 Kit contents: `Button` (Primary, Secondary, Ghost, Danger, DangerGhost;
 Mini/Small/Medium; `.loading`, `.selected`, `.suffix`, `.prefix` for a mark

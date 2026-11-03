@@ -176,6 +176,7 @@ impl VzApp {
     fn confirm_pending(&mut self, ids: Vec<String>, window: &mut Window, cx: &mut Context<Self>) {
         let n = ids.len();
         for id in ids {
+            self.motion.mark_deciding(id.clone());
             if let Err(e) = self.save(Change::ConfirmPending { pending: id }, window, cx) {
                 let msg = self.error_message(&e);
                 self.notify_error(msg, window, cx);
@@ -198,6 +199,35 @@ impl VzApp {
     /// The cloud id of a waiting payment, by its receipt number.
     pub(crate) fn waiting_pending_id(&self, number: i64) -> Option<String> {
         self.cloud_copy()?.waiting().find(|p| p.record_no == number).map(|p| p.id.clone())
+    }
+
+    /// Payments decided here whose rows fold away now. None when this PC
+    /// follows no business.
+    fn folding_pending(&mut self) -> Option<Vec<String>> {
+        let waiting: Vec<String> = self.cloud_copy()?.waiting().map(|p| p.id.clone()).collect();
+        Some(self.motion.folding(|id| waiting.iter().any(|w| w == id)))
+    }
+
+    /// A waiting payment's row that rises in as row `i`, or folds away once
+    /// it was decided.
+    #[allow(clippy::too_many_arguments)]
+    fn pending_row_in(
+        &self,
+        p: &Palette,
+        r: &Row,
+        decide: bool,
+        compact: bool,
+        i: usize,
+        folding: &[String],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let row = self.pending_row(p, r, decide, compact, cx);
+        let id = SharedString::from(format!("pending-{}", r.pending.id));
+        if folding.contains(&r.pending.id) {
+            crate::ui::kit::motion::fold_away(row, id)
+        } else {
+            crate::ui::kit::motion::row_in(row, id, i, None)
+        }
     }
 
     /// One payment that waits (or was decided), as a row.
@@ -271,6 +301,7 @@ impl VzApp {
     /// Payments: what collectors collected and waits for an admin (admins
     /// and viewers), or a collector's own recent collections.
     pub(crate) fn confirm_card(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let folding = self.folding_pending()?;
         let snap = self.cloud_copy()?;
         let p = palette(cx);
         let compact = Width::of(self.content_width(window)) == Width::Compact;
@@ -297,7 +328,8 @@ impl VzApp {
                     .into_any_element(),
             );
         }
-        let mut waiting = rows(snap, |x| x.status == "waiting");
+        // Just confirmed or rejected: still listed, folding away.
+        let mut waiting = rows(snap, |x| x.status == "waiting" || folding.contains(&x.id));
         if waiting.is_empty() {
             return None;
         }
@@ -343,8 +375,8 @@ impl VzApp {
                         )
                     }),
             );
-            for r in group {
-                body = body.child(self.pending_row(&p, r, decide, compact, cx));
+            for (i, r) in group.into_iter().enumerate() {
+                body = body.child(self.pending_row_in(&p, r, decide, compact, i, &folding, cx));
             }
         }
         Some(
@@ -357,16 +389,17 @@ impl VzApp {
     }
 
     /// The loan page: its collected payments still waiting for an admin.
-    pub(crate) fn pending_on_loan(&self, loan: i64, compact: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
+    pub(crate) fn pending_on_loan(&mut self, loan: i64, compact: bool, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let folding = self.folding_pending()?;
         let snap = self.cloud_copy()?;
-        let list = rows(snap, |x| x.status == "waiting");
+        let list = rows(snap, |x| x.status == "waiting" || folding.contains(&x.id));
         let list: Vec<Row> = list.into_iter().filter(|r| r.loan == loan).collect();
         if list.is_empty() {
             return None;
         }
         let p = palette(cx);
         let decide = self.can(Need::Manage) && self.cloud.as_ref().is_some_and(|c| c.online);
-        let items: Vec<_> = list.iter().map(|r| self.pending_row(&p, r, decide, compact, cx)).collect();
+        let items: Vec<_> = list.iter().enumerate().map(|(i, r)| self.pending_row_in(&p, r, decide, compact, i, &folding, cx)).collect();
         Some(
             v_flex()
                 .child(caption(

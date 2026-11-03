@@ -207,7 +207,14 @@ impl VzApp {
                         .child(ncolumn(130.).child(th(&p, t("Amount", "Monto"))))
                         .child(div().w(px(actions_w)).flex_none()),
                 )
-                .children(items)
+                .children(items.zip(rows.iter()).enumerate().map(|(i, (r, x))| {
+                    crate::ui::kit::motion::row_in(
+                        r,
+                        ("payrow-in", x.id as u64),
+                        i,
+                        self.motion.is_fresh(crate::app::motion::Fresh::Payment(x.id)).then_some(p.accent_tint),
+                    )
+                }))
                 .into_any_element()
         };
 

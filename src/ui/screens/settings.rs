@@ -319,7 +319,7 @@ impl VzApp {
             .items_start()
             .pt(px(56.))
             .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| this.close_settings_panel(cx)))
-            .child(
+            .child(crate::ui::kit::motion::rise(
                 v_flex()
                     .id("settings-popup")
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -369,7 +369,9 @@ impl VzApp {
                             ),
                     )
                     .child(div().id("settings-popup-body").flex_1().min_h_0().overflow_y_scroll().p(px(space::XL)).child(body)),
-            )
+                SharedString::from(format!("settings-popup-{which:?}")),
+                std::time::Duration::ZERO,
+            ))
             .into_any_element()
     }
 
@@ -1132,6 +1134,18 @@ impl VzApp {
             self.team_view = Some(cx.new(|cx| crate::ui::screens::team::TeamView::new(app, business, me, window, cx)));
         }
         let team = self.team_view.clone();
+        // Which way the popup's content slides: deeper pages come in from
+        // the right, going back from the left.
+        let shown = self.settings_panel.filter(|x| panels.contains(x)).map(|which| {
+            let page = match which {
+                SettingsPanel::Receipts => self.settings_page.map(|x| format!("{x:?}")),
+                SettingsPanel::Team => team.as_ref().and_then(|v| v.read(cx).person_title()).map(|s| s.to_string()),
+                _ => None,
+            };
+            (format!("{which:?}/{}", page.clone().unwrap_or_default()), u8::from(page.is_some()))
+        });
+        let slide_key = shown.as_ref().map(|(k, _)| k.clone()).unwrap_or_default();
+        let dir = self.motion.settings_slide(shown);
         let popup = self.settings_panel.filter(|x| panels.contains(x)).map(|which| {
             let page: Option<SharedString> = match which {
                 SettingsPanel::Receipts => self.settings_page.map(|x| x.title().into()),
@@ -1163,6 +1177,7 @@ impl VzApp {
                 SettingsPanel::Keyboard => shortcuts.into_any_element(),
                 SettingsPanel::About => about.into_any_element(),
             };
+            let body = crate::ui::kit::motion::slide(body, SharedString::from(format!("settings-body-{slide_key}")), dir);
             self.settings_popup(&p, which, page, body, window, cx)
         });
         let page = v_flex()

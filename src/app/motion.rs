@@ -47,6 +47,20 @@ pub(crate) struct Motion {
     fresh: Vec<(Fresh, Instant)>,
     /// Blocks slide to their new places until then.
     glide_until: Option<Instant>,
+    /// Collected payments the person confirmed or rejected, so their rows
+    /// fold away once the cloud has them decided.
+    deciding: Vec<Deciding>,
+    /// The settings page shown last (its name and depth), and which way the
+    /// one shown now slid in.
+    settings_page: Option<(String, u8)>,
+    settings_dir: i8,
+}
+
+struct Deciding {
+    id: String,
+    asked: Instant,
+    /// When it was first seen decided (its row starts folding then).
+    left: Option<Instant>,
 }
 
 /// How long a moved block may take to settle.
@@ -65,6 +79,41 @@ impl Motion {
 
     pub(crate) fn up_to_date(&self) -> bool {
         self.up_to_date_until.is_some_and(|t| Instant::now() < t)
+    }
+
+    /// A collected payment was just confirmed or rejected here.
+    pub(crate) fn mark_deciding(&mut self, id: String) {
+        self.deciding.push(Deciding { id, asked: Instant::now(), left: None });
+    }
+
+    /// The decided payments whose rows fold away now. `waiting` tells which
+    /// ones still wait (those keep their row as it is).
+    pub(crate) fn folding(&mut self, waiting: impl Fn(&str) -> bool) -> Vec<String> {
+        let now = Instant::now();
+        for d in &mut self.deciding {
+            if d.left.is_none() && !waiting(&d.id) {
+                d.left = Some(now);
+            }
+        }
+        // The cloud may take a while to answer; give up after half a minute.
+        self.deciding.retain(|d| match d.left {
+            Some(at) => now.duration_since(at) < crate::ui::kit::motion::FOLD,
+            None => now.duration_since(d.asked) < Duration::from_secs(30),
+        });
+        self.deciding.iter().filter(|d| d.left.is_some()).map(|d| d.id.clone()).collect()
+    }
+
+    /// Which way the settings page `name` (at `depth`: 0 a category, 1 a
+    /// page inside it) slides in: 1 deeper, -1 back, 0 a popup just opened.
+    pub(crate) fn settings_slide(&mut self, page: Option<(String, u8)>) -> i8 {
+        if page != self.settings_page {
+            self.settings_dir = match (&self.settings_page, &page) {
+                (Some((_, was)), Some((_, now))) => (*now as i8 - *was as i8).signum(),
+                _ => 0,
+            };
+            self.settings_page = page;
+        }
+        self.settings_dir
     }
 }
 

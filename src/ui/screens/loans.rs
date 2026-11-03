@@ -13,7 +13,7 @@ use crate::domain::portfolio::LoanBook;
 use crate::i18n::{count, t};
 use crate::sync::wire::Need;
 use crate::tr;
-use crate::ui::components::{Tone, avatar, empty_state, icon, kv, page_header, pill, progress_bar, sel, table_header, table_row, th};
+use crate::ui::components::{Tone, avatar, empty_state, filling_bar, icon, kv, page_header, pill, sel, table_header, table_row, th};
 use crate::ui::forms::reason::ReasonKind;
 use crate::ui::kit::{Button, Card, Dropdown, DropdownItem, Segmented, SortHeader, Stat, StatCards};
 use crate::ui::lists::{self, Key};
@@ -299,12 +299,17 @@ impl VzApp {
                     ))
                 })
                 .when(full, |d| {
-                    d.child(v_flex().w(px(120.)).flex_none().gap(px(4.)).child(progress_bar(&p, ratio, p.accent)).child(
-                        div().typeset(text::CAPTION).text_color(p.muted).font_features(tabular()).child(sel({
-                            let pct = percent_label(pos.principal_paid, l.facts.principal).unwrap_or_default();
-                            tr!("{pct} repaid", "{pct} pagado")
-                        })),
-                    ))
+                    d.child(
+                        v_flex()
+                            .w(px(120.))
+                            .flex_none()
+                            .gap(px(4.))
+                            .child(filling_bar(&p, ("loan-row-bar", lid as u64), ratio, p.accent, std::time::Duration::ZERO))
+                            .child(div().typeset(text::CAPTION).text_color(p.muted).font_features(tabular()).child(sel({
+                                let pct = percent_label(pos.principal_paid, l.facts.principal).unwrap_or_default();
+                                tr!("{pct} repaid", "{pct} pagado")
+                            }))),
+                    )
                 })
                 .child(div().w(px(130.)).flex_none().flex().justify_end().child(status_detail_pill(&p, *st, &q, today)))
                 .on_click(cx.listener(move |this, _, w, cx| this.open_row(Route::Loan(lid), w, cx)))
@@ -356,7 +361,11 @@ impl VzApp {
             let n = visible.len();
             v_flex()
                 .child(head)
-                .children(rows)
+                .children(
+                    rows.zip(visible.iter())
+                        .enumerate()
+                        .map(|(i, (r, x))| crate::ui::kit::motion::row_in(r, ("loan-in", x.book.id as u64), i, None)),
+                )
                 .child(
                     div()
                         .px(px(space::XL))
@@ -465,6 +474,7 @@ impl VzApp {
             Width::Medium => 3,
             Width::Wide | Width::Ultra => 5,
         })
+        .lifting("loan-figures")
         .spacing(w.gap())
         .stats(vec![
             Stat::new(owes_label, money.format(owed_now.payoff())).icon(IconName::Wallet).chip(p.accent_text, p.accent_tint).caption(sel(
@@ -512,7 +522,13 @@ impl VzApp {
                     .child(
                         v_flex()
                             .gap(px(space::S))
-                            .child(progress_bar(&p, ratio, if loan.status == ContractStatus::PaidOff { p.positive } else { p.accent }))
+                            .child(filling_bar(
+                                &p,
+                                ("loan-paid-bar", id as u64),
+                                ratio,
+                                if loan.status == ContractStatus::PaidOff { p.positive } else { p.accent },
+                                std::time::Duration::ZERO,
+                            ))
                             .child(
                                 h_flex()
                                     .justify_between()
@@ -812,7 +828,7 @@ impl VzApp {
     /// under the date and the receipt button loses its label; on Compact the
     /// interest/capital split goes too, leaving date, amount and actions.
     fn loan_payments_card(
-        &self,
+        &mut self,
         p: &Palette,
         id: i64,
         installment_loan: bool,
@@ -940,7 +956,14 @@ impl VzApp {
                         .child(ncolumn(120.).child(th(p, t("Amount", "Monto"))))
                         .child(div().w(px(actions_w)).flex_none()),
                 )
-                .children(tx_rows)
+                .children(tx_rows.zip(payments.iter().rev()).enumerate().map(|(i, (r, x))| {
+                    crate::ui::kit::motion::row_in(
+                        r,
+                        ("tx-in", x.id as u64),
+                        i,
+                        self.motion.is_fresh(crate::app::motion::Fresh::Payment(x.id)).then_some(p.accent_tint),
+                    )
+                }))
                 .into_any_element()
         };
         Card::new()

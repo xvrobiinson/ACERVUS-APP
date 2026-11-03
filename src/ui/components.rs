@@ -214,3 +214,14 @@ pub fn kbd(p: &Palette, keys: &str) -> Div {
         .text_color(p.faint)
         .child(keys.to_string())
 }
+
+/// A progress bar that fills from empty when it appears (after `delay`, so
+/// bars down a list fill one after another).
+pub fn filling_bar(p: &Palette, id: impl Into<ElementId>, ratio: f32, color: Hsla, delay: std::time::Duration) -> Div {
+    let ratio = ratio.clamp(0.0, 1.0);
+    div().w_full().h(px(6.)).rounded_full().bg(p.neutral_tint).child(div().h_full().rounded_full().bg(color).with_animation(
+        id,
+        crate::ui::kit::motion::arrival(delay + std::time::Duration::from_millis(120)),
+        move |d, t| d.w(relative(ratio * t.clamp(0.0, 1.0))),
+    ))
+}
