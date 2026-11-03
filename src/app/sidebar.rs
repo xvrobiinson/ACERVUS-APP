@@ -56,6 +56,8 @@ struct NavItem {
     active: bool,
     collapsed: bool,
     badge: Option<AnyElement>,
+    /// Times the bell rang so far (each new one swings the icon).
+    ring: u32,
     on_click: ClickHandler,
 }
 
@@ -75,6 +77,7 @@ impl NavItem {
             active: false,
             collapsed: false,
             badge: None,
+            ring: 0,
             on_click: Rc::new(on_click),
         }
     }
@@ -93,6 +96,11 @@ impl NavItem {
         self.badge = badge.map(|b| b.into_any_element());
         self
     }
+
+    fn ring(mut self, times: u32) -> Self {
+        self.ring = times;
+        self
+    }
 }
 
 impl RenderOnce for NavItem {
@@ -103,20 +111,30 @@ impl RenderOnce for NavItem {
         let ink = if active { p.text } else { p.muted };
         // Selected: a filled chip with the icon in the accent (a neutral
         // chip in dark mode, a tint of the accent in light).
-        let (chip, mark) = if p.dark { (p.neutral_tint, p.accent_text) } else { (p.accent_tint, p.accent_text) };
+        // The filled chip behind it is the sidebar's gliding highlight.
+        let mark = p.accent_text;
         let has_badge = self.badge.is_some();
+        let glyph = icon(self.icon, if active { mark } else { ink }, 16.);
+        let glyph = if self.ring > 0 {
+            let key = ElementId::NamedChild(std::sync::Arc::new(scoped(&self.id, "ring")), self.ring.to_string().into());
+            glyph
+                .with_animation(key, Animation::new(std::time::Duration::from_millis(800)), |g, t| {
+                    g.transform(Transformation::rotate(radians(crate::ui::kit::motion::swing(t))))
+                })
+                .into_any_element()
+        } else {
+            glyph.into_any_element()
+        };
         h_flex()
             .id(self.id.clone())
-            .h(px(36.))
+            .h(px(NAV_ITEM))
             .mx(px(10.))
             .px(px(10.))
             .gap(px(10.))
             .rounded(px(RADIUS_CONTROL))
             .cursor_pointer()
-            .border_1()
-            .border_color(if active && p.dark { p.border } else { gpui_kit::transparent_black() })
             .when(self.collapsed, |d| d.justify_center().px_0())
-            .child(icon(self.icon, if active { mark } else { ink }, 16.))
+            .child(glyph)
             .when(!self.collapsed, |d| {
                 d.child(
                     div()
@@ -134,7 +152,7 @@ impl RenderOnce for NavItem {
             .tooltip(move |window, cx| Tooltip::new(tip.clone()).build(window, cx))
             .on_click(move |e, w, cx| f(e, w, cx))
             .with_spring(scoped(&self.id, "fill"), SpringAnimation::new(motion::CONTROL).to(hovered && !active), move |d, t| {
-                d.bg(if active { chip } else { faded(p.hover, t.0) })
+                d.bg(if active { gpui_kit::transparent_black() } else { faded(p.hover, t.0) })
             })
     }
 }
@@ -144,8 +162,13 @@ impl VzApp {
         let p = palette(cx);
         let collapsed = self.sidebar_collapsed(window);
         let section = self.route.section();
-        let summary = self.snap.book.summary(self.today);
+        let summary = self.summary_now();
         let overdue = summary.overdue_loans;
+        let overdue_rises = self.motion.overdue.see(overdue);
+        if let Some(status) = self.sync_status() {
+            use crate::app::SyncStatus;
+            self.note_sync(matches!(status, SyncStatus::Sending(_)), status == SyncStatus::Synced, cx);
+        }
 
         let business = crate::APP_NAME;
         let items = nav();
@@ -153,6 +176,7 @@ impl VzApp {
         let analytics = self.can(crate::sync::wire::Need::Manage);
         // The bell: messages in the business this PC follows.
         let unread = self.messages().iter().filter(|m| m.read_at.is_none()).count();
+        let unread_rises = self.motion.unread.see(unread);
         let bell = self.is_linked().then(|| {
             NavItem::new(
                 "messages",
@@ -162,11 +186,15 @@ impl VzApp {
                 cx.listener(|this, _, w, cx| this.open_messages(w, cx)),
             )
             .collapsed(collapsed)
-            .badge((unread > 0).then(|| pill(&p, unread.to_string(), Tone::Accent).h(px(20.)).px(px(6.))))
+            .badge((unread > 0).then(|| popping(pill(&p, unread.to_string(), Tone::Accent), "unread-pop", unread_rises)))
+            .ring(unread_rises)
         });
-        let nav = items.iter().filter(|(route, ..)| *route != Route::Analytics || analytics).map(|(route, icon_name, label, keys)| {
+        let shown: Vec<_> = items.iter().filter(|(route, ..)| *route != Route::Analytics || analytics).collect();
+        let at = shown.iter().position(|(route, ..)| *route == section);
+        let nav = shown.into_iter().map(|(route, icon_name, label, keys)| {
             let route = *route;
-            let badge = (route == Route::Loans && overdue > 0).then(|| pill(&p, overdue.to_string(), Tone::Negative).h(px(20.)).px(px(6.)));
+            let badge = (route == Route::Loans && overdue > 0)
+                .then(|| popping(pill(&p, overdue.to_string(), Tone::Negative), "overdue-pop", overdue_rises));
             NavItem::new(
                 SharedString::from(format!("nav-{:?}", route)),
                 *icon_name,
@@ -195,8 +223,8 @@ impl VzApp {
 
         v_flex()
             .flex_none()
-            .w(px(if collapsed { SIDEBAR_COLLAPSED } else { SIDEBAR_WIDTH }))
             .h_full()
+            .overflow_hidden()
             .bg(p.sidebar)
             .border_r_1()
             .border_color(p.border)
@@ -228,7 +256,31 @@ impl VzApp {
                     t("Expand sidebar  Ctrl+B", "Mostrar menú  Ctrl+B"),
                 )))
             })
-            .child(v_flex().gap(px(2.)).pt(px(space::XS)).children(nav))
+            .child(
+                v_flex()
+                    .relative()
+                    .gap(px(NAV_GAP))
+                    .pt(px(space::XS))
+                    // The highlight glides to the chosen item.
+                    .children(at.map(|i| {
+                        let (fill, edge) = if p.dark { (p.neutral_tint, p.border) } else { (p.accent_tint, gpui_kit::transparent_black()) };
+                        div()
+                            .absolute()
+                            .left(px(10.))
+                            .right(px(10.))
+                            .h(px(NAV_ITEM))
+                            .rounded(px(RADIUS_CONTROL))
+                            .bg(fill)
+                            .border_1()
+                            .border_color(edge)
+                            .with_spring(
+                                "nav-highlight",
+                                SpringAnimation::new(motion::GLIDE).to(px(space::XS + i as f32 * (NAV_ITEM + NAV_GAP))),
+                                |d, y| d.top(y),
+                            )
+                    }))
+                    .children(nav),
+            )
             .child(div().flex_1())
             .child(
                 v_flex()
@@ -286,6 +338,30 @@ impl VzApp {
                         )
                     }),
             )
+            // Folding and unfolding glide instead of snapping.
+            .with_spring(
+                "sidebar-width",
+                SpringAnimation::new(motion::GLIDE).to(px(if collapsed { SIDEBAR_COLLAPSED } else { SIDEBAR_WIDTH })),
+                |d, w| d.w(w),
+            )
             .into_any_element()
     }
+}
+
+/// A sidebar item's height, and the space between items.
+const NAV_ITEM: f32 = 36.;
+const NAV_GAP: f32 = 2.;
+
+/// A count badge that pops each time its count goes up (`rises` so far).
+fn popping(badge: Div, id: &'static str, rises: u32) -> AnyElement {
+    let badge = badge.h(px(20.)).px(px(6.));
+    if rises == 0 {
+        return badge.into_any_element();
+    }
+    badge
+        .with_animation((id, rises as u64), Animation::new(std::time::Duration::from_millis(420)), |d, t| {
+            let k = crate::ui::kit::motion::pop(t);
+            d.h(px(20. + 4. * k)).px(px(6. + 2. * k)).text_size(px(12. + 2. * k))
+        })
+        .into_any_element()
 }

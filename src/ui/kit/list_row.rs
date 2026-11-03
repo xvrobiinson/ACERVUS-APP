@@ -1,6 +1,7 @@
 //! List row: leading mark, a title over a subtitle, and right-aligned
 //! trailing content (amounts, pills, row actions). Clickable rows fade a
-//! fill in under the pointer.
+//! fill in under the pointer. A list can have its rows rise in one after
+//! another (`.rise`), and a row just added glows for a moment (`.fresh`).
 
 use std::rc::Rc;
 
@@ -22,12 +23,25 @@ pub struct ListRow {
     trailing: Vec<AnyElement>,
     muted: bool,
     boxed: bool,
+    rise: Option<usize>,
+    fresh: bool,
     on_click: Option<ClickHandler>,
 }
 
 impl ListRow {
     pub fn new(id: impl Into<ElementId>) -> Self {
-        Self { id: id.into(), leading: None, title: None, subtitle: None, trailing: Vec::new(), muted: false, boxed: false, on_click: None }
+        Self {
+            id: id.into(),
+            leading: None,
+            title: None,
+            subtitle: None,
+            trailing: Vec::new(),
+            muted: false,
+            boxed: false,
+            rise: None,
+            fresh: false,
+            on_click: None,
+        }
     }
 
     /// Avatar or icon on the left.
@@ -67,6 +81,19 @@ impl ListRow {
         self
     }
 
+    /// Row `index` of a list whose rows rise in one after another when it
+    /// appears.
+    pub fn rise(mut self, index: usize) -> Self {
+        self.rise = Some(index);
+        self
+    }
+
+    /// Just added by the person: a violet glow that fades out.
+    pub fn fresh(mut self, fresh: bool) -> Self {
+        self.fresh = fresh;
+        self
+    }
+
     pub fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
         self.on_click = Some(Rc::new(handler));
         self
@@ -79,13 +106,28 @@ impl RenderOnce for ListRow {
         let (hovered, on_hover) = hover_state(&self.id, window, cx);
         let clickable = self.on_click.is_some();
         let boxed = self.boxed;
-        h_flex()
+        let (id, rise) = (self.id.clone(), self.rise);
+        let glow = self.fresh.then(|| {
+            div()
+                .absolute()
+                .inset_0()
+                .when(boxed, |d| d.rounded(px(12.)))
+                .bg(p.accent_tint)
+                .border_1()
+                .border_color(p.accent)
+                .with_animation(scoped(&id, "fresh"), Animation::new(motion::GLOW), |d, t| {
+                    d.opacity(if t < 0.35 { 1.0 } else { 1.0 - super::motion::ease_out((t - 0.35) / 0.65) })
+                })
+        });
+        let row = h_flex()
             .id(self.id.clone())
+            .relative()
             .min_h(px(if boxed { 56. } else { 60. }))
             .py(px(space::S))
             .px(px(if boxed { space::M } else { space::XL }))
             .gap(px(space::M))
             .when(boxed, |d| d.rounded(px(12.)).border_1().border_color(p.border).shadow(elevation(&p, Elevation::Raised)))
+            .children(glow)
             .children(self.leading)
             .child(
                 v_flex()
@@ -104,6 +146,10 @@ impl RenderOnce for ListRow {
                     (true, true) => d.bg(mix(p.surface, p.hover, t.0)),
                     (false, _) => d.bg(mix(faded(p.hover, 0.0), p.hover, t.0)),
                 }
-            })
+            });
+        match rise {
+            Some(i) => super::motion::rise_nth(row, scoped(&id, "rise"), i),
+            None => row.into_any_element(),
+        }
     }
 }

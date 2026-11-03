@@ -230,7 +230,8 @@ impl VzApp {
         self.role().is_none_or(|r| r.allows(need))
     }
 
-    pub(crate) fn sync_status(&self) -> Option<SyncStatus> {
+    /// The sync status as the database has it now (see `sync_status`).
+    pub(crate) fn read_sync_status(&self) -> Option<SyncStatus> {
         let c = self.cloud.as_ref()?;
         if c.update_required.is_some() {
             return Some(SyncStatus::UpdateRequired);

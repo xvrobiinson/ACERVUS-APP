@@ -5,7 +5,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 
 use crate::ui::components::sel;
-use crate::ui::theme::{Elevation, Palette, RADIUS_CARD, Typeset as _, elevation, palette, space, text};
+use crate::ui::theme::{Elevation, Palette, RADIUS_CARD, Typeset as _, elevation_between, palette, space, text};
 
 #[derive(IntoElement)]
 pub struct Card {
@@ -13,12 +13,14 @@ pub struct Card {
     title: Option<AnyElement>,
     action: Option<AnyElement>,
     elevation: Elevation,
+    /// 0..1 of the way up to `Lifted` (a card under the pointer).
+    lift: f32,
     children: Vec<AnyElement>,
 }
 
 impl Card {
     pub fn new() -> Self {
-        Self { base: v_flex(), title: None, action: None, elevation: Elevation::Raised, children: Vec::new() }
+        Self { base: v_flex(), title: None, action: None, elevation: Elevation::Raised, lift: 0.0, children: Vec::new() }
     }
 
     /// Heading in the card's header. The text is selectable.
@@ -36,6 +38,12 @@ impl Card {
 
     pub fn elevation(mut self, level: Elevation) -> Self {
         self.elevation = level;
+        self
+    }
+
+    /// Part way (0..1, from a spring) up to `Lifted`.
+    pub fn lift(mut self, t: f32) -> Self {
+        self.lift = t;
         self
     }
 }
@@ -83,7 +91,7 @@ impl RenderOnce for Card {
             .rounded(px(RADIUS_CARD))
             .border_1()
             .border_color(p.border)
-            .shadow(elevation(&p, self.elevation))
+            .shadow(elevation_between(&p, self.elevation, Elevation::Lifted, self.lift))
             .children(header)
             .children(self.children)
     }

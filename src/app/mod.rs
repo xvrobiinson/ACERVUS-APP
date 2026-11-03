@@ -2,8 +2,10 @@
 //! screens, and hosts the sidebar. Screens render from the snapshot only.
 
 mod cloud;
+mod derived;
 mod dialogs;
 mod drive;
+pub(crate) mod motion;
 mod sidebar;
 pub(crate) use sidebar::mark;
 
@@ -12,6 +14,7 @@ pub use cloud::SyncStatus;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::NaiveDate;
 use gpui_kit::component::IndexPath;
@@ -159,6 +162,12 @@ pub struct VzApp {
     /// The books kept on this PC (the database opened at launch); a linked
     /// business has its own.
     local_path: PathBuf,
+    /// What motion needs to remember between frames.
+    pub(crate) motion: motion::Motion,
+    /// Totals and chart points, worked out once per change of the books.
+    derived: derived::Derived,
+    /// The Overview is being arranged (Customize).
+    pub(crate) customizing: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -288,6 +297,9 @@ impl VzApp {
             cloud: None,
             sign_in,
             local_path,
+            motion: Default::default(),
+            derived: Default::default(),
+            customizing: false,
             _subscriptions: subs,
         };
         app.apply_language(window, cx);
@@ -312,7 +324,7 @@ impl VzApp {
                 "new-record" => app.open_entry_form(EntryKind::Expense, None, window, cx),
                 "new-income" => app.open_entry_form(EntryKind::Income, None, window, cx),
                 "wording" => app.open_receipt_text_form(window, cx),
-                "sign-in" => app.open_sign_in(window, cx),
+                "sign-in" => app.sign_in.open = true,
                 "payments" => app.navigate(Route::Payments, window, cx),
                 "settings-business" | "settings-formats" | "settings-data" | "settings-receipt-look" | "settings-receipt-parts" => {
                     use crate::ui::screens::settings::{SettingsPage, SettingsPanel};
@@ -327,6 +339,7 @@ impl VzApp {
                     app.settings_panel = Some(panel);
                     app.settings_page = page;
                 }
+                "customize" => app.customizing = true,
                 "settings-team" => {
                     app.navigate(Route::Settings, window, cx);
                     app.settings_panel = Some(crate::ui::screens::settings::SettingsPanel::Team);
@@ -888,6 +901,7 @@ impl Focusable for VzApp {
 impl Render for VzApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         i18n::set(self.snap.settings.language);
+        self.begin_frame();
         crate::ui::components::begin_selectable_frame();
         let p = palette(cx);
         let gutter = theme::Width::gutter(f32::from(window.viewport_size().width));
@@ -995,11 +1009,23 @@ impl Render for VzApp {
                             // blurred glow, which would otherwise fade text
                             // lying just outside a cloud.
                             .when(has_sky, |d| d.bg(hsla(0., 0., 0., 0.004)))
-                            .child(div().w_full().px(px(gutter)).pt(px(gutter.min(space::XXL - 4.))).pb(px(48.)).child(content)),
+                            // A new screen fades in while rising into place.
+                            .child(div().w_full().px(px(gutter)).pt(px(gutter.min(space::XXL - 4.))).pb(px(48.)).child(
+                                crate::ui::kit::motion::rise(
+                                    content,
+                                    SharedString::from(format!("screen-{:?}", self.route)),
+                                    Duration::ZERO,
+                                ),
+                            )),
                     ),
                 )
             })
             // Over everything, the open settings popup.
             .children(settings_popup)
+            .children(
+                self.motion
+                    .saved
+                    .map(|(n, _)| crate::ui::kit::SavedCheck::new(("saved-check", n as u64), t("Payment saved", "Pago guardado"))),
+            )
     }
 }

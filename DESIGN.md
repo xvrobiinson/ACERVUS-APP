@@ -173,7 +173,9 @@ desk, not stickers. Motion is quick and physical: springs that settle in about
 - One accent (Ledger Violet) for action and selection only.
 - Raised cards on a cool ground, with three-layer shadows; in dark mode a
   card's face shades from a lighter top down to its surface color.
-- Spring motion on hover, press, selection and arrival; nothing loops.
+- Spring motion on hover, press, selection and arrival. A screen arrives
+  once (rows rise, totals count up, the chart draws in); only the sign-in
+  sky moves on its own.
 - The whole window is used. The layout reflows across four widths instead of
   centering a fixed column.
 
@@ -386,6 +388,10 @@ on Overview first.
 - **Don't** truncate money to fit a row; change the layout instead.
 - **Don't** nest cards or float a card; Floating belongs to overlays.
 - **Don't** use status colors for decoration.
-- **Don't** add looping or page-load animation; motion only answers input or
-  state.
+- **Don't** add looping animation (the sign-in sky is the one exception) or
+  animation that repeats while a screen stays open. A screen may arrive once:
+  it rises into place, its first rows rise in one after another (40 ms
+  apart, eight at most), totals count up and the growth chart draws in. After
+  that, motion only answers input or a change of state. With Windows'
+  animation effects off, everything shows its end state at once.
 - **Don't** put more than one primary button in a view.

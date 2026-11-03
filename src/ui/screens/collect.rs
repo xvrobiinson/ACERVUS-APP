@@ -428,7 +428,13 @@ impl VzApp {
         let fresh: Vec<String> = self.messages().iter().filter(|m| m.read_at.is_none()).map(|m| m.id.clone()).collect();
         let view = cx.new(|_| Bell { app, fresh });
         self.read_messages();
-        window.open_dialog(cx, move |dialog, _, _| dialog.title(t("Messages", "Mensajes")).w(px(560.)).child(view.clone()));
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .entrance(gpui_kit::component::dialog::DialogEntrance::FadeSlide)
+                .title(t("Messages", "Mensajes"))
+                .w(px(560.))
+                .child(view.clone())
+        });
     }
 }
 

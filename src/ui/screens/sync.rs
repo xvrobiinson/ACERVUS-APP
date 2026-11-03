@@ -56,10 +56,21 @@ impl VzApp {
     /// not signed in.
     pub(crate) fn sync_chip(&self, id: &'static str, cx: &mut Context<Self>) -> Option<Chip> {
         let (icon, label, accent) = self.sync_look()?;
+        let status = self.sync_status();
+        // Sending: the arrows turn. Just finished: "Up to date" in green.
+        let sending = matches!(status, Some(SyncStatus::Sending(_)));
+        let done = status == Some(SyncStatus::Synced) && self.motion.up_to_date();
+        let (icon, label) = match (sending, done) {
+            (true, _) => (IconName::RefreshCw, label),
+            (_, true) => (IconName::CircleCheck, t("Up to date", "Al día").to_string()),
+            _ => (icon, label),
+        };
         Some(
             Chip::new(id, label)
                 .icon(icon)
                 .accent(accent)
+                .spinning(sending)
+                .done(done)
                 .tooltip(t("Cloud sync: open in Settings", "Sincronización: abrir en Configuración"))
                 .on_click(cx.listener(|this, _, w, cx| this.navigate(Route::Settings, w, cx))),
         )

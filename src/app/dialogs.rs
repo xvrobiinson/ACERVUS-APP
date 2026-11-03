@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use gpui_kit::component::dialog::DialogButtonProps;
+use gpui_kit::component::dialog::{DialogButtonProps, DialogEntrance};
 use gpui_kit::component::{WindowExt as _, button::ButtonVariant, h_flex, v_flex};
 use gpui_kit::*;
 
@@ -67,6 +67,7 @@ fn changes_text(k: &Keystroke) -> bool {
 /// Over a form with typing in it: keep editing, or close both.
 fn ask_discard(window: &mut Window, cx: &mut App) {
     window.open_dialog(cx, |dialog, _, cx| {
+        let dialog = dialog.entrance(DialogEntrance::FadeSlide);
         let p = crate::ui::theme::palette(cx);
         dialog.title(t("Discard changes?", "¿Descartar los cambios?")).w(px(440.)).child(
             v_flex()
@@ -172,6 +173,7 @@ impl VzApp {
         let dialog_form = form.clone();
         let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
             let handle = dialog_form.read(cx).name.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
             dialog.title(title).w(px(560.)).child(changed.watch(dialog_form.clone())).on_ok(confirm(&dialog_form)).on_cancel(changed.ask())
@@ -206,6 +208,7 @@ impl VzApp {
         let dialog_form = form.clone();
         let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
             let handle = dialog_form.read(cx).first_focus(cx);
             focus_once(&first, &handle, window, cx);
             dialog
@@ -237,6 +240,7 @@ impl VzApp {
         let first = Cell::new(true);
         let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
             let handle = form.read(cx).first_focus(cx);
             focus_once(&first, &handle, window, cx);
             dialog.title(title).w(px(600.)).child(changed.watch(form.clone())).on_ok(confirm(&form)).on_cancel(changed.ask())
@@ -263,6 +267,7 @@ impl VzApp {
         let first = Cell::new(true);
         let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
             let handle = form.read(cx).amount.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
             dialog.title(title).w(px(520.)).child(changed.watch(form.clone())).on_ok(confirm(&form)).on_cancel(changed.ask())
@@ -279,6 +284,7 @@ impl VzApp {
         let first = Cell::new(true);
         let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
             let handle = form.read(cx).amount.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
             dialog.title(title).w(px(560.)).child(changed.watch(form.clone())).on_ok(confirm(&form)).on_cancel(changed.ask())
@@ -292,6 +298,7 @@ impl VzApp {
         let first = Cell::new(true);
         let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
             let handle = form.read(cx).capital.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
             dialog
@@ -310,6 +317,7 @@ impl VzApp {
         let first = Cell::new(true);
         let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
             let handle = form.read(cx).reason.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
             dialog.title(title).w(px(480.)).child(changed.watch(form.clone())).on_ok(confirm(&form)).on_cancel(changed.ask())
@@ -343,6 +351,7 @@ impl VzApp {
             )
         };
         window.open_alert_dialog(cx, move |alert, _, _| {
+            let alert = alert.entrance(gpui_kit::component::dialog::DialogEntrance::FadeSlide);
             let app = app.clone();
             alert
                 .title(if archiving { t("Archive client?", "¿Archivar cliente?") } else { t("Restore client?", "¿Restaurar cliente?") })
@@ -519,6 +528,7 @@ impl VzApp {
             "Esta copia tiene {clients} clientes, {loans} préstamos y {payments} pagos. Tus datos actuales se reemplazarán; antes se guarda una copia de seguridad en {dir}."
         );
         window.open_alert_dialog(cx, move |alert, _, _| {
+            let alert = alert.entrance(gpui_kit::component::dialog::DialogEntrance::FadeSlide);
             let app = app.clone();
             let path = path.clone();
             alert
@@ -608,6 +618,7 @@ impl VzApp {
         let first = Cell::new(true);
         let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
             let handle = form.read(cx).heading.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
             dialog
@@ -630,6 +641,7 @@ impl VzApp {
         let first = Cell::new(true);
         let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
             let handle = form.read(cx).confirm.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
             dialog
@@ -653,6 +665,7 @@ impl VzApp {
         let first = Cell::new(true);
         let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
             let handle = form.read(cx).name.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
             dialog
@@ -670,6 +683,7 @@ impl VzApp {
         let form = cx.new(|cx| crate::ui::forms::business::DeleteAccountForm::new(app, window, cx));
         let changed = Changed::default();
         window.open_dialog(cx, move |dialog, _, _| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
             dialog
                 .title(t("Delete my account", "Borrar mi cuenta"))
                 .w(px(520.))
@@ -686,6 +700,7 @@ impl VzApp {
         let first = Cell::new(true);
         let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
             let handle = form.read(cx).name.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
             dialog
@@ -704,6 +719,7 @@ impl VzApp {
         let first = Cell::new(true);
         let changed = Changed::default();
         window.open_dialog(cx, move |dialog, window, cx| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
             let handle = form.read(cx).confirm.focus_handle(cx);
             focus_once(&first, &handle, window, cx);
             dialog

@@ -10,17 +10,19 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{header_link, status_detail_pill};
+use crate::app::motion::Fresh;
 use crate::app::{Route, VzApp};
 use crate::charts::line::{LineChart, Series};
 use crate::domain::ledger::DisplayStatus;
 use crate::domain::money::{Cents, percent_label};
 use crate::domain::portfolio::{CapitalKind, EntryKind, HistoryPoint, Summary};
 use crate::i18n::{count, t};
+use crate::services::overview_layout::{Block, Figure};
 use crate::services::settings::ChartRange;
 use crate::sync::wire::Need;
 use crate::tr;
 use crate::ui::components::{avatar, empty_state, icon, kbd, kv, page_header, sel};
-use crate::ui::kit::{Button, ButtonSize, Card, Dropdown, DropdownItem, ListRow, Segmented, Stat, StatCards};
+use crate::ui::kit::{Button, ButtonSize, Card, Dropdown, DropdownItem, Glide, ListRow, Segmented, Stat, StatCards};
 use crate::ui::theme::{Palette, Typeset as _, Width, palette, space, tabular, text};
 use crate::utils::dates::short_month_year;
 
@@ -84,37 +86,75 @@ impl VzApp {
         let p = palette(cx);
         let w = Width::of(self.content_width(window));
         let gap = px(w.gap());
-        let s = self.snap.book.summary(self.today);
+        let s = self.summary_now();
         let side_by_side = w >= Width::Wide;
+        let editing = self.customizing;
+        let glide = self.motion.gliding();
+        let rows = self.settings().overview_layout.rows(&self.overview_blocks());
+
+        // One block, framed for arranging when Customize is on. `beside`:
+        // it shares its row with another block.
+        let block = |this: &Self, b: Block, beside: bool, cx: &mut Context<Self>| -> AnyElement {
+            let el = match b {
+                Block::Figures => this.kpi_cards(&p, &s, w, cx),
+                Block::Growth => this.growth_card(&p, w, cx),
+                Block::Money => this.allocation_card(&p, &s, beside, cx),
+                Block::Attention => this.attention_list(&p, cx),
+                Block::Recent => this.recent_payments_list(&p, cx),
+            };
+            if editing { this.block_frame(&p, b, el, cx) } else { el }
+        };
+        // How a block shares a row with `partner`: the chart takes twice
+        // the money card's share, the money card stays readable, and
+        // anything else splits the row evenly.
+        let cell = |b: Block, partner: Block, el: AnyElement| -> AnyElement {
+            let d = div().flex().flex_col().flex_basis(px(0.)).min_w_0();
+            match b {
+                Block::Growth if partner == Block::Money => d.flex_grow(2.),
+                Block::Money => d.flex_grow(1.).min_w(px(360.)).max_w(px(540.)),
+                _ => d.flex_grow(1.),
+            }
+            .child(el)
+            .into_any_element()
+        };
+        let glides =
+            |b: Block, el: AnyElement| Glide::new(SharedString::from(format!("ov-glide-{}", b.key())), el).armed(glide).into_any_element();
+        let mut body = Vec::new();
+        for row in rows {
+            match row.as_slice() {
+                [a, b] if side_by_side => {
+                    // Two cards stretch to one height; lists keep their own.
+                    let cards = row.iter().all(|x| matches!(x, Block::Growth | Block::Money | Block::Figures));
+                    let (ea, eb) = (block(self, *a, true, cx), block(self, *b, true, cx));
+                    body.push(
+                        h_flex()
+                            .gap(gap)
+                            .map(|d| if cards { d.items_stretch() } else { d.items_start() })
+                            .child(glides(*a, cell(*a, *b, ea)))
+                            .child(glides(*b, cell(*b, *a, eb)))
+                            .into_any_element(),
+                    );
+                }
+                blocks => {
+                    for b in blocks {
+                        let el = block(self, *b, false, cx);
+                        body.push(glides(*b, el));
+                    }
+                }
+            }
+        }
 
         v_flex()
             .gap(gap)
-            .child(page_header(&p, greeting(), Some(self.finding(&p, &s)), self.header_actions(w, cx)).pb_0())
+            .child(
+                page_header(&p, greeting(), Some(self.finding(&p, &s)), if editing { Vec::new() } else { self.header_actions(w, cx) })
+                    .pb_0(),
+            )
+            .when(editing, |d| d.child(self.customize_bar(&p, cx)))
             .children(self.pending_banner(&p, cx))
             .children(self.render_setup(&p, w, cx))
-            .child(self.kpi_cards(&p, &s, w, cx))
-            // The business's totals are for admins; collectors see their work.
-            .when(self.can(Need::Manage), |d| {
-                d.child(
-                    div()
-                        .flex()
-                        .gap(gap)
-                        .when(side_by_side, |d| d.flex_row().items_stretch())
-                        .when(!side_by_side, |d| d.flex_col())
-                        .child(self.growth_card(&p, w, cx))
-                        .child(self.allocation_card(&p, &s, side_by_side, cx)),
-                )
-            })
-            .child(
-                div()
-                    .flex()
-                    .gap(gap)
-                    .when(side_by_side, |d| {
-                        d.flex_row().items_start().child(self.attention_list(&p, cx)).child(self.recent_payments_list(&p, cx))
-                    })
-                    // Time-sensitive block first when stacked.
-                    .when(!side_by_side, |d| d.flex_col().child(self.attention_list(&p, cx)).child(self.recent_payments_list(&p, cx))),
-            )
+            .children(body)
+            .when(editing, |d| d.children(self.hidden_tray(&p, cx)))
             .into_any_element()
     }
 
@@ -161,8 +201,15 @@ impl VzApp {
         // Trying out the sync chip here first (kit-first rule).
         let sync: Vec<AnyElement> =
             self.sync_chip("ov-sync", cx).into_iter().map(|c| div().flex().items_center().h(px(32.)).child(c).into_any_element()).collect();
+        let customize = Button::new("ov-customize")
+            .ghost()
+            .icon(IconName::SlidersHorizontal)
+            .tooltip(t("Arrange your Overview", "Organiza tu Resumen"))
+            .on_click(cx.listener(|this, _, _, cx| this.set_customizing(true, cx)))
+            .into_any_element();
         let mut actions = self.main_actions(w, cx);
         actions.splice(0..0, sync);
+        actions.insert(0, customize);
         actions
     }
 
@@ -329,128 +376,181 @@ impl VzApp {
         )
     }
 
-    fn kpi_cards(&self, p: &Palette, s: &Summary, w: Width, cx: &mut Context<Self>) -> impl IntoElement {
-        let money = self.settings().money();
+    /// The figure cards, in the person's order. While arranging, hidden
+    /// ones show faded with their tools so they can come back.
+    fn kpi_cards(&self, p: &Palette, s: &Summary, w: Width, cx: &mut Context<Self>) -> AnyElement {
+        let layout = &self.settings().overview_layout;
+        let editing = self.customizing;
+        let allowed = self.overview_figures();
+        let order: Vec<Figure> =
+            layout.figures.iter().copied().filter(|f| allowed.contains(f) && (editing || layout.shows_figure(*f))).collect();
+        if order.is_empty() {
+            return div().into_any_element();
+        }
         // Six full money figures need about 1,680px; below that, 3 + 3.
         // Figures are never truncated to make a row fit.
-        let per_row = match w {
-            Width::Compact => 2,
-            Width::Medium | Width::Wide => 3,
-            Width::Ultra => 6,
+        let most = if !self.can(Need::Manage) {
+            if w == Width::Compact { 2 } else { 3 }
+        } else {
+            match w {
+                Width::Compact => 2,
+                Width::Medium | Width::Wide => 3,
+                Width::Ultra => 6,
+            }
         };
+        let stats: Vec<Stat> = order
+            .iter()
+            .map(|f| {
+                let st = self.figure_stat(*f, p, s, cx);
+                if !editing {
+                    return st;
+                }
+                let hidden = !layout.shows_figure(*f);
+                st.accessory(self.figure_tools(*f, cx)).when(hidden, |st| st.opacity(0.45))
+            })
+            .collect();
+        let mut cards = StatCards::new(most.min(order.len()))
+            .spacing(w.gap())
+            .lifting("ov-figures")
+            .keys(order.iter().map(|f| f.key()))
+            .glide(self.motion.gliding())
+            .stats(stats);
+        if editing {
+            let drags: Vec<_> = order.iter().map(|f| self.figure_drag(*f, cx)).collect();
+            cards = cards.frame(move |i, card| match drags.get(i) {
+                Some(drag) => drag(card),
+                None => card,
+            });
+        }
+        cards.into_any_element()
+    }
 
-        let overdue_sub = match s.overdue_loans {
-            0 => t("Nothing past due", "Nada vencido").to_string(),
-            1 => t("1 loan behind", "1 préstamo atrasado").to_string(),
-            n => tr!("{n} loans behind", "{n} préstamos atrasados"),
+    /// One figure card. Amounts count up when the Overview opens and roll
+    /// to a new amount after a change.
+    fn figure_stat(&self, f: Figure, p: &Palette, s: &Summary, cx: &mut Context<Self>) -> Stat {
+        let money = self.settings().money();
+        let counted = |st: Stat, value: Cents| {
+            let money = money.clone();
+            st.counting(SharedString::from(format!("ov-count-{}", f.key())), value, move |v| money.format(v))
         };
-        let late = s.overdue_amount > 0;
-        let overdue = Stat::new(t("Overdue amount", "Monto atrasado"), money.format(s.overdue_amount))
-            .icon(IconName::CircleAlert)
-            .chip(if late { p.negative } else { p.muted }, if late { p.negative_tint } else { p.neutral_tint })
-            .when(late, |st| st.tone(p.negative))
-            .caption(sel(overdue_sub));
-        let cards = |per_row: usize, stats: Vec<Stat>| StatCards::new(per_row).spacing(w.gap()).stats(stats);
-        // Collectors see what their work needs, not the business's totals.
-        if !self.can(Need::Manage) {
-            let cells = vec![
+        let counted_n =
+            |st: Stat, value: usize| st.counting(SharedString::from(format!("ov-count-{}", f.key())), value as i64, |v| v.to_string());
+        match f {
+            Figure::Overdue => {
+                let overdue_sub = match s.overdue_loans {
+                    0 => t("Nothing past due", "Nada vencido").to_string(),
+                    1 => t("1 loan behind", "1 préstamo atrasado").to_string(),
+                    n => tr!("{n} loans behind", "{n} préstamos atrasados"),
+                };
+                let late = s.overdue_amount > 0;
+                let st = Stat::new(t("Overdue amount", "Monto atrasado"), money.format(s.overdue_amount))
+                    .icon(IconName::CircleAlert)
+                    .chip(if late { p.negative } else { p.muted }, if late { p.negative_tint } else { p.neutral_tint })
+                    .when(late, |st| st.tone(p.negative))
+                    .caption(sel(overdue_sub));
+                counted(st, s.overdue_amount)
+            }
+            Figure::ActiveLoans => counted_n(
                 Stat::new(t("Active loans", "Préstamos activos"), s.active_loans.to_string())
                     .icon(IconName::HandCoins)
                     .chip(p.accent_text, p.accent_tint),
+                s.active_loans,
+            ),
+            Figure::DueSoon => counted_n(
                 Stat::new(t("Due soon", "Por vencer"), s.due_soon_loans.to_string())
                     .icon(IconName::Calendar)
                     .chip(p.warning, p.warning_tint)
                     .caption(sel(t("Payments in the next few days", "Pagos en los próximos días"))),
-                overdue,
-            ];
-            return cards(if w == Width::Compact { 2 } else { 3 }, cells);
+                s.due_soon_loans,
+            ),
+            Figure::PortfolioValue => {
+                let gain = s.gain();
+                let invested = s.net_invested();
+                let gain_sub: AnyElement = if invested > 0 {
+                    let pct = percent_label(gain, invested).unwrap_or_default();
+                    let c = match gain.signum() {
+                        1 => p.positive,
+                        -1 => p.negative,
+                        _ => p.muted,
+                    };
+                    h_flex()
+                        .gap(px(4.))
+                        .child(div().text_color(c).font_features(tabular()).child(sel(format!(
+                            "{} ({}{})",
+                            money.format_signed(gain),
+                            if gain > 0 { "+" } else { "" },
+                            pct
+                        ))))
+                        .child(div().font_features(tabular()).min_w_0().truncate().child(sel({
+                            let inv = money.format(invested);
+                            tr!("on {inv} invested", "sobre {inv} invertido")
+                        })))
+                        .into_any_element()
+                } else {
+                    t("No capital recorded yet", "Aún no hay capital registrado").into_any_element()
+                };
+                let adjust = Button::new("kpi-adjust")
+                    .ghost()
+                    .size(ButtonSize::Mini)
+                    .icon(IconName::Pencil)
+                    .tooltip(t("Adjust balances", "Ajustar saldos"))
+                    .on_click(cx.listener(|this, _, w, cx| this.open_adjust_form(w, cx)));
+                let st = Stat::new(t("Total portfolio value", "Valor total de la cartera"), money.format(s.portfolio_value))
+                    .icon(IconName::Wallet)
+                    .chip(p.accent_text, p.accent_tint)
+                    .when(self.can(Need::Manage), |s| s.accessory(adjust))
+                    .caption(gain_sub);
+                counted(st, s.portfolio_value)
+            }
+            Figure::LentOut => {
+                let st = Stat::new(t("Capital lent out", "Capital prestado"), money.format(s.outstanding_principal))
+                    .icon(IconName::HandCoins)
+                    .chip(p.info, p.info_tint)
+                    .caption(sel({
+                        let n = count(s.active_loans, "active loan", "active loans", "préstamo activo", "préstamos activos");
+                        tr!("across {n}", "en {n}")
+                    }));
+                counted(st, s.outstanding_principal)
+            }
+            Figure::InterestEarned => {
+                let fees_sub = if s.fees_collected > 0 {
+                    let fees = money.format(s.fees_collected);
+                    tr!("plus {fees} in fees", "más {fees} en cargos")
+                } else {
+                    t("Received, all time", "Cobrado en total").to_string()
+                };
+                let st = Stat::new(t("Interest earned", "Interés cobrado"), money.format(s.interest_collected))
+                    .icon(IconName::TrendingUp)
+                    .chip(p.positive, p.positive_tint)
+                    .caption(sel(fees_sub));
+                counted(st, s.interest_collected)
+            }
+            Figure::AvailableCapital => {
+                let pv = s.portfolio_value;
+                let cash_sub = match percent_label(s.available_capital, pv) {
+                    Some(pct) if pv > 0 => tr!("{pct} of portfolio", "{pct} de la cartera"),
+                    _ => t("Ready to lend", "Listo para prestar").to_string(),
+                };
+                let st = Stat::new(t("Available capital", "Capital disponible"), money.format(s.available_capital))
+                    .icon(IconName::Landmark)
+                    .chip(p.accent_text, p.accent_tint)
+                    .caption(sel(cash_sub));
+                counted(st, s.available_capital)
+            }
+            Figure::AvailableInterest => {
+                let interest_sub = if s.expenses() > 0 {
+                    let spent = money.format(s.expenses());
+                    tr!("{spent} spent in expenses", "{spent} usado en gastos")
+                } else {
+                    t("Interest and fees on hand", "Interés y cargos en mano").to_string()
+                };
+                let st = Stat::new(t("Available interest", "Interés disponible"), money.format(s.available_interest))
+                    .icon(IconName::Coins)
+                    .chip(p.positive, p.positive_tint)
+                    .caption(sel(interest_sub));
+                counted(st, s.available_interest)
+            }
         }
-        let gain = s.gain();
-        let invested = s.net_invested();
-        let gain_sub: AnyElement = if invested > 0 {
-            let pct = percent_label(gain, invested).unwrap_or_default();
-            let c = match gain.signum() {
-                1 => p.positive,
-                -1 => p.negative,
-                _ => p.muted,
-            };
-            h_flex()
-                .gap(px(4.))
-                .child(div().text_color(c).font_features(tabular()).child(sel(format!(
-                    "{} ({}{})",
-                    money.format_signed(gain),
-                    if gain > 0 { "+" } else { "" },
-                    pct
-                ))))
-                .child(div().font_features(tabular()).min_w_0().truncate().child(sel({
-                    let inv = money.format(invested);
-                    tr!("on {inv} invested", "sobre {inv} invertido")
-                })))
-                .into_any_element()
-        } else {
-            t("No capital recorded yet", "Aún no hay capital registrado").into_any_element()
-        };
-        let fees_sub = if s.fees_collected > 0 {
-            let fees = money.format(s.fees_collected);
-            tr!("plus {fees} in fees", "más {fees} en cargos")
-        } else {
-            t("Received, all time", "Cobrado en total").to_string()
-        };
-        let pv = s.portfolio_value;
-        let cash_sub = match percent_label(s.available_capital, pv) {
-            Some(pct) if pv > 0 => tr!("{pct} of portfolio", "{pct} de la cartera"),
-            _ => t("Ready to lend", "Listo para prestar").to_string(),
-        };
-        let interest_sub = if s.expenses() > 0 {
-            let spent = money.format(s.expenses());
-            tr!("{spent} spent in expenses", "{spent} usado en gastos")
-        } else {
-            t("Interest and fees on hand", "Interés y cargos en mano").to_string()
-        };
-        let adjust = Button::new("kpi-adjust")
-            .ghost()
-            .size(ButtonSize::Mini)
-            .icon(IconName::Pencil)
-            .tooltip(t("Adjust balances", "Ajustar saldos"))
-            .on_click(cx.listener(|this, _, w, cx| this.open_adjust_form(w, cx)));
-
-        let cells = vec![
-            Stat::new(t("Total portfolio value", "Valor total de la cartera"), money.format(pv))
-                .icon(IconName::Wallet)
-                .chip(p.accent_text, p.accent_tint)
-                .when(self.can(Need::Manage), |s| s.accessory(adjust))
-                .caption(gain_sub),
-            Stat::new(t("Capital lent out", "Capital prestado"), money.format(s.outstanding_principal))
-                .icon(IconName::HandCoins)
-                .chip(p.info, p.info_tint)
-                .caption(sel({
-                    let n = count(s.active_loans, "active loan", "active loans", "préstamo activo", "préstamos activos");
-                    tr!("across {n}", "en {n}")
-                })),
-            Stat::new(t("Interest earned", "Interés cobrado"), money.format(s.interest_collected))
-                .icon(IconName::TrendingUp)
-                .chip(p.positive, p.positive_tint)
-                .caption(sel(fees_sub)),
-            Stat::new(t("Available capital", "Capital disponible"), money.format(s.available_capital))
-                .icon(IconName::Landmark)
-                .chip(p.accent_text, p.accent_tint)
-                .caption(sel(cash_sub)),
-            Stat::new(t("Available interest", "Interés disponible"), money.format(s.available_interest))
-                .icon(IconName::Coins)
-                .chip(p.positive, p.positive_tint)
-                .caption(sel(interest_sub)),
-            overdue,
-        ];
-        cards(per_row, cells)
-    }
-
-    pub(crate) fn chart_points(&self, range: ChartRange) -> Vec<HistoryPoint> {
-        let Some(first) = self.snap.book.first_activity() else { return Vec::new() };
-        let from = match range.months() {
-            Some(m) => self.today.checked_sub_months(chrono::Months::new(m)).unwrap_or(self.today).max(first),
-            None => first,
-        };
-        self.snap.book.history(from.min(self.today), self.today)
     }
 
     pub(crate) fn growth_chart(
@@ -493,7 +593,8 @@ impl VzApp {
                 fill: false,
             });
         }
-        let chart = LineChart { labels, hover_labels, series, height, money: self.settings().money() };
+        let animated = matches!(slot, ChartSlot::Overview);
+        let chart = LineChart { labels, hover_labels, series, height, money: self.settings().money(), animated };
         let weak = cx.entity().downgrade();
         let handler = Rc::new(move |h: Option<usize>, _: &mut Window, cx: &mut App| {
             let _ = weak.update(cx, |app, cx| {
@@ -734,7 +835,7 @@ impl VzApp {
         let money = self.settings().money();
         let ds = self.settings().date_style;
         let recent: Vec<_> = self.snap.payments.iter().rev().filter(|x| !x.is_reversed()).take(5).collect();
-        let rows = recent.iter().map(|pay| {
+        let rows = recent.iter().enumerate().map(|(i, pay)| {
             let loan = self.snap.loan(pay.loan_id);
             let client_id = loan.map(|l| l.client_id).unwrap_or(0);
             let name = self.snap.client_name(client_id).to_string();
@@ -748,6 +849,8 @@ impl VzApp {
             };
             ListRow::new(("recent", pay.id as u64))
                 .boxed(true)
+                .rise(i)
+                .fresh(self.motion.is_fresh(Fresh::Payment(pay.id)))
                 .leading(avatar(p, &name, client_id, 32.))
                 .title(name)
                 .subtitle({
@@ -813,7 +916,7 @@ impl VzApp {
             .collect();
         items.sort_by(|a, b| a.1.cmp(&b.1).then(b.2.days_overdue.cmp(&a.2.days_overdue)).then(a.2.next_due.cmp(&b.2.next_due)));
         let count = items.len();
-        let rows = items.iter().take(5).map(|(l, st, q)| {
+        let rows = items.iter().take(5).enumerate().map(|(i, (l, st, q))| {
             let name = self.snap.client_name(l.client_id).to_string();
             let loan_id = l.id;
             let id = l.id;
@@ -834,6 +937,7 @@ impl VzApp {
             };
             ListRow::new(("attn", loan_id as u64))
                 .boxed(true)
+                .rise(i)
                 .leading(avatar(p, &name, l.client_id, 32.))
                 .title(name)
                 .subtitle(when)

@@ -69,7 +69,14 @@ gpui_kit::assets::icon_assets!(
         Banknote,
         Clock,
         CalendarClock,
-        Keyboard
+        Keyboard,
+        GripVertical,
+        Eye,
+        EyeOff,
+        ArrowUp,
+        ArrowDown,
+        ArrowRight,
+        RefreshCw
     ]
 );
 

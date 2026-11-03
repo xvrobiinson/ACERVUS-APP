@@ -3,6 +3,7 @@
 
 pub mod export;
 mod lending;
+pub mod overview_layout;
 pub mod picture;
 pub mod receipt;
 pub mod receipt_text;

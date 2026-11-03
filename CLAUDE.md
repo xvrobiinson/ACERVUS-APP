@@ -28,11 +28,22 @@ with a filled selected item, `StatCards` (replaced the old `StatStrip`),
 boxed `ListRow`s on Overview, and the sign-in night sky behind every screen
 in dark mode only.
 
+Motion and Customize (2026-11-03, round 1, on Overview and the app frame,
+waiting for approval to roll out): the Overview can be arranged (blocks shown,
+hidden, reordered, half or full width; figures shown, hidden, reordered),
+saved as this PC's `overview_layout` setting. Not yet on other screens: rows
+rising and new-row glow on Clients/Loans/Payments, removed rows folding away,
+Settings pages sliding, loan paid-back bars, the animated chart on Analytics,
+card lift on other screens' `StatCards`.
+
 Kit contents: `Button` (Primary, Secondary, Ghost, Danger, DangerGhost;
 Mini/Small/Medium; `.loading`, `.selected`, `.suffix`, `.prefix` for a mark
 in its own colors, `.wide` for a full-width button; approved 2026-10-30),
 `Card` (+ `face` for its shaded fill), `Stat` (`.chip`),
-`StatCards`, `ListRow` (`.muted`, `.boxed`), `Chip`, `Segmented` (`Segmented::pick`, cells
+`StatCards` (`.lifting` lifts cards under the pointer, `.keys`, `.frame`,
+`.glide`), `ListRow` (`.muted`, `.boxed`, `.rise(i)`, `.fresh`), `Chip`
+(`.spinning`, `.done`), `CountUp`, `Glide` (slides a block to its new place
+while armed), `SavedCheck`, `kit::motion` (rise, shake, pop, swing), `Segmented` (`Segmented::pick`, cells
 fit their labels), `Dropdown` + `DropdownItem` (`.danger`, `.disabled`,
 `.hint`), `Overlay`, `SortHeader` + `Sort` (sortable column header, `.right`
 for number columns; used on Clients and Loans, approved 2026-10-27), and
@@ -93,7 +104,7 @@ the same springs. Searching and sorting rules live in `ui::lists`.
   `ACERVUS_DB=<new.db>`; in debug builds `ACERVUS_START` opens a screen
   or dialog at launch (`clients`, `loans`, `analytics`, `settings`, `payments`, `messages`, `loan-<n>`, `client-<n>`,
   `new-record`, `new-income`, `wording`, `settings-receipts`, `settings-team`,
-  `settings-business`, `settings-formats`, `settings-data`, `settings-receipt-look`,
+  `settings-business`, `settings-formats`, `customize` (arranging the Overview), `sign-in`, `settings-data`, `settings-receipt-look`,
   `settings-receipt-parts`). Capture the window with `PrintWindow`, which works
   even when it is covered. Never send synthetic keystrokes or clicks: when the
   app isn't the foreground window they land in the user's other programs.

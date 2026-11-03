@@ -366,9 +366,11 @@ pub fn elevation_between(p: &Palette, from: Elevation, to: Elevation, t: f32) ->
 /// Motion. Springs, not durations: they pick up from wherever an
 /// interrupted transition was, so nothing snaps. Values follow
 /// interior.dev's tuning; all are slightly over-damped (no bounce) and
-/// settle in roughly 150–250ms. GPUI renders the end state when the system
-/// asks for reduced motion.
+/// settle in roughly 150–250ms. GPUI renders the end state when Windows'
+/// "Animation effects" is off (see [`motion::system_reduces_motion`]).
 pub mod motion {
+    use std::time::Duration;
+
     use gpui_kit::SpringConfig;
 
     /// Hover and press feedback on controls.
@@ -381,6 +383,46 @@ pub mod motion {
     pub const FADE: SpringConfig = SpringConfig::new(260.0, 34.0, 0.8);
     /// How far a floating layer travels as it arrives (px).
     pub const RISE_DISTANCE: f32 = 6.0;
+    /// How far a screen or list row travels as it arrives (px).
+    pub const ENTER_DISTANCE: f32 = 8.0;
+    /// Rows that rise in one after another: the gap between two, and how
+    /// many rise (the rest are there at once).
+    pub const STAGGER: Duration = Duration::from_millis(40);
+    pub const STAGGER_ROWS: usize = 8;
+    /// Totals counting up when a screen opens, and rolling to a new amount.
+    pub const COUNT_UP: Duration = Duration::from_millis(800);
+    pub const ROLL: Duration = Duration::from_millis(600);
+    /// A new row's glow, and a changed figure's green or red flash.
+    pub const GLOW: Duration = Duration::from_millis(1600);
+    /// The growth chart drawing itself in, and moving to a new range.
+    pub const DRAW: Duration = Duration::from_millis(900);
+    pub const MORPH: Duration = Duration::from_millis(450);
+
+    /// Whether Windows' "Animation effects" (Accessibility > Visual
+    /// effects) is off. The app then shows every end state at once.
+    #[cfg(windows)]
+    pub fn system_reduces_motion() -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+        };
+        use windows::core::BOOL;
+        let mut on = BOOL(1);
+        // SAFETY: SPI_GETCLIENTAREAANIMATION writes one BOOL to the pointer.
+        let read = unsafe {
+            SystemParametersInfoW(
+                SPI_GETCLIENTAREAANIMATION,
+                0,
+                Some(&mut on as *mut BOOL as *mut _),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        };
+        read.is_ok() && !on.as_bool()
+    }
+
+    #[cfg(not(windows))]
+    pub fn system_reduces_motion() -> bool {
+        false
+    }
 }
 
 pub fn tabular() -> FontFeatures {
@@ -400,6 +442,7 @@ pub fn install(pref: ThemePref, cx: &mut App) {
     if let Err(e) = cx.text_system().add_fonts(fonts) {
         log::warn!("could not load bundled fonts: {e}");
     }
+    cx.set_reduce_motion(motion::system_reduces_motion());
     apply(pref, cx);
 }
 
@@ -424,6 +467,10 @@ pub fn apply(pref: ThemePref, cx: &mut App) {
             t.motion.easing_enter = enter;
             t.motion.easing_exit = exit;
         }
+        // Forms settle into place; messages come up from the bottom corner.
+        t.motion.duration_normal = std::time::Duration::from_millis(240);
+        t.motion.distance_short = rems(0.375);
+        t.notification.placement = Anchor::BottomRight;
         let c = &mut t.colors;
         c.background = p.surface;
         c.foreground = p.text;

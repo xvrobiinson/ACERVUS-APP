@@ -3,6 +3,7 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::ui::components::{icon, sel};
@@ -20,6 +21,7 @@ pub struct Stat {
     caption: Option<AnyElement>,
     accessory: Option<AnyElement>,
     lead: bool,
+    count: Option<super::CountUp>,
 }
 
 impl Stat {
@@ -35,6 +37,7 @@ impl Stat {
             caption: None,
             accessory: None,
             lead: false,
+            count: None,
         }
     }
 
@@ -51,6 +54,13 @@ impl Stat {
     }
 
     /// Color for the figure when it carries a state (overdue in red).
+    /// The figure counts up when it first shows and rolls (with a green
+    /// or red flash) to a new amount, instead of plain text.
+    pub fn counting(mut self, id: impl Into<ElementId>, value: i64, format: impl Fn(i64) -> String + 'static) -> Self {
+        self.count = Some(super::CountUp::new(id, value, format));
+        self
+    }
+
     pub fn tone(mut self, color: Hsla) -> Self {
         self.tone = Some(color);
         self
@@ -108,7 +118,10 @@ impl RenderOnce for Stat {
                     .font_features(tabular())
                     .whitespace_nowrap()
                     .text_color(self.tone.unwrap_or(p.text))
-                    .child(self.value),
+                    .map(|d| match self.count {
+                        Some(count) => d.child(count.color(self.tone.unwrap_or(p.text))),
+                        None => d.child(self.value),
+                    }),
             )
             .children(self.caption.map(|c| div().min_w_0().truncate().typeset(text::CAPTION).text_color(p.muted).child(c)))
     }

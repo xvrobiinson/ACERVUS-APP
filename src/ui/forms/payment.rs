@@ -416,6 +416,8 @@ impl PaymentForm {
                         tr!("Payment of {paid} recorded", "Pago de {paid} registrado")
                     };
                     app.notify_success(msg, window, cx);
+                    app.show_saved_check(cx);
+                    app.mark_fresh(crate::app::motion::Fresh::Payment(payment_id));
                     if print {
                         app.payment_receipt_after_save(payment_id, window, cx);
                     }

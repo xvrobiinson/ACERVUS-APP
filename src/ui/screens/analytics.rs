@@ -558,7 +558,7 @@ impl VzApp {
 
     fn deployment_card(&self, p: &Palette) -> Card {
         let money = self.settings().money();
-        let s = self.snap.book.summary(self.today);
+        let s = self.summary_now();
         let deployed = s.outstanding_principal;
         let pool = deployed + s.available_cash.max(0);
         let ratio = if pool > 0 { deployed as f32 / pool as f32 } else { 0.0 };

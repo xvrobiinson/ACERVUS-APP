@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+pub use super::overview_layout::OverviewLayout;
 pub use super::receipt_text::ReceiptText;
 use crate::domain::loans::Frequency;
 use crate::domain::money::{MoneyFormat, NumberStyle, Rate};
@@ -264,6 +265,8 @@ pub struct Settings {
     pub chart_range: ChartRange,
     pub show_interest_line: bool,
     pub sidebar_collapsed: bool,
+    /// What the Overview shows and in what order (this PC's own).
+    pub overview_layout: OverviewLayout,
     /// Written by the backup command, never by `save_settings`.
     pub last_backup_at: Option<String>,
 }
@@ -291,6 +294,7 @@ impl Default for Settings {
             chart_range: ChartRange::SixMonths,
             show_interest_line: true,
             sidebar_collapsed: false,
+            overview_layout: OverviewLayout::default(),
             last_backup_at: None,
         }
     }
@@ -343,6 +347,7 @@ impl Settings {
             chart_range: get("chart_range").map(ChartRange::from_key).unwrap_or(d.chart_range),
             show_interest_line: flag("show_interest_line", d.show_interest_line),
             sidebar_collapsed: flag("sidebar_collapsed", d.sidebar_collapsed),
+            overview_layout: get("overview_layout").map(OverviewLayout::from_key).unwrap_or_default(),
             last_backup_at: get("last_backup_at").map(str::to_string),
         }
     }
@@ -373,6 +378,7 @@ impl Settings {
             ("chart_range", self.chart_range.key().into()),
             ("show_interest_line", b(self.show_interest_line)),
             ("sidebar_collapsed", b(self.sidebar_collapsed)),
+            ("overview_layout", self.overview_layout.key()),
         ];
         pairs.extend(ReceiptShow::KEYS.iter().zip(self.receipt_show.values()).map(|((key, _), on)| (*key, b(on))));
         pairs.extend(self.receipt_text.to_pairs());

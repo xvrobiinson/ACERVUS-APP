@@ -178,6 +178,7 @@ impl ReceiptTextForm {
     fn restore_defaults(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let form = cx.entity().downgrade();
         window.open_alert_dialog(cx, move |alert, _, _| {
+            let alert = alert.entrance(gpui_kit::component::dialog::DialogEntrance::FadeSlide);
             let form = form.clone();
             alert
                 .title(t("Restore the original wording?", "¿Restaurar el texto original?"))

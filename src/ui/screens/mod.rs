@@ -3,6 +3,7 @@
 pub mod analytics;
 pub mod clients;
 pub mod collect;
+mod customize;
 mod installments;
 pub mod loans;
 pub mod overview;

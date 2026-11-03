@@ -64,6 +64,54 @@ pub(crate) fn sky(p: &Palette, w: f32, h: f32) -> Div {
         .children(puffs)
 }
 
+/// The sign-in sky's life: stars that twinkle at night (dark mode) and a
+/// few clouds drifting across by day (light mode). Only behind the sign-in
+/// card; the sky behind the screens stays still.
+fn sky_life(p: &Palette, w: f32, h: f32) -> Div {
+    use std::time::Duration;
+    // A repeating animation that starts `phase` of the way through.
+    let looping = |secs: f32, phase: f32| {
+        Animation::new(Duration::from_secs_f32(secs)).repeat().with_max_fps(30.).with_easing(move |t| (t + phase).fract())
+    };
+    let layer = div().absolute().inset_0();
+    if p.dark {
+        // Spread by a fixed pattern so the sky looks the same each time.
+        let stars = (0..44u32).map(|i| {
+            let x = ((i * 37 + 11) % 100) as f32 / 100.;
+            let y = ((i * 53 + 7) % 64) as f32 / 100.;
+            let size = if i % 7 == 0 { 3. } else { 2. };
+            div().absolute().left(px(x * w)).top(px(y * h)).size(px(size)).rounded_full().bg(gpui_kit::white()).with_animation(
+                ("star", i as u64),
+                looping(2.6 + (i % 5) as f32 * 0.5, (i % 9) as f32 / 9.),
+                |d, t| d.opacity(0.25 + 0.7 * (0.5 - 0.5 * (t * std::f32::consts::TAU).cos())),
+            )
+        });
+        return layer.children(stars);
+    }
+    // (height down the sky 0–1, width, seconds to cross, start 0–1)
+    const DRIFT: [(f32, f32, f32, f32); 4] =
+        [(0.14, 180., 80., 0.1), (0.3, 120., 64., 0.55), (0.22, 220., 96., 0.8), (0.42, 140., 72., 0.3)];
+    let clouds = DRIFT.iter().enumerate().map(|(i, &(y, cw, secs, start))| {
+        let travel = w + cw * 2.;
+        // A flat base with three puffs on top, softened at the edges.
+        let soft = vec![BoxShadow::new(px(0.), px(0.), faded(p.cloud, 0.6)).blur_radius(px(14.))];
+        let puff = |left: f32, size: f32| {
+            div().absolute().left(px(left * cw)).bottom(px(cw * 0.06)).size(px(size * cw)).rounded_full().bg(p.cloud).shadow(soft.clone())
+        };
+        div()
+            .absolute()
+            .top(px(y * h))
+            .w(px(cw))
+            .h(px(cw * 0.5))
+            .child(puff(0.08, 0.34))
+            .child(puff(0.28, 0.46))
+            .child(puff(0.56, 0.36))
+            .child(div().absolute().left_0().right_0().bottom_0().h(px(cw * 0.2)).rounded_full().bg(p.cloud).shadow(soft.clone()))
+            .with_animation(("cloud", i as u64), looping(secs, start), move |d, t| d.left(px(t * travel - cw)))
+    });
+    layer.children(clouds)
+}
+
 /// The square tile with the step's icon at the top of the card.
 fn tile(p: &Palette, name: IconName) -> Div {
     div()
@@ -234,7 +282,7 @@ impl VzApp {
             .relative()
             .text_color(p.text)
             .typeset(text::BODY)
-            .child(sky(&p, w, h))
+            .child(sky(&p, w, h).child(sky_life(&p, w, h)))
             .child(
                 v_flex().absolute().inset_0().child(top).child(
                     div()

@@ -35,14 +35,27 @@ pub const FIELD_MIN: f32 = 160.0;
 /// body, on each side (GPUI Component's dialog: 16px margin, 16px padding).
 const DIALOG_INSET: f32 = 2.0 * space::L;
 
-/// Label above a control, with an optional hint and inline error.
+/// Label above a control, with an optional hint and inline error. When an
+/// error appears the control nudges side to side once and the message
+/// slides in under it.
 pub fn field(p: &Palette, label: &str, control: impl IntoElement, hint: Option<String>, error: Option<String>) -> Div {
+    let control = match &error {
+        Some(e) => crate::ui::kit::motion::shake(control, SharedString::from(format!("shake-{label}-{e}"))),
+        None => control.into_any_element(),
+    };
     v_flex()
         .gap(px(6.))
         .min_w_0()
         .child(div().typeset(text::LABEL).text_color(p.text).child(label.to_string()))
         .child(control)
-        .when_some(error.clone(), |d, e| d.child(div().typeset(text::CAPTION).text_color(p.negative).child(e)))
+        .when_some(error.clone(), |d, e| {
+            let id = SharedString::from(format!("error-{label}-{e}"));
+            d.child(crate::ui::kit::motion::rise(
+                div().typeset(text::CAPTION).text_color(p.negative).child(e),
+                id,
+                std::time::Duration::ZERO,
+            ))
+        })
         .when(error.is_none(), |d| d.when_some(hint, |d, h| d.child(div().typeset(text::CAPTION).text_color(p.muted).child(h))))
 }
 
