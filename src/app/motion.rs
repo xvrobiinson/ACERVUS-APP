@@ -54,6 +54,10 @@ pub(crate) struct Motion {
     /// one shown now slid in.
     settings_page: Option<(String, u8)>,
     settings_dir: i8,
+    /// The launch splash is showing, and (`covering`) its intro hides the
+    /// screen, which then arrives as the splash opens.
+    pub(crate) splash: bool,
+    pub(crate) covering: bool,
 }
 
 struct Deciding {
@@ -118,6 +122,15 @@ impl Motion {
 }
 
 impl VzApp {
+    /// Plays the launch splash over the first screen.
+    pub(crate) fn play_splash(&mut self, cx: &mut Context<Self>) {
+        use crate::ui::kit::Splash;
+        self.motion.splash = true;
+        self.motion.covering = true;
+        self.later(Splash::OUT, cx, |app| app.motion.covering = false);
+        self.later(Splash::SHOWN, cx, |app| app.motion.splash = false);
+    }
+
     /// Draws the green check in the middle of the window for a moment.
     pub(crate) fn show_saved_check(&mut self, cx: &mut Context<Self>) {
         self.motion.saved_count += 1;

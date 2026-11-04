@@ -19,6 +19,7 @@ mod overlay;
 mod saved_check;
 mod segmented;
 mod sort_header;
+mod splash;
 mod stat;
 mod stat_cards;
 
@@ -33,6 +34,7 @@ pub use overlay::{Overlay, OverlayAlign};
 pub use saved_check::SavedCheck;
 pub use segmented::Segmented;
 pub use sort_header::{Sort, SortHeader};
+pub use splash::Splash;
 pub use stat::Stat;
 pub use stat_cards::StatCards;
 

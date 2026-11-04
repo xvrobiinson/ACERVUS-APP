@@ -60,7 +60,66 @@ pub struct Palette {
     pub glass_top: Hsla,
     pub glass: Hsla,
     pub glass_edge: Hsla,
+    /// The launch splash (kit::Splash).
+    pub splash: SplashColors,
     pub dark: bool,
+}
+
+/// The launch splash: a soft glow behind the logo tile, the name, and a
+/// line. The tile keeps the brand blue in both themes.
+#[derive(Clone, Copy, Debug)]
+pub struct SplashColors {
+    /// The ground at the edges, a step lighter around the logo, and the
+    /// heart of the glow.
+    pub edge: Hsla,
+    pub mid: Hsla,
+    pub center: Hsla,
+    /// The colored glow that breathes behind the tile.
+    pub glow: Hsla,
+    pub tile: Hsla,
+    pub tile_shadow: Hsla,
+    pub bar: Hsla,
+    pub ink: Hsla,
+    pub sub: Hsla,
+    pub track: Hsla,
+    pub line_from: Hsla,
+    pub line_to: Hsla,
+}
+
+impl SplashColors {
+    fn light() -> Self {
+        Self {
+            edge: hex(0xF6F7FB),
+            mid: hex(0xF0EEFE),
+            center: hex(0xFFFFFF),
+            glow: hexa(0x5B47E8, 0.16),
+            tile: hex(0x365CF5),
+            tile_shadow: hexa(0x365CF5, 0.32),
+            bar: hex(0xFFFFFF),
+            ink: hex(0x17181C),
+            sub: hex(0x5E6270),
+            track: hexa(0x17181C, 0.08),
+            line_from: hex(0x5B47E8),
+            line_to: hex(0x7B8CFF),
+        }
+    }
+
+    fn dark() -> Self {
+        Self {
+            edge: hex(0x0D0E13),
+            mid: hex(0x121226),
+            center: hex(0x1F1A47),
+            glow: hexa(0x6E5BF6, 0.32),
+            tile: hex(0x365CF5),
+            tile_shadow: hexa(0x365CF5, 0.45),
+            bar: hex(0xFFFFFF),
+            ink: hex(0xF1F2F5),
+            sub: hex(0xA3A7B4),
+            track: hexa(0xFFFFFF, 0.1),
+            line_from: hex(0x6E5BF6),
+            line_to: hex(0x8FA4FF),
+        }
+    }
 }
 
 fn hex(v: u32) -> Hsla {
@@ -118,6 +177,7 @@ impl Palette {
             glass_top: hex(0xDCF2FB),
             glass: hexa(0xFFFFFF, 0.9),
             glass_edge: hexa(0xFFFFFF, 0.95),
+            splash: SplashColors::light(),
             dark: false,
         }
     }
@@ -166,6 +226,7 @@ impl Palette {
             glass_top: hex(0x19223C),
             glass: hexa(0x17181B, 0.94),
             glass_edge: hexa(0xFFFFFF, 0.07),
+            splash: SplashColors::dark(),
             dark: true,
         }
     }
@@ -239,6 +300,8 @@ pub mod text {
     pub const CAPTION: TextRole = role(font::TEXT, 12.0, 16.0, FontWeight::NORMAL);
     /// Keyboard hints and dense badges.
     pub const MICRO: TextRole = role(font::TEXT, 11.0, 14.0, FontWeight::MEDIUM);
+    /// The app's name on the launch splash.
+    pub const BRAND: TextRole = role(font::DISPLAY, 46.0, 48.0, FontWeight::SEMIBOLD);
 }
 
 /// Applies a [`TextRole`] to any styled element.

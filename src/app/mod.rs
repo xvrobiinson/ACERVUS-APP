@@ -307,6 +307,12 @@ impl VzApp {
         if !cfg!(test) {
             app.resume_cloud(window, cx);
         }
+        // The launch splash, except in tests, for screenshots of a screen
+        // opened at launch, and when Windows' animation effects are off.
+        let opens_a_screen = cfg!(debug_assertions) && std::env::var_os("ACERVUS_START").is_some();
+        if !cfg!(test) && !opens_a_screen && !cx.reduce_motion() {
+            app.play_splash(cx);
+        }
         // Debug builds only: ACERVUS_START opens a screen or dialog at
         // launch, so screenshots can be taken without clicking anything.
         if cfg!(debug_assertions)
@@ -1009,14 +1015,17 @@ impl Render for VzApp {
                             // blurred glow, which would otherwise fade text
                             // lying just outside a cloud.
                             .when(has_sky, |d| d.bg(hsla(0., 0., 0., 0.004)))
-                            // A new screen fades in while rising into place.
-                            .child(div().w_full().px(px(gutter)).pt(px(gutter.min(space::XXL - 4.))).pb(px(48.)).child(
-                                crate::ui::kit::motion::rise(
-                                    content,
-                                    SharedString::from(format!("screen-{:?}", self.route)),
-                                    Duration::ZERO,
-                                ),
-                            )),
+                            // A new screen fades in while rising into place
+                            // (at launch, once the splash starts to open).
+                            .when(!self.motion.covering, |d| {
+                                d.child(div().w_full().px(px(gutter)).pt(px(gutter.min(space::XXL - 4.))).pb(px(48.)).child(
+                                    crate::ui::kit::motion::rise(
+                                        content,
+                                        SharedString::from(format!("screen-{:?}", self.route)),
+                                        Duration::ZERO,
+                                    ),
+                                ))
+                            }),
                     ),
                 )
             })
@@ -1027,5 +1036,6 @@ impl Render for VzApp {
                     .saved
                     .map(|(n, _)| crate::ui::kit::SavedCheck::new(("saved-check", n as u64), t("Payment saved", "Pago guardado"))),
             )
+            .when(self.motion.splash, |d| d.child(crate::ui::kit::Splash::new("launch-splash")))
     }
 }
