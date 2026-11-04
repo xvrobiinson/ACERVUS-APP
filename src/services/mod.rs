@@ -268,6 +268,24 @@ impl Store {
         self.app_dir().join("exports")
     }
 
+    /// Deletes all but the newest `keep` backups in `dir` whose names start
+    /// with `prefix` (the daily copies, named by date so newest sorts last).
+    /// How many were deleted.
+    pub fn prune_backups(dir: &Path, prefix: &str, keep: usize) -> usize {
+        let Ok(found) = std::fs::read_dir(dir) else { return 0 };
+        let mut names: Vec<PathBuf> = found
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| {
+                p.extension().is_some_and(|x| x.eq_ignore_ascii_case("db"))
+                    && p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(prefix))
+            })
+            .collect();
+        names.sort();
+        let extra = names.len().saturating_sub(keep);
+        names.iter().take(extra).filter(|p| std::fs::remove_file(p).is_ok()).count()
+    }
+
     /// Backups in the backups folder, newest first, with when they were made.
     pub fn list_backups(&self) -> Vec<(PathBuf, std::time::SystemTime)> {
         let Ok(dir) = std::fs::read_dir(self.backups_dir()) else { return Vec::new() };

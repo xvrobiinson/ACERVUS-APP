@@ -295,9 +295,10 @@ pub enum GoogleDone {
 }
 
 /// Starts a Google sign-in: opens the local port and asks the server for
-/// Google's address.
-pub fn start_google(ep: &Endpoints) -> Result<GoogleSignIn, AuthError> {
-    start_round_trip(ep, "/sign-in/social", None, &[])
+/// Google's address, with `scopes` on top of the sign-in ones (the Drive
+/// backups' permission, on the same Google page).
+pub fn start_google(ep: &Endpoints, scopes: &[&str]) -> Result<GoogleSignIn, AuthError> {
+    start_round_trip(ep, "/sign-in/social", None, scopes)
 }
 
 /// Starts adding Google, with `scopes` on top of the sign-in ones, to the

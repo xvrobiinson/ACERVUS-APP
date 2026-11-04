@@ -532,7 +532,7 @@ impl VzApp {
             // The wait can take minutes, so it gets its own thread rather than
             // one of the app's shared ones.
             let spawned = std::thread::Builder::new().name("google-sign-in".into()).spawn(move || {
-                let result = auth::start_google(&ep2).and_then(|g| {
+                let result = auth::start_google(&ep2, &[crate::sync::drive::SCOPE]).and_then(|g| {
                     let opened = crate::shell::browse(&g.url).recv().unwrap_or_else(|_| Err("stopped".into()));
                     if let Err(why) = opened {
                         log::warn!("browser not opened: {why}");
@@ -893,6 +893,9 @@ impl VzApp {
                 c.online = on;
                 if on {
                     self.pump(window, cx);
+                    // Whether Drive backups are on depends on the Google
+                    // connection: ask as soon as the cloud can answer.
+                    self.maybe_drive_backup(window, cx);
                 }
             }
             Event::UpdateRequired { min_version } => c.update_required = Some(min_version),

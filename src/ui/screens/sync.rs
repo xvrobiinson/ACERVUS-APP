@@ -272,21 +272,35 @@ impl VzApp {
                         ),
                 )
         } else if !self.drive_on() {
-            v_flex()
-                .gap(px(space::S))
-                .child(div().text_color(p.muted).child(t(
-                    "Also keep a copy of these books in your own Google Drive, every day and whenever you back up. The app can see only the files it saves there; the newest 30 are kept.",
-                    "Guarda también una copia de estos registros en tu propio Google Drive, cada día y cada vez que hagas una copia. La app solo ve los archivos que guarda ahí; se guardan las 30 más recientes.",
-                )))
-                .children(error)
-                .child(
-                    h_flex().child(
-                        Button::new("drive-on")
-                            .icon(IconName::CloudUpload)
-                            .label(t("Turn on", "Activar"))
-                            .on_click(cx.listener(|this, _, w, cx| this.turn_on_drive(w, cx))),
+            // Connected but turned off for these books, or not connected yet
+            // (an emailed-code account, or the permission was unticked).
+            let connected = d.connected == Some(true);
+            let (words, label) = if connected {
+                (
+                    t(
+                        "Off for these books. Turn it on to keep a copy in your Google Drive every day and whenever you back up.",
+                        "Desactivadas para estos registros. Actívalas para guardar una copia en tu Google Drive cada día y cada vez que hagas una copia.",
                     ),
+                    t("Turn on", "Activar"),
                 )
+            } else {
+                (
+                    t(
+                        "Keep a copy of these books in your own Google Drive, every day and whenever you back up. Connect the Google account that uses the same email as this account. The app can see only the files it saves there; the newest 30 are kept.",
+                        "Guarda una copia de estos registros en tu propio Google Drive, cada día y cada vez que hagas una copia. Conecta la cuenta de Google que usa el mismo correo que esta cuenta. La app solo ve los archivos que guarda ahí; se guardan las 30 más recientes.",
+                    ),
+                    t("Connect Google Drive", "Conectar Google Drive"),
+                )
+            };
+            v_flex().gap(px(space::S)).child(div().text_color(p.muted).child(words)).children(error).child(
+                h_flex().child(
+                    Button::new("drive-on")
+                        .icon(IconName::CloudUpload)
+                        .label(label)
+                        .disabled(!c.online)
+                        .on_click(cx.listener(|this, _, w, cx| this.turn_on_drive(w, cx))),
+                ),
+            )
         } else {
             let last = match self.drive_last() {
                 Some(when) => {

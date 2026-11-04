@@ -864,10 +864,10 @@ impl VzApp {
             .child(row(
                 &p,
                 t("Back up", "Copia de seguridad"),
-                Some(match &s.last_backup_at {
-                    Some(_) => t("A verified copy of all your data", "Una copia verificada de todos tus datos"),
-                    None => t("You haven't made a backup yet", "Aún no has hecho una copia"),
-                }),
+                Some(t(
+                    "A copy is saved in the backups folder every day; the newest 7 are kept. Make one yourself any time.",
+                    "Cada día se guarda una copia en la carpeta de copias; se guardan las 7 más recientes. Haz una tú cuando quieras.",
+                )),
                 h_flex()
                     .gap(px(space::S))
                     .child(

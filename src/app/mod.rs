@@ -171,6 +171,8 @@ pub struct VzApp {
     pub(crate) customizing: bool,
     /// Messages showing at the bottom of the window.
     toasts: Rc<RefCell<Toasts>>,
+    /// The last try at the daily copy in the backups folder.
+    local_backup_tried: Option<std::time::Instant>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -316,6 +318,7 @@ impl VzApp {
             derived: Default::default(),
             customizing: false,
             toasts: Default::default(),
+            local_backup_tried: None,
             _subscriptions: subs,
         };
         app.apply_language(window, cx);
@@ -378,7 +381,7 @@ impl VzApp {
                 // or several businesses to choose from.
                 // The offer to move the books on this PC (the demo database).
                 "move-books" => app.open_move_books(window, cx),
-                "welcome" | "choose" | "switcher" => {
+                "welcome" | "choose" | "switcher" | "drive" => {
                     use crate::sync::wire::{Membership, Role};
                     let business = |id: &str, name: &str, role| Membership {
                         business_id: id.into(),
@@ -398,10 +401,13 @@ impl VzApp {
                     };
                     app.demo_gate(list, invites, window, cx);
                     // The demo database stands in for the first business.
-                    if start == "switcher"
-                        && let Some(c) = &mut app.cloud
-                    {
-                        c.linked = Some("b1".into());
+                    if start == "switcher" || start == "drive" {
+                        if let Some(c) = &mut app.cloud {
+                            c.linked = Some("b1".into());
+                        }
+                        if start == "drive" {
+                            app.navigate(Route::Settings, window, cx);
+                        }
                     }
                 }
                 // A form with a message and an error over it.
@@ -446,6 +452,7 @@ impl VzApp {
                     // Changes that got no answer are tried again.
                     app.pump(window, cx);
                     app.maybe_drive_backup(window, cx);
+                    app.maybe_local_backup(cx);
                 });
                 if alive.is_err() {
                     break;
@@ -974,6 +981,43 @@ impl VzApp {
             );
         }
         self.write_backup(path, window, cx);
+    }
+
+    /// The daily copy in the backups folder (the second backup, after
+    /// Google Drive): once a day for the business open on this PC, keeping
+    /// its newest seven. Called every minute.
+    pub(crate) fn maybe_local_backup(&mut self, cx: &mut Context<Self>) {
+        /// When the last daily copy of these books was made (RFC 3339).
+        const LAST: &str = "auto_backup_at";
+        const KEEP: usize = 7;
+        if self.sign_in.open
+            || self.business_gate().is_some()
+            || self.local_backup_tried.is_some_and(|t| t.elapsed() < Duration::from_secs(60 * 60))
+        {
+            return;
+        }
+        let last = self.store.pref(LAST).ok().flatten().and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok());
+        if last.is_some_and(|last| chrono::Local::now().signed_duration_since(last) < chrono::Duration::hours(24)) {
+            return;
+        }
+        self.local_backup_tried = Some(std::time::Instant::now());
+        let dir = self.store.backups_dir();
+        let books = self.cloud.as_ref().and_then(|c| c.linked.clone()).unwrap_or_else(|| "pc".into());
+        let prefix = format!("acervus-daily-{books}-");
+        let path = dir.join(format!("{prefix}{}.db", chrono::Local::now().format("%Y-%m-%d-%H%M")));
+        let made = std::fs::create_dir_all(&dir).map_err(anyhow::Error::from).and_then(|()| self.store.backup_to(&path));
+        match made {
+            Ok(()) => {
+                let now = chrono::Local::now().to_rfc3339();
+                if let Err(e) = self.store.set_pref(LAST, Some(&now)).and_then(|()| self.store.record_backup_time()) {
+                    log::warn!("daily backup not recorded: {e:#}");
+                }
+                let pruned = Store::prune_backups(&dir, &prefix, KEEP);
+                log::info!("daily backup written and verified ({pruned} old ones deleted)");
+                self.reload(cx);
+            }
+            Err(e) => log::error!("daily backup failed: {e:#}"),
+        }
     }
 
     pub fn write_backup(&mut self, mut path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {

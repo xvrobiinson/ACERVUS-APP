@@ -1,9 +1,11 @@
-//! Backups to the person's Google Drive, for a signed-in PC (the Drive work
-//! itself is in `sync::drive`). Off until the person turns it on, which adds
-//! the `drive.file` permission to their Google connection in the browser.
-//! Once on, a backup goes up right away, every day after that, and after
-//! each "Back up database". The setting and the last upload are kept in the
-//! books open on this PC.
+//! Backups to the person's Google Drive, the "cloud backup" (the Drive work
+//! itself is in `sync::drive`). On by themselves for an account whose Google
+//! connection has the `drive.file` permission: signing in with Google asks
+//! for it on the same Google page. Anyone else (an emailed-code account, or
+//! someone who unticked it) can "Connect Google Drive", which adds it in the
+//! browser. A backup goes up right away, every day after that, and after
+//! each "Back up database". Turning it off, and the last upload, are kept
+//! in the books open on this PC.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,7 +20,8 @@ use crate::sync::drive::{self, DriveError, Uploaded};
 use crate::sync::vault;
 use crate::tr;
 
-/// "on" when backups go to Drive.
+/// "on" or "off" once the person chose for these books; unset follows the
+/// Google connection.
 const ON: &str = "drive_backups";
 /// The backups folder's Drive id.
 const FOLDER: &str = "drive_folder";
@@ -38,11 +41,54 @@ pub(crate) struct Drive {
     /// Why the last attempt failed, shown in Settings until one succeeds.
     pub(crate) error: Option<String>,
     last_try: Option<Instant>,
+    /// Whether the account's Google connection has the Drive permission,
+    /// once asked (unknown until the cloud answers).
+    pub(crate) connected: Option<bool>,
+    checking: bool,
 }
 
 impl VzApp {
+    /// Whether backups go to Drive: as chosen for these books, or else
+    /// whenever the Google connection has the Drive permission.
     pub(crate) fn drive_on(&self) -> bool {
-        self.store.pref(ON).ok().flatten().as_deref() == Some("on")
+        match self.store.pref(ON).ok().flatten().as_deref() {
+            Some("on") => true,
+            Some(_) => false,
+            None => self.cloud.as_ref().is_some_and(|c| c.drive.connected == Some(true)),
+        }
+    }
+
+    /// Asks the cloud whether the Google connection has the Drive permission.
+    fn check_drive(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(c) = &mut self.cloud else { return };
+        if c.drive.checking {
+            return;
+        }
+        let Some(stored) = vault::load(&c.endpoints.cloud) else { return };
+        c.drive.checking = true;
+        let ep = c.endpoints.clone();
+        let task = cx.background_spawn(async move { auth::google_token(&ep, &stored.session) });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            let _ = this.update_in(cx, |app, window, cx| {
+                let Some(c) = &mut app.cloud else { return };
+                c.drive.checking = false;
+                c.drive.connected = match result {
+                    Ok(token) => Some(token.has(drive::SCOPE)),
+                    Err(AuthError::GoogleNotLinked) => Some(false),
+                    // Offline or a hiccup: asked again at the next check.
+                    Err(e) => {
+                        log::info!("Drive connection not known yet: {e}");
+                        None
+                    }
+                };
+                cx.notify();
+                if c.drive.connected == Some(true) {
+                    app.maybe_drive_backup(window, cx);
+                }
+            });
+        })
+        .detach();
     }
 
     /// When the last backup reached Drive, in local time.
@@ -57,6 +103,14 @@ impl VzApp {
         let Some(c) = &mut self.cloud else { return };
         if c.drive.linking.is_some() {
             return;
+        }
+        // Already connected (turned off for these books): on again at once.
+        if c.drive.connected == Some(true) {
+            if let Err(e) = self.store.set_pref(ON, Some("on")) {
+                log::error!("Drive backups not turned on: {e:#}");
+            }
+            self.drive_backup(false, window, cx);
+            return cx.notify();
         }
         let Some(stored) = vault::load(&c.endpoints.cloud) else { return };
         let stop = Arc::new(AtomicBool::new(false));
@@ -97,6 +151,7 @@ impl VzApp {
                 c.drive.linking = None;
                 match result {
                     Ok(()) => {
+                        c.drive.connected = Some(true);
                         if let Err(e) = app.store.set_pref(ON, Some("on")) {
                             log::error!("Drive backups not turned on: {e:#}");
                         }
@@ -118,9 +173,10 @@ impl VzApp {
         cx.notify();
     }
 
-    /// Turns Drive backups off. Backups already in Drive stay there.
+    /// Turns Drive backups off for these books. Backups already in Drive
+    /// stay there.
     pub(crate) fn turn_off_drive(&mut self, cx: &mut Context<Self>) {
-        if let Err(e) = self.store.set_pref(ON, None) {
+        if let Err(e) = self.store.set_pref(ON, Some("off")) {
             log::error!("Drive backups not turned off: {e:#}");
         }
         if let Some(c) = &mut self.cloud {
@@ -132,7 +188,15 @@ impl VzApp {
     /// The daily backup, when it's due (called every minute).
     pub(crate) fn maybe_drive_backup(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(c) = &self.cloud else { return };
-        if !c.online || c.drive.uploading || c.drive.linking.is_some() || c.drive.last_try.is_some_and(|t| t.elapsed() < RETRY) {
+        if c.online && c.drive.connected.is_none() {
+            return self.check_drive(window, cx);
+        }
+        if c.linked.is_none()
+            || !c.online
+            || c.drive.uploading
+            || c.drive.linking.is_some()
+            || c.drive.last_try.is_some_and(|t| t.elapsed() < RETRY)
+        {
             return;
         }
         if !self.drive_on() || self.drive_last().is_some_and(|last| chrono::Local::now() - last < EVERY) {

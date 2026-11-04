@@ -294,3 +294,23 @@ fn writes_a_receipt() {
     assert!(html.contains("Marta Quiroga"));
     assert!(html.contains("50.0%"));
 }
+
+/// The daily copies keep their newest seven; other backups are left alone.
+#[test]
+fn pruning_keeps_the_newest_daily_copies_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let touch = |name: &str| std::fs::write(dir.path().join(name), b"x").unwrap();
+    for day in 1..=9 {
+        touch(&format!("acervus-daily-b1-2026-11-{day:02}-0900.db"));
+    }
+    touch("acervus-daily-b2-2026-11-01-0900.db");
+    touch("acervus-finance-backup-2026-10-01-1200.db");
+    assert_eq!(Store::prune_backups(dir.path(), "acervus-daily-b1-", 7), 2);
+    let mut left: Vec<String> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+    left.sort();
+    assert_eq!(left.len(), 9);
+    assert!(!left.iter().any(|n| n.contains("b1-2026-11-01") || n.contains("b1-2026-11-02")), "the two oldest went");
+    assert!(left.iter().any(|n| n == "acervus-daily-b2-2026-11-01-0900.db"), "another business's copies stay");
+    assert!(left.iter().any(|n| n == "acervus-finance-backup-2026-10-01-1200.db"), "hand-made backups stay");
+    assert_eq!(Store::prune_backups(dir.path(), "acervus-daily-b1-", 7), 0);
+}

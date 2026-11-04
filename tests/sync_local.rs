@@ -544,7 +544,7 @@ fn a_renewed_session_keeps_working() {
 #[test]
 #[ignore = "needs a local PWA backend; see the top of this file"]
 fn google_sign_in_starts_with_the_way_back_to_this_pc() {
-    let g = auth::start_google(&endpoints()).unwrap();
+    let g = auth::start_google(&endpoints(), &[]).unwrap();
     assert!(g.url.starts_with("https://accounts.google.com/"), "{}", g.url);
     let redirect = format!("redirect_uri={}", urlencode(&format!("{}/api/auth/callback/google", endpoints().site)));
     assert!(g.url.contains(&redirect), "{}", g.url);
