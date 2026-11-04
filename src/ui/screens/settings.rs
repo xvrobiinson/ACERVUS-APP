@@ -925,7 +925,7 @@ impl VzApp {
                                                 .ghost()
                                                 .small()
                                                 .label(t("Restore", "Restaurar"))
-                                                .on_click(cx.listener(move |this, _, w, cx| this.confirm_restore(path.clone(), w, cx))),
+                                                .on_click(cx.listener(move |this, _, w, cx| this.restore_file(path.clone(), w, cx))),
                                         ),
                                 )
                         })),

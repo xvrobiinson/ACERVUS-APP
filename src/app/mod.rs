@@ -381,7 +381,7 @@ impl VzApp {
                 // or several businesses to choose from.
                 // The offer to move the books on this PC (the demo database).
                 "move-books" => app.open_move_books(window, cx),
-                "welcome" | "choose" | "switcher" | "drive" => {
+                "welcome" | "choose" | "switcher" | "drive" | "restore" => {
                     use crate::sync::wire::{Membership, Role};
                     let business = |id: &str, name: &str, role| Membership {
                         business_id: id.into(),
@@ -401,12 +401,18 @@ impl VzApp {
                     };
                     app.demo_gate(list, invites, window, cx);
                     // The demo database stands in for the first business.
-                    if start == "switcher" || start == "drive" {
+                    if start == "switcher" || start == "drive" || start == "restore" {
                         if let Some(c) = &mut app.cloud {
                             c.linked = Some("b1".into());
                         }
                         if start == "drive" {
                             app.navigate(Route::Settings, window, cx);
+                        }
+                        // Restoring the demo database over itself (give it a
+                        // sync_state row for business b1 first).
+                        if start == "restore" {
+                            let path = app.store.path().to_path_buf();
+                            app.open_cloud_restore(path, window, cx);
                         }
                     }
                 }

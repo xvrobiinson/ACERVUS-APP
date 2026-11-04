@@ -13,6 +13,7 @@ pub mod payment;
 pub mod reason;
 pub mod receipt_text;
 pub mod reset;
+pub mod restore;
 pub mod schedule;
 
 use std::cell::Cell;

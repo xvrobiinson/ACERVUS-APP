@@ -135,7 +135,8 @@ submit_impl!(
     crate::ui::forms::business::BusinessDetailsForm,
     crate::ui::forms::business::DeleteAccountForm,
     crate::ui::forms::business::DeleteBusinessForm,
-    crate::ui::forms::move_books::MoveBooksForm
+    crate::ui::forms::move_books::MoveBooksForm,
+    crate::ui::forms::restore::RestoreForm
 );
 
 impl VzApp {
@@ -467,16 +468,16 @@ impl VzApp {
         }
     }
 
-    /// Restoring a backup or resetting would replace books the cloud keeps;
-    /// on a linked PC they are refused. Returns true when refused.
+    /// Resetting would wipe books the cloud keeps for everyone: on a cloud
+    /// business it is refused. Returns true when refused.
     fn refuse_when_linked(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         if !self.is_linked() {
             return false;
         }
         self.notify_error(
             t(
-                "This PC shows a business from the cloud. To restore or reset, first switch to the books on this PC in Settings.",
-                "Esta PC muestra un negocio de la nube. Para restaurar o reiniciar, primero cambia a los registros de esta PC en Configuración.",
+                "This business's books are kept in the cloud for everyone. To start over, delete the business in Settings › Cloud sync and create a new one.",
+                "Los registros de este negocio se guardan en la nube para todos. Para empezar de nuevo, elimina el negocio en Configuración › Sincronización y crea uno nuevo.",
             ),
             window,
             cx,
@@ -484,8 +485,10 @@ impl VzApp {
         true
     }
 
+    /// Picks a backup to restore: on a cloud business its books replace the
+    /// business's for everyone (admins only), elsewhere the open books.
     pub fn choose_restore(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.refuse_when_linked(window, cx) {
+        if self.refuse_restore(window, cx) {
             return;
         }
         let request = crate::file_picker::Request {
@@ -499,7 +502,7 @@ impl VzApp {
             request,
             window,
             cx,
-            |app, path, window, cx| app.confirm_restore(path, window, cx),
+            |app, path, window, cx| app.restore_file(path, window, cx),
             |app, why, window, cx| {
                 app.notify_error(
                     tr!(
@@ -710,6 +713,48 @@ impl VzApp {
                 .child(changed.watch(form.clone()))
                 .on_ok(confirm(&form))
                 .on_cancel(changed.ask())
+        });
+    }
+
+    /// Only admins restore a cloud business. Returns true when refused.
+    fn refuse_restore(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let refused = self.is_linked() && !self.can(crate::sync::wire::Need::Manage);
+        if refused {
+            self.notify_error(t("Only admins can restore a backup.", "Solo los administradores pueden restaurar una copia."), window, cx);
+        }
+        refused
+    }
+
+    /// Restores the backup at `path`: on a cloud business for everyone,
+    /// elsewhere over the open books.
+    pub(crate) fn restore_file(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if self.refuse_restore(window, cx) {
+            return;
+        }
+        if self.is_linked() { self.open_cloud_restore(path, window, cx) } else { self.confirm_restore(path, window, cx) }
+    }
+
+    /// Restoring a backup over the cloud business open on this PC.
+    pub(crate) fn open_cloud_restore(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(link) = self.store.cloud_link().ok().flatten() else { return };
+        let app = cx.entity().downgrade();
+        let now = crate::sync::import::Counts {
+            clients: self.snap.clients.len(),
+            loans: self.snap.loans.len(),
+            payments: self.snap.payments.len(),
+        };
+        let form =
+            cx.new(|cx| crate::ui::forms::restore::RestoreForm::new(app, path, link.business_id, link.business_name, now, window, cx));
+        let first = Cell::new(true);
+        window.open_dialog(cx, move |dialog, window, cx| {
+            let handle = form.read(cx).confirm.focus_handle(cx);
+            focus_once(&first, &handle, window, cx);
+            dialog
+                .entrance(DialogEntrance::FadeSlide)
+                .title(t("Restore this backup for everyone?", "¿Restaurar esta copia para todos?"))
+                .w(px(580.))
+                .child(form.clone())
+                .on_ok(confirm(&form))
         });
     }
 

@@ -81,6 +81,7 @@ fn field_label(entity: Entity, field: &str) -> String {
         "fee_base" => t("Overdue amount it was charged on", "Monto vencido sobre el que se cobró"),
         "waived" => t("Waived", "Perdonado"),
         "notes" => t("Notes", "Notas"),
+        "backup_restored" => t("Backup restored, made on", "Copia restaurada, hecha el"),
         // A field from a newer version: its own name, in words.
         other => {
             let w = other.replace('_', " ");
