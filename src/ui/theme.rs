@@ -530,10 +530,9 @@ pub fn apply(pref: ThemePref, cx: &mut App) {
             t.motion.easing_enter = enter;
             t.motion.easing_exit = exit;
         }
-        // Forms settle into place; messages come up from the bottom corner.
+        // Forms settle into place.
         t.motion.duration_normal = std::time::Duration::from_millis(240);
         t.motion.distance_short = rems(0.375);
-        t.notification.placement = Anchor::BottomRight;
         let c = &mut t.colors;
         c.background = p.surface;
         c.foreground = p.text;

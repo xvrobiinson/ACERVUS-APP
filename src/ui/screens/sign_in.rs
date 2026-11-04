@@ -1,7 +1,10 @@
 //! The sign-in screen: a sky (night in dark mode) with soft clouds and two
 //! faint arcs, the brand in the corner and one glass card holding the email
-//! code steps and "Continue with Google". It takes the whole window while
-//! open; "Back to the app" closes it. The work is in `app::cloud`.
+//! code steps (signing in, or making an account with a name) and "Continue
+//! with Google". It takes the whole window while open. The app needs an
+//! account, so it opens at launch and after signing out with no way back;
+//! only debug builds on a demo database show "Back to the app". The work is
+//! in `app::cloud`.
 
 use std::sync::{Arc, LazyLock};
 
@@ -133,6 +136,7 @@ impl VzApp {
         let size = window.viewport_size();
         let (w, h) = (f32::from(size.width), f32::from(size.height));
         let s = &self.sign_in;
+        let (creating, required) = (s.creating, s.required);
         let error = s.error.clone().map(|e| div().text_color(p.negative).typeset(text::CAPTION).child(e));
 
         let (glyph, title, sub, form) = match s.code_sent_to.clone() {
@@ -163,8 +167,23 @@ impl VzApp {
                         )
                         .into_any_element(),
                 };
+                // Signing in, or making a new account (which asks for a name).
+                let (question, other, to_creating) = if creating {
+                    (t("Already have an account?", "¿Ya tienes una cuenta?"), t("Sign in", "Iniciar sesión"), false)
+                } else {
+                    (t("New here?", "¿Eres nuevo?"), t("Create an account", "Crear una cuenta"), true)
+                };
+                let switch =
+                    h_flex().justify_center().items_center().gap(px(2.)).typeset(text::CAPTION).text_color(p.muted).child(question).child(
+                        Button::new("sign-in-switch")
+                            .ghost()
+                            .small()
+                            .label(other)
+                            .on_click(cx.listener(move |this, _, w, cx| this.set_creating(to_creating, w, cx))),
+                    );
                 let form = v_flex()
                     .gap(px(space::M))
+                    .children(creating.then(|| Input::new(&s.name).large().prefix(icon(IconName::UserPlus, p.faint, 16.))))
                     .child(Input::new(&s.email).large().prefix(icon(IconName::Mail, p.faint, 16.)))
                     .children(error)
                     .child(
@@ -184,17 +203,28 @@ impl VzApp {
                             .child(t("Or continue with", "O continúa con"))
                             .child(div().flex_1().h(px(1.)).bg(p.border)),
                     )
-                    .child(google);
-                (
-                    IconName::LogIn,
-                    t("Sign in to Acervus", "Inicia sesión en Acervus").to_string(),
-                    t(
-                        "We'll email you a 6-digit code. No password to remember.",
-                        "Te enviaremos un código de 6 dígitos. Sin contraseñas que recordar.",
+                    .child(google)
+                    .child(switch);
+                if creating {
+                    (
+                        IconName::UserPlus,
+                        t("Create an account", "Crear una cuenta").to_string(),
+                        t("Then create your business or accept an invitation.", "Luego crea tu negocio o acepta una invitación.")
+                            .to_string(),
+                        form,
                     )
-                    .to_string(),
-                    form,
-                )
+                } else {
+                    (
+                        IconName::LogIn,
+                        t("Sign in to Acervus", "Inicia sesión en Acervus").to_string(),
+                        t(
+                            "We'll email you a 6-digit code. No password to remember.",
+                            "Te enviaremos un código de 6 dígitos. Sin contraseñas que recordar.",
+                        )
+                        .to_string(),
+                        form,
+                    )
+                }
             }
             Some(email) => {
                 let form = v_flex()
@@ -251,10 +281,12 @@ impl VzApp {
                     .child(div().text_center().text_color(p.muted).max_w(px(290.)).child(sub)),
             )
             .child(form)
-            .child(div().text_center().typeset(text::CAPTION).text_color(p.faint).child(t(
-                "Without signing in, the app works only with the books on this PC.",
-                "Sin iniciar sesión, la app trabaja solo con los registros de esta PC.",
-            )));
+            .children((!required).then(|| {
+                div().text_center().typeset(text::CAPTION).text_color(p.faint).child(t(
+                    "Without signing in, the app works only with the books on this PC.",
+                    "Sin iniciar sesión, la app trabaja solo con los registros de esta PC.",
+                ))
+            }));
 
         let top = h_flex()
             .justify_between()
@@ -266,15 +298,16 @@ impl VzApp {
                     .child(crate::app::mark(&p))
                     .child(div().typeset(text::HEADING).text_color(p.text).child(crate::APP_NAME)),
             )
-            .child(
+            // Only when the app can be used without an account.
+            .children((!required).then(|| {
                 div().rounded(px(RADIUS_CONTROL)).bg(faded(p.surface, 0.35)).child(
                     Button::new("sign-in-back")
                         .ghost()
                         .icon(IconName::ArrowLeft)
                         .label(t("Back to the app", "Volver a la app"))
                         .on_click(cx.listener(|this, _, w, cx| this.close_sign_in(w, cx))),
-                ),
-            );
+                )
+            }));
 
         div()
             .id("sign-in")

@@ -22,6 +22,7 @@ mod sort_header;
 mod splash;
 mod stat;
 mod stat_cards;
+mod toast;
 
 pub use button::{Button, ButtonKind, ButtonSize};
 pub use card::{Card, face};
@@ -37,6 +38,7 @@ pub use sort_header::{Sort, SortHeader};
 pub use splash::Splash;
 pub use stat::Stat;
 pub use stat_cards::StatCards;
+pub use toast::Toast;
 
 use std::rc::Rc;
 

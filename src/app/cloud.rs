@@ -46,6 +46,13 @@ fn endpoints() -> Endpoints {
 pub(crate) struct SignIn {
     pub(crate) email: Entity<InputState>,
     pub(crate) code: Entity<InputState>,
+    /// The name for a new account.
+    pub(crate) name: Entity<InputState>,
+    /// Making a new account (it asks for a name) rather than signing in.
+    pub(crate) creating: bool,
+    /// The app needs an account: nothing opens without signing in, and the
+    /// screen has no way back.
+    pub(crate) required: bool,
     /// The code was sent to this address; the form asks for it.
     pub(crate) code_sent_to: Option<String>,
     pub(crate) busy: bool,
@@ -61,6 +68,9 @@ impl SignIn {
         Self {
             email: cx.new(|cx| InputState::new(window, cx)),
             code: cx.new(|cx| InputState::new(window, cx)),
+            name: cx.new(|cx| InputState::new(window, cx)),
+            creating: false,
+            required: false,
             code_sent_to: None,
             busy: false,
             error: None,
@@ -254,6 +264,11 @@ impl VzApp {
     // ----- signing in -----------------------------------------------------
 
     pub(crate) fn send_sign_in_code(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sign_in.creating && self.sign_in.name.read(cx).value().trim().is_empty() {
+            self.sign_in.error = Some(t("Enter your name", "Escribe tu nombre").into());
+            cx.notify();
+            return;
+        }
         let email = self.sign_in.email.read(cx).value().trim().to_string();
         if !email.contains('@') {
             self.sign_in.error = Some(t("Enter your email address", "Escribe tu correo").into());
@@ -299,7 +314,8 @@ impl VzApp {
         cx.notify();
         let ep = endpoints();
         let (e2, ep2) = (email.clone(), ep.clone());
-        let task = cx.background_spawn(async move { auth::sign_in(&ep2, &e2, &code) });
+        let name = self.sign_in.creating.then(|| self.sign_in.name.read(cx).value().trim().to_string());
+        let task = cx.background_spawn(async move { auth::sign_in(&ep2, &e2, &code, name.as_deref()) });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |app, window, cx| {
@@ -311,7 +327,8 @@ impl VzApp {
                             log::warn!("sign-in not remembered: {e}");
                         }
                         app.sign_in.code_sent_to = None;
-                        app.start_cloud(ep, stored, None, window, cx);
+                        let linked = app.store.pref(LINKED).ok().flatten();
+                        app.start_cloud(ep, stored, linked, window, cx);
                         app.signed_in(window, cx);
                     }
                     Err(e) => app.sign_in.error = Some(e.to_string()),
@@ -361,6 +378,8 @@ impl VzApp {
                 if stop.load(Ordering::Relaxed) {
                     return;
                 }
+                // Back from the browser: the app comes to the front.
+                window.activate_window();
                 app.sign_in.google = None;
                 match result {
                     Ok((email, session)) => {
@@ -369,7 +388,8 @@ impl VzApp {
                             log::warn!("sign-in not remembered: {e}");
                         }
                         app.sign_in.code_sent_to = None;
-                        app.start_cloud(ep, stored, None, window, cx);
+                        let linked = app.store.pref(LINKED).ok().flatten();
+                        app.start_cloud(ep, stored, linked, window, cx);
                         app.signed_in(window, cx);
                     }
                     Err(e) => app.sign_in.error = Some(e.to_string()),
@@ -401,6 +421,9 @@ impl VzApp {
 
     /// Leaves the sign-in screen; a Google sign-in still waiting is stopped.
     pub(crate) fn close_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sign_in.required {
+            return;
+        }
         self.cancel_google(cx);
         self.sign_in.open = false;
         self.sign_in.busy = false;
@@ -408,11 +431,27 @@ impl VzApp {
         cx.notify();
     }
 
-    /// After signing in: back to the app, in Settings, where the person
-    /// picks the business for this PC.
+    /// After signing in: the launch splash, then the business this PC
+    /// followed before, or Settings to choose one.
     fn signed_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sign_in.open = false;
-        self.navigate(super::Route::Settings, window, cx);
+        self.sign_in.creating = false;
+        let linked = self.cloud.as_ref().is_some_and(|c| c.linked.is_some());
+        self.navigate(if linked { super::Route::Overview } else { super::Route::Settings }, window, cx);
+        if !cx.reduce_motion() {
+            self.play_splash(cx);
+        }
+        window.focus(&self.focus, cx);
+    }
+
+    /// Switches between signing in and making a new account.
+    pub(crate) fn set_creating(&mut self, creating: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.sign_in.creating = creating;
+        self.sign_in.code_sent_to = None;
+        self.sign_in.error = None;
+        let field = if creating { &self.sign_in.name } else { &self.sign_in.email };
+        field.update(cx, |s, cx| s.focus(window, cx));
+        cx.notify();
     }
 
     /// Back to the email step (wrong address, or no code arrived).
@@ -438,7 +477,15 @@ impl VzApp {
             }
             self.use_local_books(false, window, cx);
         }
-        self.notify_success(t("Signed out on this PC", "Sesión cerrada en esta PC"), window, cx);
+        if self.sign_in.required {
+            // Straight back to the sign-in screen.
+            self.sign_in.open = true;
+            self.sign_in.code_sent_to = None;
+            self.sign_in.error = None;
+            self.sign_in.email.update(cx, |s, cx| s.focus(window, cx));
+        } else {
+            self.notify_success(t("Signed out on this PC", "Sesión cerrada en esta PC"), window, cx);
+        }
         cx.notify();
     }
 

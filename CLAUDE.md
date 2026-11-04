@@ -44,7 +44,9 @@ in its own colors, `.wide` for a full-width button; approved 2026-10-30),
 `StatCards` (`.lifting` lifts cards under the pointer, `.keys`, `.frame`,
 `.glide`), `ListRow` (`.muted`, `.boxed`, `.rise(i)`, `.fresh`), `Chip`
 (`.spinning`, `.done`), `CountUp`, `Glide` (slides a block to its new place
-while armed), `SavedCheck`, `kit::motion` (rise, shake, pop, swing), `Segmented` (`Segmented::pick`, cells
+while armed), `SavedCheck`, `Splash` (the launch splash, also after signing
+in), `Toast` (the bottom-center message from `notify_success`/`notify_error`;
+it takes no clicks, so it never blocks a button), `kit::motion` (rise, shake, pop, swing), `Segmented` (`Segmented::pick`, cells
 fit their labels), `Dropdown` + `DropdownItem` (`.danger`, `.disabled`,
 `.hint`), `Overlay`, `SortHeader` + `Sort` (sortable column header, `.right`
 for number columns; used on Clients and Loans, approved 2026-10-27), and
@@ -105,7 +107,7 @@ the same springs. Searching and sorting rules live in `ui::lists`.
   `ACERVUS_DB=<new.db>`; in debug builds `ACERVUS_START` opens a screen
   or dialog at launch (`clients`, `loans`, `analytics`, `settings`, `payments`, `messages`, `loan-<n>`, `client-<n>`,
   `new-record`, `new-income`, `wording`, `settings-receipts`, `settings-team`,
-  `settings-business`, `settings-formats`, `customize` (arranging the Overview), `sign-in`, `settings-data`, `settings-receipt-look`,
+  `settings-business`, `settings-formats`, `customize` (arranging the Overview), `toasts` (a form with two messages over it), `sign-in`, `sign-up` (both as the required screen, with no way back), `settings-data`, `settings-receipt-look`,
   `settings-receipt-parts`). Capture the window with `PrintWindow`, which works
   even when it is covered. Never send synthetic keystrokes or clicks: when the
   app isn't the foreground window they land in the user's other programs.

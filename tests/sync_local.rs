@@ -53,8 +53,8 @@ fn sign_in(email: &str) -> Session {
         std::thread::sleep(Duration::from_millis(200));
     };
     let wrong = if code == "000000" { "111111" } else { "000000" };
-    assert_eq!(auth::sign_in(&endpoints(), email, wrong).err(), Some(AuthError::WrongCode));
-    auth::sign_in(&endpoints(), email, &code).unwrap()
+    assert_eq!(auth::sign_in(&endpoints(), email, wrong, None).err(), Some(AuthError::WrongCode));
+    auth::sign_in(&endpoints(), email, &code, None).unwrap()
 }
 
 fn create_business(session: &Session, name: &str) -> String {

@@ -237,9 +237,13 @@ pub fn send_code(ep: &Endpoints, email: &str) -> Result<(), AuthError> {
 }
 
 /// Signs in with the emailed code. A new address gets an account, as in
-/// the PWA.
-pub fn sign_in(ep: &Endpoints, email: &str, code: &str) -> Result<Session, AuthError> {
-    let reply = call(ep, "POST", "/sign-in/email-otp", None, Some(json!({ "email": email.trim(), "otp": code.trim() })))?;
+/// the PWA, named `name` when one is given.
+pub fn sign_in(ep: &Endpoints, email: &str, code: &str, name: Option<&str>) -> Result<Session, AuthError> {
+    let mut body = json!({ "email": email.trim(), "otp": code.trim() });
+    if let Some(name) = name.map(str::trim).filter(|n| !n.is_empty()) {
+        body["name"] = json!(name);
+    }
+    let reply = call(ep, "POST", "/sign-in/email-otp", None, Some(body))?;
     if reply.status != 200 {
         return Err(refusal(&reply));
     }

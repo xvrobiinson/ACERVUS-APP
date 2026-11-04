@@ -11,6 +11,7 @@ pub(crate) use sidebar::mark;
 
 pub use cloud::SyncStatus;
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -19,9 +20,8 @@ use std::time::Duration;
 use chrono::NaiveDate;
 use gpui_kit::component::IndexPath;
 use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::component::select::{SelectEvent, SelectState};
-use gpui_kit::component::{WindowExt as _, v_flex};
+use gpui_kit::component::v_flex;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -168,7 +168,16 @@ pub struct VzApp {
     derived: derived::Derived,
     /// The Overview is being arranged (Customize).
     pub(crate) customizing: bool,
+    /// Messages showing at the bottom of the window.
+    toasts: Rc<RefCell<Toasts>>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// Messages showing at the bottom of the window: (number, text, error).
+#[derive(Default)]
+struct Toasts {
+    next: u64,
+    shown: Vec<(u64, SharedString, bool)>,
 }
 
 /// The logo as an image the UI can draw, reusing `current` when the bytes
@@ -259,6 +268,11 @@ impl VzApp {
                 this.send_sign_in_code(window, cx);
             }
         }));
+        subs.push(cx.subscribe_in(&sign_in.name, window, |this, _, ev: &InputEvent, window, cx| {
+            if matches!(ev, InputEvent::PressEnter { .. }) {
+                this.send_sign_in_code(window, cx);
+            }
+        }));
         subs.push(cx.subscribe_in(&sign_in.code, window, |this, _, ev: &InputEvent, window, cx| {
             if matches!(ev, InputEvent::PressEnter { .. }) {
                 this.finish_sign_in(window, cx);
@@ -300,6 +314,7 @@ impl VzApp {
             motion: Default::default(),
             derived: Default::default(),
             customizing: false,
+            toasts: Default::default(),
             _subscriptions: subs,
         };
         app.apply_language(window, cx);
@@ -307,10 +322,18 @@ impl VzApp {
         if !cfg!(test) {
             app.resume_cloud(window, cx);
         }
+        // The app needs an account. Tests go without, and so do debug builds
+        // on a demo database (screenshots).
+        app.sign_in.required = !cfg!(test) && !(cfg!(debug_assertions) && crate::database::uses_custom_db());
+        if app.sign_in.required && app.cloud.is_none() {
+            app.sign_in.open = true;
+            app.sign_in.email.update(cx, |s, cx| s.focus(window, cx));
+        }
         // The launch splash, except in tests, for screenshots of a screen
-        // opened at launch, and when Windows' animation effects are off.
+        // opened at launch, when Windows' animation effects are off, and
+        // before signing in (it plays once signed in).
         let opens_a_screen = cfg!(debug_assertions) && std::env::var_os("ACERVUS_START").is_some();
-        if !cfg!(test) && !opens_a_screen && !cx.reduce_motion() {
+        if !cfg!(test) && !opens_a_screen && !cx.reduce_motion() && !app.sign_in.open {
             app.play_splash(cx);
         }
         // Debug builds only: ACERVUS_START opens a screen or dialog at
@@ -330,7 +353,11 @@ impl VzApp {
                 "new-record" => app.open_entry_form(EntryKind::Expense, None, window, cx),
                 "new-income" => app.open_entry_form(EntryKind::Income, None, window, cx),
                 "wording" => app.open_receipt_text_form(window, cx),
-                "sign-in" => app.sign_in.open = true,
+                "sign-in" | "sign-up" => {
+                    app.sign_in.open = true;
+                    app.sign_in.required = true;
+                    app.sign_in.creating = start == "sign-up";
+                }
                 "payments" => app.navigate(Route::Payments, window, cx),
                 "settings-business" | "settings-formats" | "settings-data" | "settings-receipt-look" | "settings-receipt-parts" => {
                     use crate::ui::screens::settings::{SettingsPage, SettingsPanel};
@@ -346,6 +373,12 @@ impl VzApp {
                     app.settings_page = page;
                 }
                 "customize" => app.customizing = true,
+                // A form with a message and an error over it.
+                "toasts" => {
+                    app.open_entry_form(EntryKind::Expense, None, window, cx);
+                    app.notify_success(t("Payment saved", "Pago guardado"), window, cx);
+                    app.notify_error(t("Enter your email address", "Escribe tu correo"), window, cx);
+                }
                 "settings-team" => {
                     app.navigate(Route::Settings, window, cx);
                     app.settings_panel = Some(crate::ui::screens::settings::SettingsPanel::Team);
@@ -419,6 +452,7 @@ impl VzApp {
         });
         self.sign_in.email.update(cx, |s, cx| s.set_placeholder(t("you@example.com", "tu@correo.com"), window, cx));
         self.sign_in.code.update(cx, |s, cx| s.set_placeholder(t("6-digit code", "Código de 6 dígitos"), window, cx));
+        self.sign_in.name.update(cx, |s, cx| s.set_placeholder(t("Your name", "Tu nombre"), window, cx));
         let selected = CURRENCIES.iter().position(|c| c.code == self.snap.settings.currency_code).map(IndexPath::new);
         self.currency_select.update(cx, |s, cx| {
             s.set_items(currency_choices(), window, cx);
@@ -568,11 +602,51 @@ impl VzApp {
     }
 
     pub fn notify_success(&self, msg: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
-        window.push_notification(Notification::success(msg.into()), cx);
+        self.toast(msg.into(), false, window, cx);
     }
 
     pub fn notify_error(&self, msg: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
-        window.push_notification(Notification::error(msg.into()), cx);
+        self.toast(msg.into(), true, window, cx);
+    }
+
+    /// The messages showing, centered along the bottom of the window.
+    fn render_toasts(&self) -> Div {
+        let toasts = self.toasts.borrow();
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom(px(space::XL))
+            .px(px(space::L))
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(space::S))
+            .children(toasts.shown.iter().map(|(n, text, error)| crate::ui::kit::Toast::new(("toast", *n), text.clone()).error(*error)))
+    }
+
+    /// Shows a message at the bottom of the window for a moment. The same
+    /// message again replaces the one showing; at most three show at once.
+    fn toast(&self, text: SharedString, error: bool, window: &mut Window, cx: &mut App) {
+        let n = {
+            let mut t = self.toasts.borrow_mut();
+            t.next += 1;
+            let n = t.next;
+            t.shown.retain(|(_, x, _)| *x != text);
+            t.shown.push((n, text, error));
+            if t.shown.len() > 3 {
+                t.shown.remove(0);
+            }
+            n
+        };
+        window.refresh();
+        let (list, handle) = (self.toasts.clone(), window.window_handle());
+        cx.spawn(async move |cx| {
+            cx.background_executor().timer(crate::ui::kit::Toast::shown(error)).await;
+            list.borrow_mut().shown.retain(|(m, ..)| *m != n);
+            let _ = handle.update(cx, |_, window, _| window.refresh());
+        })
+        .detach();
     }
 
     pub fn update_settings(&mut self, f: impl FnOnce(&mut Settings), window: &mut Window, cx: &mut Context<Self>) {
@@ -1036,6 +1110,8 @@ impl Render for VzApp {
                     .saved
                     .map(|(n, _)| crate::ui::kit::SavedCheck::new(("saved-check", n as u64), t("Payment saved", "Pago guardado"))),
             )
+            // Messages over everything, dialogs included; they take no clicks.
+            .child(deferred(self.render_toasts()).with_priority(2))
             .when(self.motion.splash, |d| d.child(crate::ui::kit::Splash::new("launch-splash")))
     }
 }
