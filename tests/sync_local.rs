@@ -263,6 +263,7 @@ fn changes_made_here_reach_the_cloud() {
         on: today,
         notes: String::new(),
         instruction: Some(Instruction::Auto),
+        paid_with: None,
     };
     check(&mut store, &mut rx, pay, "payment", &|s| s.payments.len() == 1);
     let gas = Change::NewEntry {
@@ -281,6 +282,7 @@ fn changes_made_here_reach_the_cloud() {
         on: today,
         notes: "corregido".into(),
         instruction: Some(Instruction::Auto),
+        paid_with: None,
         reason: "Monto equivocado".into(),
     };
     check(&mut store, &mut rx, edit, "payment edit", &|s| s.payments.first().is_some_and(|p| p.amount == 2_000_000));

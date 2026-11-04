@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use super::replica::{self, Entity};
 use super::wire::Need;
 use crate::database::repositories::clients::ClientInput;
+use crate::database::repositories::payments::PaidWith;
 use crate::domain::installments::{Installment, Instruction};
 use crate::domain::loans::LoanTerms;
 use crate::domain::money::Cents;
@@ -100,6 +101,7 @@ pub enum Change {
         on: NaiveDate,
         notes: String,
         instruction: Option<Instruction>,
+        paid_with: Option<PaidWith>,
     },
     EditPayment {
         id: i64,
@@ -108,6 +110,7 @@ pub enum Change {
         on: NaiveDate,
         notes: String,
         instruction: Option<Instruction>,
+        paid_with: Option<PaidWith>,
         reason: String,
     },
     DeletePayment {
@@ -230,15 +233,20 @@ impl Change {
             MarkDefaulted { id, on, note } => s.mark_defaulted(*id, *on, note, today).map(|_| None)?,
             Reinstate { id } => s.reinstate(*id, today).map(|_| None)?,
             WaiveLateFee { loan_id, seq, waived, reason } => s.set_late_fee_waived(*loan_id, *seq, *waived, reason, today).map(|_| None)?,
-            NewPayment { loan_id, amount, fee, on, notes, instruction } => Some(match instruction {
-                None => s.record_payment(*loan_id, *amount, *fee, *on, notes, today)?,
-                Some(i) => s.record_installment_payment(*loan_id, *amount, *on, notes, i, today)?,
-            }),
-            EditPayment { id, amount, fee, on, notes, instruction, reason } => {
+            NewPayment { loan_id, amount, fee, on, notes, instruction, paid_with } => {
+                let id = match instruction {
+                    None => s.record_payment(*loan_id, *amount, *fee, *on, notes, today)?,
+                    Some(i) => s.record_installment_payment(*loan_id, *amount, *on, notes, i, today)?,
+                };
+                s.set_payment_paid_with(id, *paid_with)?;
+                Some(id)
+            }
+            EditPayment { id, amount, fee, on, notes, instruction, paid_with, reason } => {
                 match instruction {
                     None => s.update_payment(*id, *amount, *fee, *on, notes, reason, today)?,
                     Some(i) => s.update_installment_payment(*id, *amount, *on, notes, i, reason, today)?,
                 }
+                s.set_payment_paid_with(*id, *paid_with)?;
                 None
             }
             DeletePayment { id, reason } => s.delete_payment(*id, reason, today).map(|_| None)?,
@@ -321,21 +329,23 @@ impl Change {
                     json!({ "loanId": lid, "expectedVersion": version, "seq": seq, "waived": waived, "reason": reason }),
                 )
             }
-            NewPayment { loan_id, amount, fee, on, notes, instruction: i } => {
+            NewPayment { loan_id, amount, fee, on, notes, instruction: i, paid_with } => {
                 let (lid, version) = id(Entity::Loan, *loan_id)?;
-                (
-                    "payments:record",
-                    json!({ "loanId": lid, "loanVersion": version, "amount": amount, "fee": fee, "paidOn": on.to_string(),
-                            "notes": notes, "instruction": instruction(i.as_ref())? }),
-                )
+                let mut args = json!({ "loanId": lid, "loanVersion": version, "amount": amount, "fee": fee, "paidOn": on.to_string(),
+                            "notes": notes, "instruction": instruction(i.as_ref())? });
+                if let Some(p) = paid_with {
+                    args["paidWith"] = json!(p.key());
+                }
+                ("payments:record", args)
             }
-            EditPayment { id: local, amount, fee, on, notes, instruction: i, reason } => {
+            EditPayment { id: local, amount, fee, on, notes, instruction: i, paid_with, reason } => {
                 let (pid, version) = id(Entity::Payment, *local)?;
-                (
-                    "payments:update",
-                    json!({ "paymentId": pid, "expectedVersion": version, "amount": amount, "fee": fee, "paidOn": on.to_string(),
-                            "notes": notes, "instruction": instruction(i.as_ref())?, "reason": reason }),
-                )
+                let mut args = json!({ "paymentId": pid, "expectedVersion": version, "amount": amount, "fee": fee, "paidOn": on.to_string(),
+                            "notes": notes, "instruction": instruction(i.as_ref())?, "reason": reason });
+                if let Some(p) = paid_with {
+                    args["paidWith"] = json!(p.key());
+                }
+                ("payments:update", args)
             }
             DeletePayment { id: local, reason } => {
                 let (pid, version) = id(Entity::Payment, *local)?;
@@ -434,6 +444,7 @@ impl Change {
                     on: day("paidOn")?,
                     notes: text("notes"),
                     instruction,
+                    paid_with: PaidWith::from_key(&text("paidWith")),
                 })
             }
             "money:addEntry" => Ok(Change::NewEntry {
@@ -576,7 +587,7 @@ mod tests {
 
     fn payment(amount: Cents) -> Change {
         let on = NaiveDate::from_ymd_opt(2026, 3, 9).unwrap();
-        Change::NewPayment { loan_id: 3, amount, fee: 0, on, notes: String::new(), instruction: Some(Instruction::Auto) }
+        Change::NewPayment { loan_id: 3, amount, fee: 0, on, notes: String::new(), instruction: Some(Instruction::Auto), paid_with: None }
     }
 
     fn juan() -> ClientInput {

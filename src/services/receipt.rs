@@ -168,6 +168,8 @@ pub struct ReceiptData {
     /// what is owed by then. Open loans have none.
     pub next_due: Option<(NaiveDate, Cents)>,
     pub notes: String,
+    /// How it was paid; none on older payments.
+    pub paid_with: Option<crate::database::repositories::payments::PaidWith>,
     pub reversed: Option<String>,
     /// Installment loans: where this payment went.
     pub installments: Vec<InstallmentLine>,
@@ -254,6 +256,7 @@ pub fn data(snap: &Snapshot, payment_id: i64) -> Option<ReceiptData> {
         overdue_after: 0,
         next_due: None,
         notes: payment.notes.clone(),
+        paid_with: payment.paid_with,
         reversed: payment.reversal_reason.clone().filter(|_| payment.is_reversed()),
         installments: Vec::new(),
         schedule: Vec::new(),
@@ -719,6 +722,9 @@ pub fn render(d: &ReceiptData, snap: &Snapshot) -> String {
     let show = snap.settings.receipt_show;
 
     let mut paid = vec![row(t("Amount paid", "Monto pagado"), m(d.amount), "total")];
+    if let Some(w) = d.paid_with {
+        paid.push(row(t("Paid with", "Forma de pago"), esc(w.label()), "sub"));
+    }
     if d.fee > 0 && show.late_fees {
         paid.push(row(if installment_loan { t("Late fees", "Cargos por mora") } else { t("Fee", "Cargo") }, m(d.fee), "sub"));
     }
@@ -783,7 +789,8 @@ pub fn render(d: &ReceiptData, snap: &Snapshot) -> String {
     // A contact line and a closing line longer than the built-in one take
     // room on the page too.
     let footer = snap.settings.receipt_text.payment_footer();
-    let extra = contact_rows(&d.company) + text_rows(&footer).saturating_sub(1);
+    // The "Paid with" line counts as one row (it sits in the summary).
+    let extra = contact_rows(&d.company) + text_rows(&footer).saturating_sub(1) + usize::from(d.paid_with.is_some());
     let rows = schedule_rows + history_rows + extra;
     let title = tr!("Receipt {number}", "Recibo {number}");
     let css = r#"

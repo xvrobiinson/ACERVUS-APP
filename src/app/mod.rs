@@ -359,6 +359,7 @@ impl VzApp {
                     app.settings_panel = Some(crate::ui::screens::settings::SettingsPanel::Receipts);
                 }
                 "new-record" => app.open_entry_form(EntryKind::Expense, None, window, cx),
+                "new-payment" => app.open_payment_form(None, window, cx),
                 "new-income" => app.open_entry_form(EntryKind::Income, None, window, cx),
                 "wording" => app.open_receipt_text_form(window, cx),
                 "sign-in" | "sign-up" => {

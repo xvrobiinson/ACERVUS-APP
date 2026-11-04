@@ -211,6 +211,7 @@ fn read(db: &Connection, timezone: &str, expected: Value) -> Result<Prepared> {
             let mut v = compact(json!({
                 "no": id, "loanNo": get(p, "loan_id"), "paidOn": get(p, "paid_on"), "amount": get(p, "amount"),
                 "notes": get(p, "notes"), "mode": get(p, "allocation_mode"), "targetSeq": get(p, "target_seq"),
+                "paidWith": get(p, "paid_with"),
                 "principal": get(p, "principal"), "interest": get(p, "interest"), "fee": get(p, "fee"),
                 "createdAt": ms(&get(p, "created_at")),
             }));

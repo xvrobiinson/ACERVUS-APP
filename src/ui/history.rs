@@ -59,6 +59,7 @@ fn field_label(entity: Entity, field: &str) -> String {
         "fee" => t("Late fee", "Mora"),
         "interest" => t("Interest", "Interés"),
         "paid_on" => t("Paid on", "Pagado el"),
+        "paid_with" => t("Paid with", "Forma de pago"),
         "occurred_on" => t("Date", "Fecha"),
         "kind" => t("Type", "Tipo"),
         "account" => t("Account", "Cuenta"),
@@ -103,6 +104,9 @@ fn field_value(field: &str, raw: &str, snap: &Snapshot) -> String {
         "rate" | "late_fee_rate" => raw.parse().map(|ppm| Rate(ppm).percent_label()).unwrap_or_else(|_| raw.into()),
         "frequency" | "interest_period" => Frequency::from_key(raw).map(|f| f.label().to_string()).unwrap_or_else(|| raw.into()),
         "method" => Method::from_key(raw).map(|m| m.short_label().to_string()).unwrap_or_else(|| raw.into()),
+        "paid_with" => {
+            crate::database::repositories::payments::PaidWith::from_key(raw).map_or_else(|| raw.into(), |w| w.label().to_string())
+        }
         "schedule" => match raw.split_once('|') {
             Some((n, total)) => {
                 let total = cents(total);

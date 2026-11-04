@@ -342,6 +342,9 @@ pub struct Payment {
     pub interest: i64,
     pub fee: i64,
     pub applied: Vec<Applied>,
+    /// How it was paid; none on older payments.
+    #[serde(default)]
+    pub paid_with: Option<String>,
     pub created_at: i64,
     pub version: i64,
 }

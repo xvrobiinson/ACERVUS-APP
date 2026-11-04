@@ -424,3 +424,23 @@ fn a_long_history_lists_every_payment_and_says_it_continues() {
     let (_, short) = receipt(&s, s.snapshot().unwrap().payments.iter().map(|p| p.id).min().unwrap());
     assert!(!short.contains("continues on the next page"));
 }
+
+/// How a payment was made is kept with it and printed on its receipt;
+/// payments from before it was asked print nothing for it.
+#[test]
+fn receipts_say_how_the_payment_was_made() {
+    use crate::database::repositories::payments::PaidWith;
+    let (mut s, lid, _) = open_loan();
+    let before = pay_open(&mut s, lid, 50_000, d(2026, 2, 1));
+    let pid = pay_open(&mut s, lid, 50_000, d(2026, 3, 1));
+    s.set_payment_paid_with(pid, Some(PaidWith::Transfer)).unwrap();
+    let (data, html) = receipt(&s, pid);
+    assert_eq!(data.paid_with, Some(PaidWith::Transfer));
+    assert_eq!(rows_with(&html, "Transfer").len(), 1, "{html}");
+    let (data, html) = receipt(&s, before);
+    assert_eq!(data.paid_with, None);
+    assert!(rows_with(&html, "Paid with").is_empty());
+    // It can be cleared again.
+    s.set_payment_paid_with(pid, None).unwrap();
+    assert_eq!(receipt(&s, pid).0.paid_with, None);
+}

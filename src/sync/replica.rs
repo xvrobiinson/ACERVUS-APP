@@ -338,8 +338,8 @@ pub fn apply(conn: &mut Connection, snap: &Snapshot) -> Result<()> {
 
     for p in &snap.payments {
         tx.execute(
-            "INSERT INTO payments (id, loan_id, paid_on, amount, notes, created_at, allocation_mode, target_seq)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO payments (id, loan_id, paid_on, amount, notes, created_at, allocation_mode, target_seq, paid_with)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 p.record_no,
                 loan_no(&p.loan_id)?,
@@ -348,7 +348,8 @@ pub fn apply(conn: &mut Connection, snap: &Snapshot) -> Result<()> {
                 p.notes,
                 stamp(p.created_at),
                 p.mode,
-                p.target_seq
+                p.target_seq,
+                p.paid_with.as_deref().and_then(crate::database::repositories::payments::PaidWith::from_key).map(|w| w.key())
             ],
         )
         .with_context(|| format!("payment {}", p.record_no))?;

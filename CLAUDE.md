@@ -128,7 +128,7 @@ the same springs. Searching and sorting rules live in `ui::lists`.
   `cargo run --example seed_demo -- <new.db>` and launch with
   `ACERVUS_DB=<new.db>`; in debug builds `ACERVUS_START` opens a screen
   or dialog at launch (`clients`, `loans`, `analytics`, `settings`, `payments`, `messages`, `loan-<n>`, `client-<n>`,
-  `new-record`, `new-income`, `wording`, `settings-receipts`, `settings-team`,
+  `new-record`, `new-income`, `new-payment`, `wording`, `settings-receipts`, `settings-team`,
   `settings-business`, `settings-formats`, `customize` (arranging the Overview), `toasts` (a form with two messages over it), `sign-in`, `sign-up` (both as the required screen, with no way back), `move-books` (the offer to move the PC's own books to the cloud), `update` (the "Update available" window with made-up notes), `welcome`, `choose`, `switcher`, `drive` and `restore` (the business welcome: none yet with an invitation, or two to pick from; then the sidebar switcher with the demo database as the first; then Settings with the Google Drive card; then the restore warning, which needs a demo database with a `sync_state` row for business `b1`; signed in offline as a made-up person), `settings-data`, `settings-receipt-look`,
   `settings-receipt-parts`). Capture the window with `PrintWindow`, which works
   even when it is covered. Never send synthetic keystrokes or clicks: when the

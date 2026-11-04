@@ -15,7 +15,7 @@ use super::{
     reason_input, value,
 };
 use crate::app::VzApp;
-use crate::database::repositories::payments::AllocationMode;
+use crate::database::repositories::payments::{AllocationMode, PaidWith};
 use crate::domain::installments::{Applied, Instruction, PlanState};
 use crate::domain::ledger::{Allocation, ContractStatus, PaymentError, Position, owed_at_payment};
 use crate::domain::money::{Cents, MoneyFormat, parse_money};
@@ -38,6 +38,9 @@ enum PayOption {
     Custom,
 }
 
+/// The way of paying used last on this PC (a preference of the open books).
+pub(crate) const LAST_PAID_WITH: &str = "last_paid_with";
+
 pub struct PaymentForm {
     app: WeakEntity<VzApp>,
     snap: Rc<Snapshot>,
@@ -47,6 +50,8 @@ pub struct PaymentForm {
     fee: Entity<InputState>,
     date: Entity<DateField>,
     notes: Entity<InputState>,
+    /// How it was paid: as recorded, or the way used last on this PC.
+    paid_with: PaidWith,
     show_fee: bool,
     print_receipt: bool,
     /// The payment being edited, if any. Its loan can't change.
@@ -93,6 +98,7 @@ impl PaymentForm {
         snap: Rc<Snapshot>,
         loan_id: Option<i64>,
         editing: Option<i64>,
+        last_paid_with: Option<PaidWith>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -133,8 +139,7 @@ impl PaymentForm {
         });
         let notes = cx.new(|cx| {
             prefill(
-                InputState::new(window, cx)
-                    .placeholder(t("Optional: cash, transfer, reference", "Opcional: efectivo, transferencia, referencia")),
+                InputState::new(window, cx).placeholder(t("Optional: a reference or detail", "Opcional: una referencia o detalle")),
                 existing.as_ref().map(|x| x.notes.clone()),
             )
         });
@@ -173,6 +178,7 @@ impl PaymentForm {
             subs.push(notify_on_change(input, window, cx));
         }
         let print_receipt = snap.settings.receipt_after_payment;
+        let paid_with = existing.as_ref().and_then(|x| x.paid_with).or(last_paid_with).unwrap_or(PaidWith::Cash);
         let mut form = Self {
             app,
             snap,
@@ -182,6 +188,7 @@ impl PaymentForm {
             fee,
             date,
             notes,
+            paid_with,
             show_fee: existing.as_ref().is_some_and(|x| x.fee > 0),
             print_receipt,
             editing,
@@ -338,6 +345,15 @@ impl PaymentForm {
         cx.notify();
     }
 
+    /// Cash, transfer, card, check or other.
+    fn paid_with_control(&self, cx: &mut Context<Self>) -> Segmented {
+        let options = PaidWith::ALL.map(|w| (w, SharedString::from(w.label())));
+        Segmented::pick("paid-with", options, self.paid_with, cx, |this: &mut Self, w, _, cx| {
+            this.paid_with = w;
+            cx.notify();
+        })
+    }
+
     /// Validates and saves; closes the dialog only on success. Bound to the
     /// dialog's Confirm action (Enter) and to the primary button.
     pub fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -369,16 +385,20 @@ impl PaymentForm {
             }
         };
         let print = self.print_receipt;
+        let paid_with = Some(self.paid_with);
         let result = self.app.update(cx, |app, cx| {
             let change = match editing {
-                Some(id) => Change::EditPayment { id, amount, fee, on: date, notes, instruction, reason },
-                None => Change::NewPayment { loan_id, amount, fee, on: date, notes, instruction },
+                Some(id) => Change::EditPayment { id, amount, fee, on: date, notes, instruction, paid_with, reason },
+                None => Change::NewPayment { loan_id, amount, fee, on: date, notes, instruction, paid_with },
             };
             match app.save(change, window, cx) {
                 Ok(saved) => {
                     let id = saved.or(editing).unwrap_or_default();
                     app.reload(cx);
                     let closed = app.snap.loan(loan_id).is_some_and(|l| l.status == ContractStatus::PaidOff);
+                    if let Err(e) = app.store.set_pref(LAST_PAID_WITH, paid_with.map(PaidWith::key)) {
+                        log::warn!("way of paying not remembered: {e:#}");
+                    }
                     if editing.is_none() && app.settings().receipt_after_payment != print {
                         // Remember the choice for next time.
                         app.update_settings(|s| s.receipt_after_payment = print, window, cx);
@@ -755,6 +775,7 @@ impl PaymentForm {
                     field_row().child(grow_field(controls)).child(date).into_any_element()
                 }
             })
+            .child(field(p, t("Paid with", "Forma de pago"), self.paid_with_control(cx), None, None))
             .child(field(p, t("Note", "Nota"), Input::new(&self.notes), None, None))
             .child(panel(p).child(preview_el))
             .when(editing, |d| d.child(field(p, t("Reason for the change", "Motivo del cambio"), Input::new(&self.reason), None, None)))
@@ -945,6 +966,7 @@ impl Render for PaymentForm {
                     }))
                     .into_any_element()
             })
+            .child(field(&p, t("Paid with", "Forma de pago"), self.paid_with_control(cx), None, None))
             .child(field(&p, t("Note", "Nota"), Input::new(&self.notes), None, None))
             .child(panel(&p).child(allocation))
             .when(editing, |d| d.child(field(&p, t("Reason for the change", "Motivo del cambio"), Input::new(&self.reason), None, None)))

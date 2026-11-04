@@ -10,6 +10,45 @@ use crate::domain::installments::{Applied, Instruction};
 use crate::domain::ledger::{Allocation, PaymentFact};
 use crate::domain::money::Cents;
 
+/// How a payment was made, printed on its receipt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaidWith {
+    Cash,
+    Transfer,
+    Card,
+    Check,
+    Other,
+}
+
+impl PaidWith {
+    pub const ALL: [PaidWith; 5] = [PaidWith::Cash, PaidWith::Transfer, PaidWith::Card, PaidWith::Check, PaidWith::Other];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            PaidWith::Cash => "cash",
+            PaidWith::Transfer => "transfer",
+            PaidWith::Card => "card",
+            PaidWith::Check => "check",
+            PaidWith::Other => "other",
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|p| p.key() == key)
+    }
+
+    pub fn label(self) -> &'static str {
+        use crate::i18n::t;
+        match self {
+            PaidWith::Cash => t("Cash", "Efectivo"),
+            PaidWith::Transfer => t("Transfer", "Transferencia"),
+            PaidWith::Card => t("Card", "Tarjeta"),
+            PaidWith::Check => t("Check", "Cheque"),
+            PaidWith::Other => t("Other", "Otro"),
+        }
+    }
+}
+
 /// How a payment on an installment loan was asked to be applied.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum AllocationMode {
@@ -62,6 +101,8 @@ pub struct Payment {
     pub targets: Vec<(u32, Cents)>,
     /// How it was split per installment (installment loans).
     pub applied: Vec<Applied>,
+    /// How it was paid; none on payments from before it was asked.
+    pub paid_with: Option<PaidWith>,
 }
 
 impl Payment {
@@ -83,7 +124,7 @@ impl Payment {
 }
 
 const SELECT: &str = "SELECT p.id, p.loan_id, p.paid_on, p.amount, a.principal, a.interest, a.fee, p.notes, p.created_at, \
-                      p.reversed_at, p.reversal_reason, p.allocation_mode, p.target_seq
+                      p.reversed_at, p.reversal_reason, p.allocation_mode, p.target_seq, p.paid_with
                       FROM payments p JOIN payment_allocations a ON a.payment_id = p.id";
 
 fn from_row(r: &Row<'_>) -> rusqlite::Result<Payment> {
@@ -105,6 +146,7 @@ fn from_row(r: &Row<'_>) -> rusqlite::Result<Payment> {
         target_seq: r.get::<_, Option<i64>>(12)?.map(|s| s as u32),
         targets: Vec::new(),
         applied: Vec::new(),
+        paid_with: r.get::<_, Option<String>>(13)?.and_then(|k| PaidWith::from_key(&k)),
     })
 }
 
@@ -186,6 +228,12 @@ pub fn update(conn: &Connection, id: i64, paid_on: NaiveDate, amount: Cents, fee
         "UPDATE payment_allocations SET fee = ?1, interest = 0, principal = ?2 WHERE payment_id = ?3",
         params![fee, amount - fee, id],
     )?;
+    Ok(())
+}
+
+/// Sets how a payment was made (none: unknown).
+pub fn set_paid_with(conn: &Connection, id: i64, paid_with: Option<PaidWith>) -> Result<()> {
+    conn.execute("UPDATE payments SET paid_with = ?1 WHERE id = ?2", params![paid_with.map(PaidWith::key), id])?;
     Ok(())
 }
 

@@ -235,7 +235,9 @@ impl VzApp {
     fn payment_dialog(&mut self, loan_id: Option<i64>, editing: Option<i64>, window: &mut Window, cx: &mut Context<Self>) {
         let app = cx.entity().downgrade();
         let snap = self.snap.clone();
-        let form = cx.new(|cx| PaymentForm::new(app, snap, loan_id, editing, window, cx));
+        let last = self.store.pref(crate::ui::forms::payment::LAST_PAID_WITH).ok().flatten();
+        let last = last.and_then(|k| crate::database::repositories::payments::PaidWith::from_key(&k));
+        let form = cx.new(|cx| PaymentForm::new(app, snap, loan_id, editing, last, window, cx));
         let title = match editing {
             Some(_) => t("Edit payment", "Editar pago"),
             None => t("Record payment", "Registrar pago"),

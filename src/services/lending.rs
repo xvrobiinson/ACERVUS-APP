@@ -561,6 +561,11 @@ impl Store {
         })
     }
 
+    /// Sets how a payment was made (none: unknown), for its receipt.
+    pub fn set_payment_paid_with(&mut self, payment_id: i64, paid_with: Option<payments::PaidWith>) -> Result<()> {
+        self.write(|c| payments::set_paid_with(c, payment_id, paid_with))
+    }
+
     pub fn delete_payment(&mut self, payment_id: i64, reason: &str, today: NaiveDate) -> Result<()> {
         self.write(|c| {
             let old = payments::get(c, payment_id)?.ok_or_else(|| anyhow!("payment not found"))?;
