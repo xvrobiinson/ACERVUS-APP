@@ -134,7 +134,8 @@ submit_impl!(
     crate::ui::forms::business::NewBusinessForm,
     crate::ui::forms::business::BusinessDetailsForm,
     crate::ui::forms::business::DeleteAccountForm,
-    crate::ui::forms::business::DeleteBusinessForm
+    crate::ui::forms::business::DeleteBusinessForm,
+    crate::ui::forms::move_books::MoveBooksForm
 );
 
 impl VzApp {
@@ -709,6 +710,21 @@ impl VzApp {
                 .child(changed.watch(form.clone()))
                 .on_ok(confirm(&form))
                 .on_cancel(changed.ask())
+        });
+    }
+
+    /// Offers to move the books kept on this PC into a new cloud business.
+    pub fn open_move_books(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let app = cx.entity().downgrade();
+        let source = self.local_path.clone();
+        let form = cx.new(|_| crate::ui::forms::move_books::MoveBooksForm::new(app, source));
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .entrance(DialogEntrance::FadeSlide)
+                .title(t("Move this PC's books to the cloud?", "¿Mover a la nube los registros de esta PC?"))
+                .w(px(560.))
+                .child(form.clone())
+                .on_ok(confirm(&form))
         });
     }
 

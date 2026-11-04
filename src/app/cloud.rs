@@ -2,11 +2,14 @@
 //! this PC's copy and the cloud in step (docs/DESKTOP-SYNC-PLAN.md in the PWA
 //! repo).
 //!
-//! Signed out, nothing here runs and the app works on the books kept on this
-//! PC, as before. Signed in, the sync worker runs; once the person picks a
-//! business, the app switches to that business's own database file (a copy
-//! of the cloud's books) and every save also goes to the cloud. Stopping
-//! (or signing out) switches back to the books on this PC, untouched.
+//! The app needs an account (since 2026-11-04): signed out, the sign-in
+//! screen takes the window. Signed in, the sync worker runs and the app
+//! shows a cloud business: the one this PC opened last, or the only one;
+//! with none open, the business welcome (create one, accept an invitation,
+//! or choose). The open business has its own database file (a copy of the
+//! cloud's books) and every save also goes to the cloud. The books kept on
+//! this PC itself are never shown; once per sign-in the app offers to move
+//! them into a new cloud business (`sync::import`).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,6 +33,9 @@ use crate::tr;
 
 /// The business this PC follows, kept in the PC's own books.
 const LINKED: &str = "cloud_business";
+/// The PC's own books went to the cloud ("done"), or the person said
+/// never to ask ("never"); kept in those books.
+const MOVED: &str = "moved_to_cloud";
 
 /// Where the cloud is. Debug builds can point at a local copy of the
 /// backend for testing (`ACERVUS_SYNC_CLOUD`, `ACERVUS_SYNC_ORIGIN`).
@@ -110,6 +116,26 @@ struct Waiting {
     then: Then,
 }
 
+/// An invitation sent to the signed-in person's email, not yet accepted.
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PendingInvite {
+    pub(crate) invite_id: String,
+    pub(crate) business_name: String,
+    pub(crate) role: Role,
+}
+
+/// What covers the app while signed in with no business open on this PC.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Gate {
+    /// The list of businesses hasn't come yet (or the one business is opening).
+    Waiting,
+    /// No business yet: create one or accept an invitation.
+    Welcome,
+    /// Several businesses and none chosen on this PC yet.
+    Choose,
+}
+
 /// The signed-in link to the cloud.
 pub(crate) struct Cloud {
     pub(crate) endpoints: Endpoints,
@@ -133,6 +159,12 @@ pub(crate) struct Cloud {
     pub(crate) messages: Vec<crate::sync::wire::Message>,
     /// Backups to Google Drive.
     pub(crate) drive: super::drive::Drive,
+    /// Invitations waiting for this person, once asked (welcome screen).
+    pub(crate) invites: Option<Vec<PendingInvite>>,
+    /// An invitation being accepted.
+    pub(crate) accepting: Option<String>,
+    /// Moving this PC's own books to the cloud was offered this sign-in.
+    move_offered: bool,
     _events: Task<()>,
 }
 
@@ -190,6 +222,9 @@ impl VzApp {
             waiting: Vec::new(),
             messages: Vec::new(),
             drive: Default::default(),
+            invites: None,
+            accepting: None,
+            move_offered: false,
             _events: events,
         });
         if let Some(id) = linked {
@@ -219,6 +254,147 @@ impl VzApp {
     }
 
     /// True when this PC follows a business in the cloud.
+    /// What covers the app instead of the books: signed in, but no business
+    /// open on this PC. Never the PC's own books (the app needs a business).
+    pub(crate) fn business_gate(&self) -> Option<Gate> {
+        let c = self.cloud.as_ref()?;
+        if c.linked.is_some() || !self.sign_in.required {
+            return None;
+        }
+        Some(match &c.businesses {
+            Some(list) if list.is_empty() => Gate::Welcome,
+            Some(list) if list.len() > 1 => Gate::Choose,
+            _ => Gate::Waiting,
+        })
+    }
+
+    /// Debug builds: signed in as a made-up person with these businesses
+    /// and invitations, for screenshots of the business welcome. The
+    /// sign-in goes nowhere (a closed local port).
+    pub(crate) fn demo_gate(
+        &mut self,
+        businesses: Vec<Membership>,
+        invites: Vec<PendingInvite>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ep = Endpoints::new("http://127.0.0.1:9", "http://127.0.0.1:9");
+        let stored = Stored { email: "demo@example.com".into(), session: auth::Session::from_stored("demo".into()) };
+        self.start_cloud(ep, stored, None, window, cx);
+        self.sign_in.required = true;
+        if let Some(c) = &mut self.cloud {
+            c.online = true;
+            c.businesses = Some(businesses);
+            c.invites = Some(invites);
+        }
+    }
+
+    /// Once per sign-in: offers to move books kept only on this PC into a
+    /// new cloud business, unless they were moved or the person said never.
+    fn offer_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(c) = &mut self.cloud else { return };
+        if c.move_offered || !self.sign_in.required {
+            return;
+        }
+        c.move_offered = true;
+        let answered = self.local_books().ok().and_then(|s| s.pref(MOVED).ok().flatten()).is_some();
+        if !answered && crate::sync::import::has_records(&self.local_path) {
+            self.open_move_books(window, cx);
+        }
+    }
+
+    /// The books on this PC are a cloud business now: it opens, the books
+    /// here are marked as moved, and their ID photos and logo follow.
+    pub(crate) fn books_moved(
+        &mut self,
+        business: &str,
+        client_ids: &serde_json::Value,
+        moved: crate::sync::import::Prepared,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use base64::Engine as _;
+        if let Err(e) = self.local_books().and_then(|mut s| s.set_pref(MOVED, Some("done"))) {
+            log::warn!("moved books not marked: {e:#}");
+        }
+        self.link_business(business, window, cx);
+        self.notify_success(
+            t("Your books are in the cloud now, as a new business.", "Tus registros ya están en la nube, como un negocio nuevo."),
+            window,
+            cx,
+        );
+        let file = |mime: &str, bytes: &[u8]| serde_json::json!({ "contentType": mime, "data": base64::engine::general_purpose::STANDARD.encode(bytes) });
+        let mut sent = Vec::new();
+        for (no, mime, bytes) in &moved.photos {
+            let Some(id) = client_ids.get(no.to_string()).and_then(|v| v.as_str()) else { continue };
+            let args = serde_json::json!({ "businessId": business, "clientId": id, "upload": file(mime, bytes) });
+            sent.extend(self.cloud_call("clients:setPhoto", args));
+        }
+        if let Some((mime, bytes)) = &moved.logo {
+            sent.extend(self.cloud_call("settings:setLogo", serde_json::json!({ "businessId": business, "upload": file(mime, bytes) })));
+        }
+        cx.spawn(async move |_, _| {
+            for answer in sent {
+                let outcome = answer.await.unwrap_or(Outcome::NoAnswer);
+                if !matches!(outcome, Outcome::Accepted(_)) {
+                    log::warn!("a moved photo or logo wasn't sent: {outcome:?}");
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Never offer to move this PC's books again.
+    pub(crate) fn never_move_books(&mut self) {
+        if let Err(e) = self.local_books().and_then(|mut s| s.set_pref(MOVED, Some("never"))) {
+            log::warn!("\"never move\" not kept: {e:#}");
+        }
+    }
+
+    /// Asks the cloud for invitations sent to this person's email.
+    pub(crate) fn load_invites(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(answer) = self.cloud_query("invites:pending", serde_json::json!({})) else { return };
+        cx.spawn_in(window, async move |this, cx| {
+            let outcome = answer.await.unwrap_or(Outcome::NoAnswer);
+            let _ = this.update(cx, |app, cx| {
+                if let (Outcome::Accepted(v), Some(c)) = (outcome, &mut app.cloud) {
+                    c.invites = Some(serde_json::from_value(v).unwrap_or_default());
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Accepts an invitation and opens its business on this PC.
+    pub(crate) fn accept_invite(&mut self, invite_id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(answer) = self.cloud_call("invites:acceptPending", serde_json::json!({ "inviteId": invite_id })) else { return };
+        if let Some(c) = &mut self.cloud {
+            c.accepting = Some(invite_id);
+        }
+        cx.notify();
+        cx.spawn_in(window, async move |this, cx| {
+            let outcome = answer.await.unwrap_or(Outcome::NoAnswer);
+            let _ = this.update_in(cx, |app, window, cx| {
+                if let Some(c) = &mut app.cloud {
+                    c.accepting = None;
+                }
+                match &outcome {
+                    Outcome::Accepted(id) => {
+                        let id = id.as_str().unwrap_or_default().to_string();
+                        app.link_business(&id, window, cx);
+                    }
+                    _ => {
+                        let why = app.call_failed(&outcome);
+                        app.notify_error(why, window, cx);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     pub(crate) fn is_linked(&self) -> bool {
         self.cloud.as_ref().is_some_and(|c| c.linked.is_some())
     }
@@ -432,12 +608,11 @@ impl VzApp {
     }
 
     /// After signing in: the launch splash, then the business this PC
-    /// followed before, or Settings to choose one.
+    /// followed before (or the welcome while there's none yet).
     fn signed_in(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sign_in.open = false;
         self.sign_in.creating = false;
-        let linked = self.cloud.as_ref().is_some_and(|c| c.linked.is_some());
-        self.navigate(if linked { super::Route::Overview } else { super::Route::Settings }, window, cx);
+        self.navigate(super::Route::Overview, window, cx);
         if !cx.reduce_motion() {
             self.play_splash(cx);
         }
@@ -736,7 +911,17 @@ impl VzApp {
                 // An empty list can also mean the sign-in didn't reach the
                 // cloud, so only a list without this business counts.
                 let gone = c.linked.as_ref().is_some_and(|id| !list.is_empty() && !list.iter().any(|b| &b.business_id == id));
+                // Nothing open yet: the only business opens by itself, and
+                // with none the welcome asks for invitations.
+                let only = (c.linked.is_none() && list.len() == 1).then(|| list[0].business_id.clone());
+                let none = c.linked.is_none() && list.is_empty();
                 c.businesses = Some(list);
+                if let Some(id) = only {
+                    self.link_business(&id, window, cx);
+                } else if none {
+                    self.load_invites(window, cx);
+                }
+                self.offer_move(window, cx);
                 if gone {
                     self.notify_error(
                         t(

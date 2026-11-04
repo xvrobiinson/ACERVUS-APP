@@ -8,6 +8,7 @@ pub mod client;
 pub mod date_field;
 pub mod entry;
 pub mod loan;
+pub mod move_books;
 pub mod payment;
 pub mod reason;
 pub mod receipt_text;

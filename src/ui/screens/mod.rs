@@ -13,6 +13,7 @@ mod sign_in;
 pub mod team;
 pub(crate) use sign_in::sky;
 mod sync;
+mod welcome;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{h_flex, v_flex};

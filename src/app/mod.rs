@@ -9,6 +9,7 @@ pub(crate) mod motion;
 mod sidebar;
 pub(crate) use sidebar::mark;
 
+pub(crate) use cloud::Gate;
 pub use cloud::SyncStatus;
 
 use std::cell::RefCell;
@@ -373,6 +374,36 @@ impl VzApp {
                     app.settings_page = page;
                 }
                 "customize" => app.customizing = true,
+                // The business welcome: no business yet with one invitation,
+                // or several businesses to choose from.
+                // The offer to move the books on this PC (the demo database).
+                "move-books" => app.open_move_books(window, cx),
+                "welcome" | "choose" | "switcher" => {
+                    use crate::sync::wire::{Membership, Role};
+                    let business = |id: &str, name: &str, role| Membership {
+                        business_id: id.into(),
+                        name: name.into(),
+                        role,
+                        timezone: "America/Santo_Domingo".into(),
+                    };
+                    let (list, invites) = if start == "welcome" {
+                        let invite = cloud::PendingInvite {
+                            invite_id: "i1".into(),
+                            business_name: "Préstamos Valdez".into(),
+                            role: Role::Collector,
+                        };
+                        (vec![], vec![invite])
+                    } else {
+                        (vec![business("b1", "Préstamos Valdez", Role::Admin), business("b2", "Cobros del Este", Role::Collector)], vec![])
+                    };
+                    app.demo_gate(list, invites, window, cx);
+                    // The demo database stands in for the first business.
+                    if start == "switcher"
+                        && let Some(c) = &mut app.cloud
+                    {
+                        c.linked = Some("b1".into());
+                    }
+                }
                 // A form with a message and an error over it.
                 "toasts" => {
                     app.open_entry_form(EntryKind::Expense, None, window, cx);
@@ -1068,6 +1099,10 @@ impl Render for VzApp {
                 // The sign-in screen takes the whole window while open.
                 if self.sign_in.open {
                     return d.child(self.render_sign_in(window, cx));
+                }
+                // Signed in with no business open: the welcome takes the window.
+                if let Some(gate) = self.business_gate() {
+                    return d.child(self.render_gate(gate, window, cx));
                 }
                 // Dark mode puts the sign-in's night sky behind every screen;
                 // light mode keeps its plain ground.

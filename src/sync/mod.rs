@@ -17,6 +17,7 @@ pub mod auth;
 pub mod change;
 pub mod drive;
 pub mod figures;
+pub mod import;
 pub mod outbox;
 pub mod refusal;
 pub mod replica;

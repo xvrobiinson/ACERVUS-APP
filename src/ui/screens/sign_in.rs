@@ -261,71 +261,92 @@ impl VzApp {
             }
         };
 
-        let card = v_flex()
-            .w(px(CARD_W.min(w - 2. * space::L)))
-            .px(px(28.))
-            .pt(px(32.))
-            .pb(px(28.))
-            .gap(px(space::L))
-            .rounded(px(22.))
-            .border_1()
-            .border_color(p.glass_edge)
-            .bg(linear_gradient(180., linear_color_stop(p.glass_top, 0.), linear_color_stop(p.glass, 0.4)))
-            .shadow(elevation(&p, Elevation::Floating))
-            .child(
-                v_flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .child(tile(&p, glyph))
-                    .child(div().mt(px(10.)).typeset(text::TITLE).text_color(p.text).child(title))
-                    .child(div().text_center().text_color(p.muted).max_w(px(290.)).child(sub)),
-            )
-            .child(form)
-            .children((!required).then(|| {
-                div().text_center().typeset(text::CAPTION).text_color(p.faint).child(t(
+        let note = (!required).then(|| {
+            div()
+                .text_center()
+                .typeset(text::CAPTION)
+                .text_color(p.faint)
+                .child(t(
                     "Without signing in, the app works only with the books on this PC.",
                     "Sin iniciar sesión, la app trabaja solo con los registros de esta PC.",
                 ))
-            }));
-
-        let top = h_flex()
-            .justify_between()
-            .px(px(space::XXL))
-            .pt(px(space::L))
-            .child(
-                h_flex()
-                    .gap(px(10.))
-                    .child(crate::app::mark(&p))
-                    .child(div().typeset(text::HEADING).text_color(p.text).child(crate::APP_NAME)),
-            )
-            // Only when the app can be used without an account.
-            .children((!required).then(|| {
-                div().rounded(px(RADIUS_CONTROL)).bg(faded(p.surface, 0.35)).child(
-                    Button::new("sign-in-back")
-                        .ghost()
-                        .icon(IconName::ArrowLeft)
-                        .label(t("Back to the app", "Volver a la app"))
-                        .on_click(cx.listener(|this, _, w, cx| this.close_sign_in(w, cx))),
-                )
-            }));
-
-        div()
-            .id("sign-in")
-            .size_full()
-            .relative()
-            .text_color(p.text)
-            .typeset(text::BODY)
-            .child(sky(&p, w, h).child(sky_life(&p, w, h)))
-            .child(
-                v_flex().absolute().inset_0().child(top).child(
-                    div()
-                        .id("sign-in-scroll")
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .child(v_flex().min_h_full().items_center().justify_center().py(px(space::XL)).child(card)),
-                ),
-            )
-            .into_any_element()
+                .into_any_element()
+        });
+        // Only when the app can be used without an account.
+        let back = (!required).then(|| {
+            Button::new("sign-in-back")
+                .ghost()
+                .icon(IconName::ArrowLeft)
+                .label(t("Back to the app", "Volver a la app"))
+                .on_click(cx.listener(|this, _, w, cx| this.close_sign_in(w, cx)))
+                .into_any_element()
+        });
+        glass_screen(&p, w, h, "sign-in", GlassCard { glyph, title, sub, body: form.into_any_element(), note }, back)
     }
+}
+
+/// One card on the sign-in sky: a tile with an icon, a title, a line under
+/// it, the card's content and an optional faint note at the foot.
+pub(crate) struct GlassCard {
+    pub glyph: IconName,
+    pub title: String,
+    pub sub: String,
+    pub body: AnyElement,
+    pub note: Option<AnyElement>,
+}
+
+/// The sign-in look: the sky (night in dark mode) with the brand in the
+/// corner, an optional button in the other corner, and one glass card in
+/// the middle. The business welcome uses it too.
+pub(crate) fn glass_screen(p: &Palette, w: f32, h: f32, id: &'static str, card: GlassCard, corner: Option<AnyElement>) -> AnyElement {
+    let GlassCard { glyph, title, sub, body, note } = card;
+    let card = v_flex()
+        .w(px(CARD_W.min(w - 2. * space::L)))
+        .px(px(28.))
+        .pt(px(32.))
+        .pb(px(28.))
+        .gap(px(space::L))
+        .rounded(px(22.))
+        .border_1()
+        .border_color(p.glass_edge)
+        .bg(linear_gradient(180., linear_color_stop(p.glass_top, 0.), linear_color_stop(p.glass, 0.4)))
+        .shadow(elevation(p, Elevation::Floating))
+        .child(
+            v_flex()
+                .items_center()
+                .gap(px(6.))
+                .child(tile(p, glyph))
+                .child(div().mt(px(10.)).typeset(text::TITLE).text_color(p.text).child(title))
+                .child(div().text_center().text_color(p.muted).max_w(px(290.)).child(sub)),
+        )
+        .child(body)
+        .children(note);
+
+    let top = h_flex()
+        .justify_between()
+        .px(px(space::XXL))
+        .pt(px(space::L))
+        .child(
+            h_flex().gap(px(10.)).child(crate::app::mark(p)).child(div().typeset(text::HEADING).text_color(p.text).child(crate::APP_NAME)),
+        )
+        .children(corner.map(|c| div().rounded(px(RADIUS_CONTROL)).bg(faded(p.surface, 0.35)).child(c)));
+
+    div()
+        .id(id)
+        .size_full()
+        .relative()
+        .text_color(p.text)
+        .typeset(text::BODY)
+        .child(sky(p, w, h).child(sky_life(p, w, h)))
+        .child(
+            v_flex().absolute().inset_0().child(top).child(
+                div()
+                    .id(SharedString::from(format!("{id}-scroll")))
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .child(v_flex().min_h_full().items_center().justify_center().py(px(space::XL)).child(card)),
+            ),
+        )
+        .into_any_element()
 }

@@ -14,7 +14,7 @@ use crate::tr;
 use crate::ui::kit::{Button, Chip, ListRow};
 use crate::ui::theme::{Palette, Typeset as _, space, text};
 
-fn role_label(r: Role) -> &'static str {
+pub(crate) fn role_label(r: Role) -> &'static str {
     match r {
         Role::Admin => t("Admin", "Administrador"),
         Role::Collector => t("Collector", "Cobrador"),
@@ -176,17 +176,6 @@ impl VzApp {
             )
             .child(div().text_color(p.muted).child(status))
             .children((!review.is_empty()).then(|| v_flex().mx(px(-space::XL)).children(review)))
-            .child(
-                h_flex().child(
-                    Button::new("sync-local-books")
-                        .label(t("Show the books on this PC", "Ver los registros de esta PC"))
-                        .tooltip(t(
-                            "The cloud business stays linked; choose it again any time.",
-                            "El negocio de la nube sigue vinculado; elígelo de nuevo cuando quieras.",
-                        ))
-                        .on_click(cx.listener(|this, _, w, cx| this.use_local_books(true, w, cx))),
-                ),
-            )
             .child(self.business_list(p, cx))
             .child(self.drive_settings(p, cx))
             .into_any_element()
@@ -212,12 +201,12 @@ impl VzApp {
                     let row =
                         ListRow::new(SharedString::from(format!("sync-business-{id}"))).title(name.clone()).subtitle(role_label(b.role));
                     let row = if shown {
-                        row.trailing(div().text_color(p.muted).child(t("On this PC", "En esta PC")))
+                        row.trailing(div().text_color(p.muted).child(t("Showing now", "Abierto ahora")))
                     } else {
                         let id = id.clone();
                         row.trailing(
-                            Button::new(SharedString::from(format!("sync-use-{id}")))
-                                .label(t("Use on this PC", "Usar en esta PC"))
+                            Button::new(SharedString::from(format!("sync-open-{id}")))
+                                .label(t("Open", "Abrir"))
                                 .on_click(cx.listener(move |this, _, w, cx| this.link_business(&id, w, cx))),
                         )
                     };

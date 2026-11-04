@@ -11,7 +11,7 @@ use crate::i18n::t;
 use crate::tr;
 use crate::ui::components::{Tone, icon, pill};
 use crate::ui::kit::interact::{faded, hover_state, scoped};
-use crate::ui::kit::{Button, ClickHandler};
+use crate::ui::kit::{Button, ButtonKind, ClickHandler, Dropdown, DropdownItem};
 use crate::ui::theme::{Palette, RADIUS_CONTROL, SIDEBAR_COLLAPSED, SIDEBAR_WIDTH, Typeset as _, motion, palette, space, text};
 
 fn nav() -> [(Route, IconName, &'static str, &'static str); 6] {
@@ -170,7 +170,34 @@ impl VzApp {
             self.note_sync(matches!(status, SyncStatus::Sending(_)), status == SyncStatus::Synced, cx);
         }
 
-        let business = crate::APP_NAME;
+        // The business shown, with a menu to switch to another or start one.
+        let switcher = self.cloud.as_ref().and_then(|c| {
+            let list = c.businesses.as_ref()?;
+            let open = c.linked.as_deref()?;
+            let name = list.iter().find(|b| b.business_id == open)?.name.clone();
+            let items = list.iter().map(|b| {
+                let id = b.business_id.clone();
+                DropdownItem::new(b.name.clone(), cx.listener(move |this, _, w, cx| this.link_business(&id, w, cx)))
+                    .selected(b.business_id == open)
+            });
+            let new = DropdownItem::new(t("New business", "Nuevo negocio"), cx.listener(|this, _, w, cx| this.open_new_business(w, cx)))
+                .icon(IconName::Plus)
+                .disabled(!c.online);
+            Some((
+                name,
+                Dropdown::new("business-switch")
+                    .icon(IconName::ArrowRightLeft)
+                    .kind(ButtonKind::Ghost)
+                    .small()
+                    .tooltip(t("Switch business", "Cambiar de negocio"))
+                    .items(items)
+                    .item(new),
+            ))
+        });
+        let (title, menu) = match switcher {
+            Some((name, menu)) => (SharedString::from(name), Some(menu)),
+            None => (SharedString::from(crate::APP_NAME), None),
+        };
         let items = nav();
         // Analytics shows the business's totals: admins only.
         let analytics = self.can(crate::sync::wire::Need::Manage);
@@ -245,7 +272,8 @@ impl VzApp {
                         None => mark(&p).into_any_element(),
                     })
                     .when(!collapsed, |d| {
-                        d.child(div().flex_1().min_w_0().line_clamp(2).typeset(text::HEADING).text_color(p.text).child(business))
+                        d.child(div().flex_1().min_w_0().line_clamp(2).typeset(text::HEADING).text_color(p.text).child(title))
+                            .children(menu)
                             .child(toggle("collapse", IconName::PanelLeftClose, t("Collapse sidebar  Ctrl+B", "Ocultar menú  Ctrl+B")))
                     }),
             )
