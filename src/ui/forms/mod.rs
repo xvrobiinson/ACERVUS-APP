@@ -15,6 +15,7 @@ pub mod receipt_text;
 pub mod reset;
 pub mod restore;
 pub mod schedule;
+pub mod update;
 
 use std::cell::Cell;
 

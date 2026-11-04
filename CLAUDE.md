@@ -39,6 +39,13 @@ Drive copies (the "cloud backup", `app::drive`) are on for an account whose
 Google connection has `drive.file` (Google sign-in asks for it), unless
 turned off for those books; others "Connect Google Drive". A daily copy also
 goes to the backups folder (`acervus-daily-<business>-…`, newest 7 kept).
+Updates: signed in and online, the app asks the Acervus site
+(`/download/windows/info`) for the newest version every 6 hours
+(`sync::update`, `app/update.rs`); "Update available" then shows in the
+sidebar's foot and opens what's new with "Update now" (download, SHA-256
+check, run the installer, quit). Each version's plain-words notes live in
+`whats-new.json` (English and Spanish, MAJOR.MINOR); a test fails until they
+match Cargo.toml, and the release workflow publishes them.
 Restore on a cloud business (admins, `ui/forms/restore.rs`) replaces the
 business's books in the cloud for everyone (`imports:restoreBook`) after a
 safety copy and the typed business name; Reset is refused there.
@@ -122,7 +129,7 @@ the same springs. Searching and sorting rules live in `ui::lists`.
   `ACERVUS_DB=<new.db>`; in debug builds `ACERVUS_START` opens a screen
   or dialog at launch (`clients`, `loans`, `analytics`, `settings`, `payments`, `messages`, `loan-<n>`, `client-<n>`,
   `new-record`, `new-income`, `wording`, `settings-receipts`, `settings-team`,
-  `settings-business`, `settings-formats`, `customize` (arranging the Overview), `toasts` (a form with two messages over it), `sign-in`, `sign-up` (both as the required screen, with no way back), `move-books` (the offer to move the PC's own books to the cloud), `welcome`, `choose`, `switcher`, `drive` and `restore` (the business welcome: none yet with an invitation, or two to pick from; then the sidebar switcher with the demo database as the first; then Settings with the Google Drive card; then the restore warning, which needs a demo database with a `sync_state` row for business `b1`; signed in offline as a made-up person), `settings-data`, `settings-receipt-look`,
+  `settings-business`, `settings-formats`, `customize` (arranging the Overview), `toasts` (a form with two messages over it), `sign-in`, `sign-up` (both as the required screen, with no way back), `move-books` (the offer to move the PC's own books to the cloud), `update` (the "Update available" window with made-up notes), `welcome`, `choose`, `switcher`, `drive` and `restore` (the business welcome: none yet with an invitation, or two to pick from; then the sidebar switcher with the demo database as the first; then Settings with the Google Drive card; then the restore warning, which needs a demo database with a `sync_state` row for business `b1`; signed in offline as a made-up person), `settings-data`, `settings-receipt-look`,
   `settings-receipt-parts`). Capture the window with `PrintWindow`, which works
   even when it is covered. Never send synthetic keystrokes or clicks: when the
   app isn't the foreground window they land in the user's other programs.

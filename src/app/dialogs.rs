@@ -136,7 +136,8 @@ submit_impl!(
     crate::ui::forms::business::DeleteAccountForm,
     crate::ui::forms::business::DeleteBusinessForm,
     crate::ui::forms::move_books::MoveBooksForm,
-    crate::ui::forms::restore::RestoreForm
+    crate::ui::forms::restore::RestoreForm,
+    crate::ui::forms::update::UpdateForm
 );
 
 impl VzApp {
@@ -732,6 +733,22 @@ impl VzApp {
             return;
         }
         if self.is_linked() { self.open_cloud_restore(path, window, cx) } else { self.confirm_restore(path, window, cx) }
+    }
+
+    /// The "Update available" window.
+    pub(crate) fn open_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(release) = self.updates.available.clone() else { return };
+        let endpoints = self.cloud.as_ref().map_or_else(crate::sync::auth::Endpoints::production, |c| c.endpoints.clone());
+        let app = cx.entity().downgrade();
+        let form = cx.new(|_| crate::ui::forms::update::UpdateForm::new(app, release, endpoints));
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog
+                .entrance(DialogEntrance::FadeSlide)
+                .title(t("Update available", "Actualización disponible"))
+                .w(px(560.))
+                .child(form.clone())
+                .on_ok(confirm(&form))
+        });
     }
 
     /// Restoring a backup over the cloud business open on this PC.

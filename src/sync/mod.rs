@@ -21,6 +21,7 @@ pub mod import;
 pub mod outbox;
 pub mod refusal;
 pub mod replica;
+pub mod update;
 pub mod vault;
 pub mod wire;
 pub mod worker;

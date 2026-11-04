@@ -7,6 +7,7 @@ mod dialogs;
 mod drive;
 pub(crate) mod motion;
 mod sidebar;
+mod update;
 pub(crate) use sidebar::mark;
 
 pub(crate) use cloud::Gate;
@@ -173,6 +174,8 @@ pub struct VzApp {
     toasts: Rc<RefCell<Toasts>>,
     /// The last try at the daily copy in the backups folder.
     local_backup_tried: Option<std::time::Instant>,
+    /// A newer version, once the Acervus site says so.
+    pub(crate) updates: update::Updates,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -319,6 +322,7 @@ impl VzApp {
             customizing: false,
             toasts: Default::default(),
             local_backup_tried: None,
+            updates: Default::default(),
             _subscriptions: subs,
         };
         app.apply_language(window, cx);
@@ -381,7 +385,7 @@ impl VzApp {
                 // or several businesses to choose from.
                 // The offer to move the books on this PC (the demo database).
                 "move-books" => app.open_move_books(window, cx),
-                "welcome" | "choose" | "switcher" | "drive" | "restore" => {
+                "welcome" | "choose" | "switcher" | "drive" | "restore" | "update" => {
                     use crate::sync::wire::{Membership, Role};
                     let business = |id: &str, name: &str, role| Membership {
                         business_id: id.into(),
@@ -401,7 +405,7 @@ impl VzApp {
                     };
                     app.demo_gate(list, invites, window, cx);
                     // The demo database stands in for the first business.
-                    if start == "switcher" || start == "drive" || start == "restore" {
+                    if start == "switcher" || start == "drive" || start == "restore" || start == "update" {
                         if let Some(c) = &mut app.cloud {
                             c.linked = Some("b1".into());
                         }
@@ -413,6 +417,24 @@ impl VzApp {
                         if start == "restore" {
                             let path = app.store.path().to_path_buf();
                             app.open_cloud_restore(path, window, cx);
+                        }
+                        // The "Update available" window, with made-up notes.
+                        if start == "update" {
+                            app.updates.available = Some(crate::sync::update::Release {
+                                version: "0.13.1".into(),
+                                sha256: None,
+                                notes_en: vec![
+                                    "You now sign in to use the app, with an emailed code or your Google account.".into(),
+                                    "Backups: with Google, a copy goes to your Google Drive every day by itself.".into(),
+                                    "Messages show at the bottom of the window and never get in the way of a button.".into(),
+                                ],
+                                notes_es: vec![
+                                    "Ahora inicias sesión para usar la app, con un código por correo o tu cuenta de Google.".into(),
+                                    "Copias de seguridad: con Google, cada día se guarda sola una copia en tu Google Drive.".into(),
+                                    "Los mensajes aparecen abajo en la ventana y nunca tapan un botón.".into(),
+                                ],
+                            });
+                            app.open_update(window, cx);
                         }
                     }
                 }
@@ -459,6 +481,7 @@ impl VzApp {
                     app.pump(window, cx);
                     app.maybe_drive_backup(window, cx);
                     app.maybe_local_backup(cx);
+                    app.maybe_check_update(cx);
                 });
                 if alive.is_err() {
                     break;

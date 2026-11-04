@@ -153,9 +153,14 @@ struct ErrorBody {
 }
 
 pub(crate) fn agent() -> Agent {
+    agent_waiting(Duration::from_secs(20))
+}
+
+/// `agent` that waits up to `wait` for a whole request (a download).
+pub(crate) fn agent_waiting(wait: Duration) -> Agent {
     Agent::config_builder()
         .http_status_as_error(false)
-        .timeout_global(Some(Duration::from_secs(20)))
+        .timeout_global(Some(wait))
         // Windows' own trusted certificates: ureq's default (its bundled list) isn't
         // compiled in, and without roots every https request fails.
         .tls_config(TlsConfig::builder().provider(TlsProvider::NativeTls).root_certs(RootCerts::PlatformVerifier).build())

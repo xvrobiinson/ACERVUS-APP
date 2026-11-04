@@ -206,11 +206,32 @@ jobs:
           name: acervus-finance-${{ env.VERSION }}-windows-x64
           path: dist
 
+      # whats-new.json: this version's changes in plain words, in English and
+      # Spanish. Published with the installer when it is for this version
+      # (same MAJOR.MINOR); the app's "Update available" window shows it.
+      - name: Add what's new
+        run: |
+          if [[ -f whats-new.json && "$(jq -r .version whats-new.json)" == "$(cut -d. -f1,2 <<< "$VERSION")" ]]; then
+            cp whats-new.json dist/
+          else
+            echo "::warning::whats-new.json is missing or not for ${VERSION}; the release has no plain-words notes"
+          fi
+
       - name: Write release notes
         run: |
           {
             echo "## Acervus Finance ${VERSION}"
             echo
+            if [[ -f dist/whats-new.json ]]; then
+              echo "### What's new"
+              echo
+              jq -r '.en[] | "- " + .' dist/whats-new.json
+              echo
+              echo "### Novedades"
+              echo
+              jq -r '.es[] | "- " + .' dist/whats-new.json
+              echo
+            fi
             if [[ -n "$PREVIOUS_TAG" ]]; then
               echo "Changes since ${PREVIOUS_TAG}:"
               echo

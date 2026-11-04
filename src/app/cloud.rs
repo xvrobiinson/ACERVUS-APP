@@ -896,6 +896,7 @@ impl VzApp {
                     // Whether Drive backups are on depends on the Google
                     // connection: ask as soon as the cloud can answer.
                     self.maybe_drive_backup(window, cx);
+                    self.maybe_check_update(cx);
                 }
             }
             Event::UpdateRequired { min_version } => c.update_required = Some(min_version),

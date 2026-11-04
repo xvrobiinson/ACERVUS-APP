@@ -1,6 +1,6 @@
 [package]
 name = "acervus"
-version = "0.12.2"
+version = "0.13.0"
 edition = "2024"
 description = "Acervus Finance by VZ Labs: a private lending portfolio manager for Windows"
 license = "Proprietary"
@@ -17,6 +17,8 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1.0.104"
 base64 = "0.22.1"
+# Checking a downloaded update against the SHA-256 the release publishes.
+sha2 = "0.10.9"
 chrono = "0.4.45"
 csv = "1.4.0"
 dirs = "7.0.0"

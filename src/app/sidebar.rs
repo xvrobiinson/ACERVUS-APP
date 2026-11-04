@@ -11,7 +11,7 @@ use crate::i18n::t;
 use crate::tr;
 use crate::ui::components::{Tone, icon, pill};
 use crate::ui::kit::interact::{faded, hover_state, scoped};
-use crate::ui::kit::{Button, ButtonKind, ClickHandler, Dropdown, DropdownItem};
+use crate::ui::kit::{Button, ButtonKind, ButtonSize, ClickHandler, Dropdown, DropdownItem};
 use crate::ui::theme::{Palette, RADIUS_CONTROL, SIDEBAR_COLLAPSED, SIDEBAR_WIDTH, Typeset as _, motion, palette, space, text};
 
 fn nav() -> [(Route, IconName, &'static str, &'static str); 6] {
@@ -362,7 +362,23 @@ impl VzApp {
                                         .into_any_element(),
                                 })
                                 .child(div().text_color(backup_tone).child(backup_label))
-                                .child(format!("{} {}", t("Version", "Versión"), env!("CARGO_PKG_VERSION"))),
+                                .child(format!("{} {}", t("Version", "Versión"), env!("CARGO_PKG_VERSION")))
+                                // Only when a newer version is out.
+                                .children(self.updates.available.as_ref().map(|r| {
+                                    let new = &r.version;
+                                    div().pt(px(space::S)).child(
+                                        Button::new("update-available")
+                                            .primary()
+                                            .size(ButtonSize::Mini)
+                                            .wide()
+                                            .label(t("Update available", "Actualización disponible"))
+                                            .tooltip(tr!(
+                                                "Version {new} is out: see what's new",
+                                                "Salió la versión {new}: mira las novedades"
+                                            ))
+                                            .on_click(cx.listener(|this, _, w, cx| this.open_update(w, cx))),
+                                    )
+                                })),
                         )
                     }),
             )
