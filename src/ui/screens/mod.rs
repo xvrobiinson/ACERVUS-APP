@@ -20,7 +20,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::app::{Route, VzApp};
-use crate::database::repositories::changes::{Action, Change};
+use crate::database::repositories::changes::Change;
 use crate::domain::ledger::{Delinquency, DisplayStatus};
 use crate::i18n::t;
 use crate::tr;
@@ -46,10 +46,12 @@ pub fn row_icon_button(
 
 impl VzApp {
     /// Edits and deletions, newest first, each with what changed and why.
+    /// The app's own late fee updates on a loan fold into one row.
     pub(crate) fn history_card(&self, p: &Palette, changes: &[&Change], limit: usize) -> AnyElement {
-        let rows = changes.iter().take(limit).map(|c| {
-            let d = crate::ui::history::describe(c, &self.snap);
-            let deleted = c.action == Action::Delete;
+        let items = crate::ui::history::fold(changes);
+        let rows = items.iter().take(limit).map(|item| {
+            let d = crate::ui::history::describe_item(item, &self.snap);
+            let deleted = d.deleted;
             h_flex()
                 .items_start()
                 .gap(px(space::M))
@@ -80,15 +82,26 @@ impl VzApp {
                             h_flex()
                                 .justify_between()
                                 .gap(px(space::M))
-                                .child(div().typeset(text::BODY_STRONG).min_w_0().truncate().child(d.title))
+                                .child(div().typeset(text::BODY_STRONG).flex_1().min_w_0().child(d.title))
                                 .child(div().flex_none().typeset(text::CAPTION).text_color(p.faint).child(d.when)),
                         )
-                        .children(
-                            d.lines.into_iter().map(|l| div().typeset(text::CAPTION).text_color(p.muted).font_features(tabular()).child(l)),
-                        )
+                        .children(d.lines.into_iter().map(|l| {
+                            // "Label  old → new": the old value struck through.
+                            h_flex()
+                                .flex_wrap()
+                                .gap(px(6.))
+                                .typeset(text::CAPTION)
+                                .font_features(tabular())
+                                .child(div().text_color(p.muted).child(format!("{}:", l.label)))
+                                .when_some(l.old, |el, old| {
+                                    el.child(div().text_color(p.faint).line_through().child(old))
+                                        .child(div().text_color(p.faint).child("→"))
+                                })
+                                .child(div().text_color(p.text).child(l.value))
+                        }))
                         .when(!d.reason.is_empty(), |el| {
                             let why = d.reason.clone();
-                            el.child(div().typeset(text::CAPTION).text_color(p.text).child(tr!("Reason: {why}", "Motivo: {why}")))
+                            el.child(div().typeset(text::CAPTION).text_color(p.muted).child(tr!("Reason: {why}", "Motivo: {why}")))
                         }),
                 )
         });
