@@ -2,6 +2,7 @@
 //! entirely from `ui::kit`; it reflows on `Width` from one column up to a
 //! full-width dashboard.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
@@ -15,14 +16,18 @@ use crate::app::{Route, VzApp};
 use crate::charts::line::{LineChart, Series};
 use crate::domain::ledger::DisplayStatus;
 use crate::domain::money::{Cents, percent_label};
+use crate::domain::periods::{Period, interest_in};
 use crate::domain::portfolio::{CapitalKind, EntryKind, HistoryPoint, Summary};
 use crate::i18n::{count, t};
+use crate::services::hero_layout::{self, Figure as HeroFig, Spot};
 use crate::services::overview_layout::{Block, Figure};
 use crate::services::settings::ChartRange;
 use crate::sync::wire::Need;
 use crate::tr;
-use crate::ui::components::{avatar, empty_state, icon, kbd, kv, page_header, sel};
-use crate::ui::kit::{Button, ButtonSize, Card, Dropdown, DropdownItem, Glide, ListRow, Segmented, Stat, StatCards};
+use crate::ui::components::{avatar, empty_state, icon, kbd, kv, sel};
+use crate::ui::kit::{
+    Button, ButtonSize, Card, Dropdown, DropdownItem, Fab, FabItem, FigureTone, GlassFigure, Glide, ListRow, Segmented, Stat, StatCards,
+};
 use crate::ui::theme::{Palette, Typeset as _, Width, palette, space, tabular, text};
 use crate::utils::dates::short_month_year;
 
@@ -64,16 +69,6 @@ fn count_label(n: usize) -> String {
     count(n, "loan", "loans", "préstamo", "préstamos")
 }
 
-/// The Overview title: a greeting for the time of day.
-fn greeting() -> &'static str {
-    use chrono::Timelike as _;
-    match chrono::Local::now().hour() {
-        5..=11 => t("Good morning", "Buenos días"),
-        12..=17 => t("Good afternoon", "Buenas tardes"),
-        _ => t("Good evening", "Buenas noches"),
-    }
-}
-
 /// Which screen's portfolio chart is being drawn; each keeps its own hover.
 #[derive(Clone, Copy)]
 pub(crate) enum ChartSlot {
@@ -90,7 +85,9 @@ impl VzApp {
         let side_by_side = w >= Width::Wide;
         let editing = self.customizing;
         let glide = self.motion.gliding();
-        let rows = self.settings().overview_layout.rows(&self.overview_blocks());
+        // The figures sit in the hero above (hero_figures); the panel has the rest.
+        let blocks: Vec<Block> = self.overview_blocks().into_iter().filter(|b| *b != Block::Figures).collect();
+        let rows = self.settings().overview_layout.rows(&blocks);
 
         // One block, framed for arranging when Customize is on. `beside`:
         // it shares its row with another block.
@@ -144,121 +141,483 @@ impl VzApp {
             }
         }
 
+        // Room at the page's end, clear of the + button.
+        let end = (!editing).then(|| div().h(px(64.)));
         v_flex()
             .gap(gap)
-            .child(
-                page_header(&p, greeting(), Some(self.finding(&p, &s)), if editing { Vec::new() } else { self.header_actions(w, cx) })
-                    .pb_0(),
-            )
             .when(editing, |d| d.child(self.customize_bar(&p, cx)))
             .children(self.pending_banner(&p, cx))
             .children(self.render_setup(&p, w, cx))
             .children(body)
             .when(editing, |d| d.children(self.hidden_tray(&p, cx)))
+            .children(end)
             .into_any_element()
     }
 
-    /// The one-line finding under the title.
-    fn finding(&self, p: &Palette, s: &Summary) -> AnyElement {
+    /// Every figure the hero can show, worked out once per frame: its words
+    /// and how it reads (the web's definitions, src/screens/overview.tsx).
+    fn figure_values(&self) -> HashMap<HeroFig, (String, FigureTone)> {
+        let s = self.summary_now();
         let money = self.settings().money();
-        if s.overdue_loans > 0 {
-            h_flex()
-                .flex_wrap()
-                .gap(px(4.))
-                .child(sel({
-                    let n = s.overdue_loans;
-                    if n == 1 {
-                        t("1 loan overdue ·", "1 préstamo atrasado ·").to_string()
-                    } else {
-                        tr!("{n} loans overdue ·", "{n} préstamos atrasados ·")
-                    }
-                }))
-                .child(div().text_color(p.negative).font_features(tabular()).child(sel({
-                    let amount = money.format(s.overdue_amount);
-                    tr!("{amount} past due", "{amount} vencido")
-                })))
-                .into_any_element()
-        } else if s.due_soon_loans > 0 {
-            sel({
-                let n = count(s.due_soon_loans, "payment", "payments", "pago", "pagos");
-                tr!("{n} due in the next few days", "{n} por vencer en los próximos días")
-            })
-            .into_any_element()
-        } else if s.active_loans > 0 {
-            sel({
-                let n = count(s.active_loans, "active loan", "active loans", "préstamo activo", "préstamos activos");
-                tr!("All current: {n}", "Todo al día: {n}")
-            })
-            .into_any_element()
-        } else {
-            t("Your lending portfolio at a glance", "Tu cartera de préstamos de un vistazo").into_any_element()
-        }
-    }
-
-    /// Page actions. Wide windows show all three; narrower ones fold the
-    /// secondary actions into a "More" menu so the primary never wraps.
-    fn header_actions(&self, w: Width, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        // Trying out the sync chip here first (kit-first rule).
-        let sync: Vec<AnyElement> =
-            self.sync_chip("ov-sync", cx).into_iter().map(|c| div().flex().items_center().h(px(32.)).child(c).into_any_element()).collect();
-        let customize = Button::new("ov-customize")
-            .ghost()
-            .icon(IconName::SlidersHorizontal)
-            .tooltip(t("Arrange your Overview", "Organiza tu Resumen"))
-            .on_click(cx.listener(|this, _, _, cx| this.set_customizing(true, cx)))
-            .into_any_element();
-        let mut actions = self.main_actions(w, cx);
-        actions.splice(0..0, sync);
-        actions.insert(0, customize);
-        actions
-    }
-
-    fn main_actions(&self, w: Width, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        if !self.can(Need::Record) {
-            return Vec::new();
-        }
-        let pay = Button::new("ov-pay")
-            .primary()
-            .icon(IconName::Plus)
-            .label(t("Record payment", "Registrar pago"))
-            .tooltip("Ctrl+P")
-            .on_click(cx.listener(|this, _, w, cx| this.open_payment_form(None, w, cx)))
-            .into_any_element();
-        let expense = cx.listener(|this, _, w, cx| this.open_entry_form(EntryKind::Expense, None, w, cx));
-        let loan = cx.listener(|this, _, w, cx| this.open_loan_form(None, w, cx));
-        let manage = self.can(Need::Manage);
-        if w >= Width::Wide {
-            let mut actions = vec![
-                Button::new("ov-expense")
-                    .icon(IconName::ReceiptText)
-                    .label(t("New record", "Nuevo registro"))
-                    .tooltip("Ctrl+E")
-                    .on_click(expense)
-                    .into_any_element(),
-            ];
-            if manage {
-                actions.push(
-                    Button::new("ov-new-loan").label(t("New loan", "Nuevo préstamo")).tooltip("Ctrl+L").on_click(loan).into_any_element(),
-                );
+        let m = |c: Cents| money.format(c);
+        let bad = |late: bool| if late { FigureTone::Bad } else { FigureTone::Plain };
+        // The gain over the last six months, and how it compares.
+        let then = self.today.checked_sub_months(chrono::Months::new(6)).unwrap_or(self.today);
+        let past = self.snap.book.history(then, then).into_iter().next();
+        let (gain6, pct) = match past {
+            Some(h) => {
+                let g = s.gain() - (h.portfolio_value - h.net_invested);
+                (g, (h.net_invested > 0).then(|| percent_label(g, h.net_invested).unwrap_or_default()))
             }
-            actions.push(pay);
-            return actions;
-        }
-        let more = Dropdown::new("ov-more").icon(IconName::Ellipsis).tooltip(t("More actions", "Más acciones")).align_end();
-        let more = if manage {
-            more.item(DropdownItem::new(t("New loan", "Nuevo préstamo"), loan).icon(IconName::HandCoins).hint("Ctrl+L"))
-                .item(DropdownItem::new(t("New record", "Nuevo registro"), expense).icon(IconName::ReceiptText).hint("Ctrl+E"))
-                .item(
-                    DropdownItem::new(
-                        t("Add capital", "Agregar capital"),
-                        cx.listener(|this, _, w, cx| this.open_capital_form(CapitalKind::Contribution, w, cx)),
-                    )
-                    .icon(IconName::Landmark),
-                )
-        } else {
-            more.item(DropdownItem::new(t("New record", "Nuevo registro"), expense).icon(IconName::ReceiptText).hint("Ctrl+E"))
+            None => (s.gain(), None),
         };
-        vec![more.into_any_element(), pay]
+        let gain_text = match pct {
+            Some(pct) => format!("{} · {pct}", money.format_signed(gain6)),
+            None => money.format_signed(gain6),
+        };
+        let gain_tone = match gain6.signum() {
+            1 => FigureTone::Good,
+            -1 => FigureTone::Bad,
+            _ => FigureTone::Plain,
+        };
+        // Interest earned in the chosen period.
+        let paid = || self.snap.payments.iter().filter(|x| x.reversed_at.is_none()).map(|x| (x.paid_on, x.interest));
+        let earned = match self.settings().interest_period.spans(self.today) {
+            Some((now, _)) => interest_in(paid(), now),
+            None => s.interest_collected,
+        };
+        use chrono::Datelike as _;
+        let month_start = self.today.with_day(1).unwrap_or(self.today);
+        let collected: Cents = self
+            .snap
+            .payments
+            .iter()
+            .filter(|x| x.reversed_at.is_none() && x.paid_on >= month_start && x.paid_on <= self.today)
+            .map(|x| x.amount)
+            .sum();
+        // What falls due in the next seven days.
+        let soon = self.today + chrono::Days::new(7);
+        let due7: Cents = self
+            .snap
+            .book
+            .loans
+            .iter()
+            .map(|l| l.delinquency(self.today))
+            .filter(|d| d.next_due.is_some_and(|n| n >= self.today && n <= soon))
+            .map(|d| d.next_due_amount)
+            .sum();
+        // A collector's payments waiting for an admin.
+        let waiting: Cents = self.cloud_copy().map_or(0, |c| c.pending.iter().filter(|p| p.status == "waiting").map(|p| p.amount).sum());
+        let plain = |v: String| (v, FigureTone::Plain);
+        HashMap::from([
+            (HeroFig::Portfolio, plain(m(s.portfolio_value))),
+            (HeroFig::LentOut, plain(m(s.outstanding_principal))),
+            (HeroFig::InterestEarned, plain(m(earned))),
+            (HeroFig::AvailableCapital, plain(m(s.available_capital))),
+            (HeroFig::AvailableInterest, plain(m(s.available_interest))),
+            (HeroFig::Receivable, plain(m(s.interest_receivable + s.fees_receivable))),
+            (HeroFig::Overdue, (m(s.overdue_amount), bad(s.overdue_amount > 0))),
+            (HeroFig::CollectedMonth, plain(m(collected))),
+            (HeroFig::ExpectedInterest, plain(m(s.expected_monthly_interest))),
+            (HeroFig::DueNext7, plain(m(due7))),
+            (HeroFig::Gain6m, (gain_text, gain_tone)),
+            (HeroFig::ActiveLoans, plain(s.active_loans.to_string())),
+            (HeroFig::OverdueLoans, (s.overdue_loans.to_string(), bad(s.overdue_loans > 0))),
+            (HeroFig::ToConfirm, plain(m(waiting))),
+        ])
+    }
+
+    /// Interest earned's period: a small calendar beside its label.
+    fn period_pick(&self, cx: &mut Context<Self>) -> Dropdown {
+        let period = self.settings().interest_period;
+        let app = cx.entity().downgrade();
+        Dropdown::new("interest-period")
+            .icon(IconName::Calendar)
+            .kind(crate::ui::kit::ButtonKind::Ghost)
+            .small()
+            .tooltip(Self::period_name(period))
+            .rest_ink(palette(cx).figure().mute)
+            .items(Period::ALL.iter().map(|x| {
+                let (app, x) = (app.clone(), *x);
+                DropdownItem::new(Self::period_name(x), move |_, w, cx| {
+                    let _ = app.update(cx, |this, cx| this.set_interest_period(x, w, cx));
+                })
+                .selected(x == period)
+            }))
+    }
+
+    /// One place while arranging: its big figure and two rows, each picked
+    /// from what this person may see, or Nothing.
+    fn figure_editor(&self, place: usize, layout: hero_layout::Layout, cx: &mut Context<Self>) -> GlassFigure {
+        let p = palette(cx);
+        let h = p.figure();
+        let allowed = hero_layout::allowed(self.role());
+        let app = cx.entity().downgrade();
+        let slot = layout[place];
+        let picker = |spot: Spot, now: Option<HeroFig>, label: &'static str| {
+            let choices = std::iter::once(None).chain(allowed.iter().filter(|f| spot != Spot::Big || !f.row_only()).map(|f| Some(*f)));
+            let name = |x: Option<HeroFig>| x.map_or(t("Nothing", "Nada"), HeroFig::label);
+            let id = SharedString::from(format!("hero-pick-{place}-{spot:?}"));
+            let menu = Dropdown::new(id).small().label(name(now)).items(choices.map(|x| {
+                let app = app.clone();
+                DropdownItem::new(name(x), move |_, w, cx| {
+                    let _ = app.update(cx, |this, cx| this.set_hero_layout(hero_layout::set(layout, place, spot, x), w, cx));
+                })
+                .selected(x == now)
+            }));
+            v_flex().gap(px(4.)).child(div().typeset(text::CAPTION).text_color(h.mute).child(label)).child(menu)
+        };
+        let n = place + 1;
+        GlassFigure::new(SharedString::from(format!("hero-edit-{place}"))).body(
+            v_flex()
+                .gap(px(10.))
+                .child(div().typeset(text::LABEL).text_color(h.ink).child(tr!("Place {n}", "Lugar {n}")))
+                .child(picker(Spot::Big, slot.big, t("Big figure", "Cifra grande")))
+                .child(picker(Spot::Row(0), slot.rows[0], t("Row 1", "Fila 1")))
+                .child(picker(Spot::Row(1), slot.rows[1], t("Row 2", "Fila 2"))),
+        )
+    }
+
+    /// The hero's figures. Admins: the business's six figures (Cards Option
+    /// B, picked 2026-11-07). Collectors and viewers: four cards as they
+    /// chose them (saved to their account; the role decides what may be
+    /// picked), each a picker while arranging.
+    pub(crate) fn hero_figures(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        if self.can(Need::Manage) {
+            return self.hero_six(window, cx);
+        }
+        let layout = self.hero_layout();
+        let editing = self.customizing;
+        let cards: Vec<GlassFigure> = if editing {
+            (0..layout.len()).map(|i| self.figure_editor(i, layout, cx)).collect()
+        } else {
+            let values = self.figure_values();
+            let value = |f: HeroFig| values.get(&f).cloned().unwrap_or_else(|| (String::new(), FigureTone::Plain));
+            hero_layout::shown(&layout)
+                .into_iter()
+                .enumerate()
+                .map(|(i, (big, rows))| {
+                    let mut card = GlassFigure::new(SharedString::from(format!("hero-fig-{i}")));
+                    if let Some(f) = big {
+                        card = card.big(f.label(), value(f).0);
+                        if f == HeroFig::InterestEarned {
+                            card = card.action(self.period_pick(cx));
+                        }
+                    }
+                    for r in rows {
+                        let (text, tone) = value(r);
+                        card = card.row(r.label(), text, tone);
+                    }
+                    card
+                })
+                .collect()
+        };
+        // Four in a row on wide windows; two by two below that.
+        // The hero has no sidebar: the window's own width decides.
+        let wide = f32::from(window.viewport_size().width) >= 1100.;
+        let gap = px(16.);
+        let grid = if wide || cards.len() < 4 {
+            h_flex().items_start().gap(gap).children(cards).into_any_element()
+        } else {
+            let mut it = cards.into_iter();
+            let (a, b, c, d) = (it.next(), it.next(), it.next(), it.next());
+            v_flex()
+                .gap(gap)
+                .child(h_flex().items_start().gap(gap).children(a).children(b))
+                .child(h_flex().items_start().gap(gap).children(c).children(d))
+                .into_any_element()
+        };
+        if !editing {
+            return grid;
+        }
+        let ink = palette(cx).hero().mute;
+        let role = self.role();
+        v_flex()
+            .gap(px(10.))
+            .child(grid)
+            .child(
+                h_flex()
+                    .gap(px(space::M))
+                    .typeset(text::CAPTION)
+                    .text_color(ink)
+                    .child(t(
+                        "Choose Nothing to leave a spot empty. A single row shows larger.",
+                        "Elige Nada para dejar un espacio vacío. Una sola fila se ve más grande.",
+                    ))
+                    .child(
+                        Button::new("hero-figures-reset")
+                            .ghost()
+                            .small()
+                            .label(t("Reset figures", "Restablecer cifras"))
+                            .rest_ink(ink)
+                            .on_click(cx.listener(move |this, _, w, cx| this.set_hero_layout(hero_layout::default_for(role), w, cx))),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// The admins' six figures (Cards Option B): the business's totals as in
+    /// the earlier versions (icon, label, amount, a line under it) on small
+    /// cards, one row on wide windows and 3 + 3 below 1,100px. Amounts
+    /// shrink to fit their card, never cut.
+    fn hero_six(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let p = palette(cx);
+        let h = p.figure();
+        let s = self.summary_now();
+        let money = self.settings().money();
+        let viewport = f32::from(window.viewport_size().width);
+        let wide = viewport >= 1100.;
+        let gap = 12.;
+        let per_row = if wide { 6. } else { 3. };
+        // The figures' row is the panel's width (content plus its padding).
+        let row_w = self.content_width(window) + 44.;
+        let inner = ((row_w - gap * (per_row - 1.)) / per_row - 30.).max(80.);
+        // Inter's figures are about 0.6em wide: the size that fits the card.
+        let fit = |text: &str| (inner / (text.chars().count().max(1) as f32 * 0.6)).clamp(14., 21.);
+        let toned = |v: Cents| match v.signum() {
+            1 => p.positive,
+            -1 => p.negative,
+            _ => h.mute,
+        };
+        // A card: icon and label, the amount, then up to two caption lines.
+        let card = |id: &str,
+                    glyph: IconName,
+                    chip: (Hsla, Hsla),
+                    label: &str,
+                    value: String,
+                    value_color: Hsla,
+                    lines: Vec<(String, Hsla)>,
+                    action: Option<AnyElement>| {
+            let size = fit(&value);
+            GlassFigure::new(SharedString::from(format!("hero-six-{id}"))).compact().body(
+                v_flex()
+                    .h(px(88.))
+                    .justify_between()
+                    .child(
+                        h_flex()
+                            .gap(px(8.))
+                            .h(px(20.))
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .size(px(20.))
+                                    .rounded(px(6.))
+                                    .bg(chip.1)
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(icon(glyph, chip.0, 12.)),
+                            )
+                            .child(div().flex_1().min_w_0().truncate().typeset(text::LABEL).text_color(h.ink).child(label.to_string()))
+                            .children(action),
+                    )
+                    .child(
+                        div()
+                            .typeset(text::FIGURE)
+                            .text_size(px(size))
+                            .font_features(tabular())
+                            .whitespace_nowrap()
+                            .text_color(value_color)
+                            .child(sel(value)),
+                    )
+                    .child(
+                        v_flex()
+                            .h(px(32.))
+                            .justify_end()
+                            .typeset(text::CAPTION)
+                            .font_features(tabular())
+                            .children(lines.into_iter().map(|(l, c)| div().text_color(c).child(sel(l)))),
+                    ),
+            )
+        };
+        let mute = h.mute;
+        // 1. Total portfolio value: the gain on what was invested.
+        let (gain, invested) = (s.gain(), s.net_invested());
+        let portfolio_lines = if invested > 0 {
+            let pct = percent_label(gain, invested).unwrap_or_default();
+            let inv = money.format(invested);
+            vec![
+                (format!("{} ({}{pct})", money.format_signed(gain), if gain > 0 { "+" } else { "" }), toned(gain)),
+                (tr!("on {inv} invested", "sobre {inv} invertido"), mute),
+            ]
+        } else {
+            vec![(t("No capital recorded yet", "Aún no hay capital registrado").to_string(), mute)]
+        };
+        // 2. Available capital: its share of the portfolio.
+        let pv = s.portfolio_value;
+        let cash_line = match percent_label(s.available_capital, pv) {
+            Some(pct) if pv > 0 => tr!("{pct} of portfolio", "{pct} de la cartera"),
+            _ => t("Ready to lend", "Listo para prestar").to_string(),
+        };
+        // 3. Available interest: what expenses took from it.
+        let interest_line = if s.expenses() > 0 {
+            let spent = money.format(s.expenses());
+            tr!("{spent} spent in expenses", "{spent} usado en gastos")
+        } else {
+            t("Interest and fees on hand", "Interés y cargos en mano").to_string()
+        };
+        // 4. Overdue amount: how many loans are behind.
+        let late = s.overdue_amount > 0;
+        let overdue_line = match s.overdue_loans {
+            0 => t("Nothing past due", "Nada vencido").to_string(),
+            1 => t("1 loan behind", "1 préstamo atrasado").to_string(),
+            n => tr!("{n} loans behind", "{n} préstamos atrasados"),
+        };
+        // 5. Capital lent out: across how many loans.
+        let lent_line = {
+            let n = count(s.active_loans, "active loan", "active loans", "préstamo activo", "préstamos activos");
+            tr!("across {n}", "en {n}")
+        };
+        // 6. Interest earned in the chosen period, against the one before.
+        let period = self.settings().interest_period;
+        let paid = || self.snap.payments.iter().filter(|x| x.reversed_at.is_none()).map(|x| (x.paid_on, x.interest));
+        let (earned, earned_lines) = match period.spans(self.today) {
+            None => (s.interest_collected, vec![(t("Received, all time", "Cobrado en total").to_string(), mute)]),
+            Some((now, before)) => {
+                let (a, b) = (interest_in(paid(), now), interest_in(paid(), before));
+                let diff = a - b;
+                let pct = (b > 0)
+                    .then(|| percent_label(diff, b).unwrap_or_default())
+                    .map(|x| format!(" ({}{x})", if diff > 0 { "+" } else { "" }));
+                let versus = match period {
+                    Period::Day => t("vs yesterday", "vs ayer"),
+                    Period::Week => t("vs last week", "vs la semana pasada"),
+                    Period::Month => t("vs last month", "vs el mes pasado"),
+                    _ => t("vs last year", "vs el año pasado"),
+                };
+                (a, vec![(format!("{}{}", money.format_signed(diff), pct.unwrap_or_default()), toned(diff)), (versus.to_string(), mute)])
+            }
+        };
+        let cards = vec![
+            card(
+                "portfolio",
+                IconName::Wallet,
+                (p.accent_text, p.accent_tint),
+                t("Total portfolio value", "Valor total de la cartera"),
+                money.format(pv),
+                h.ink,
+                portfolio_lines,
+                None,
+            ),
+            card(
+                "capital",
+                IconName::Landmark,
+                (p.accent_text, p.accent_tint),
+                t("Available capital", "Capital disponible"),
+                money.format(s.available_capital),
+                h.ink,
+                vec![(cash_line, mute)],
+                None,
+            ),
+            card(
+                "lent",
+                IconName::HandCoins,
+                (p.info, p.info_tint),
+                t("Capital lent out", "Capital prestado"),
+                money.format(s.outstanding_principal),
+                h.ink,
+                vec![(lent_line, mute)],
+                None,
+            ),
+            card(
+                "interest",
+                IconName::Coins,
+                (p.positive, p.positive_tint),
+                t("Available interest", "Interés disponible"),
+                money.format(s.available_interest),
+                h.ink,
+                vec![(interest_line, mute)],
+                None,
+            ),
+            card(
+                "earned",
+                IconName::TrendingUp,
+                (p.positive, p.positive_tint),
+                t("Interest earned", "Interés cobrado"),
+                money.format(earned),
+                h.ink,
+                earned_lines,
+                Some(self.period_pick(cx).into_any_element()),
+            ),
+            card(
+                "overdue",
+                IconName::CircleAlert,
+                if late { (p.negative, p.negative_tint) } else { (p.muted, p.neutral_tint) },
+                t("Overdue amount", "Monto atrasado"),
+                money.format(s.overdue_amount),
+                if late { h.bad } else { h.ink },
+                vec![(overdue_line, if late { h.bad } else { mute })],
+                None,
+            ),
+        ];
+        let gap = px(gap);
+        if wide {
+            h_flex().gap(gap).children(cards).into_any_element()
+        } else {
+            let mut it = cards.into_iter();
+            let first: Vec<_> = it.by_ref().take(3).collect();
+            v_flex().gap(px(16.)).child(h_flex().gap(gap).children(first)).child(h_flex().gap(gap).children(it)).into_any_element()
+        }
+    }
+
+    /// Arrange: a small quiet button (sliders and a short word) at the
+    /// hero's top right, over the figures (picked 2026-11-06), that opens
+    /// the Overview's arranging. `ink`: its words at rest on the picture.
+    pub(crate) fn arrange_button(&self, ink: Hsla, cx: &mut Context<Self>) -> AnyElement {
+        Button::new("ov-arrange")
+            .ghost()
+            .small()
+            .icon(IconName::SlidersHorizontal)
+            .label(t("Arrange", "Organizar"))
+            .rest_ink(ink)
+            .tooltip(t("Arrange this Overview", "Organizar este Resumen"))
+            .on_click(cx.listener(|this, _, _, cx| this.set_customizing(true, cx)))
+            .into_any_element()
+    }
+
+    /// The "+" button: what the Overview's header offered before (Record
+    /// payment nearest, New record, and for admins New loan and Add
+    /// capital), with the same shortcuts. None for viewers.
+    pub(crate) fn add_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !self.can(Need::Record) || self.customizing {
+            return None;
+        }
+        let mut fab = Fab::new("add", t("Add", "Agregar"))
+            .start_open(self.add_open_at_start)
+            .item(
+                FabItem::new(
+                    t("Record payment", "Registrar pago"),
+                    IconName::Banknote,
+                    cx.listener(|this, _, w, cx| this.open_payment_form(None, w, cx)),
+                )
+                .hint("Ctrl+P")
+                .primary(),
+            )
+            .item(
+                FabItem::new(
+                    t("New record", "Nuevo registro"),
+                    IconName::ReceiptText,
+                    cx.listener(|this, _, w, cx| this.open_entry_form(EntryKind::Expense, None, w, cx)),
+                )
+                .hint("Ctrl+E"),
+            );
+        if self.can(Need::Manage) {
+            fab = fab
+                .item(
+                    FabItem::new(
+                        t("New loan", "Nuevo préstamo"),
+                        IconName::HandCoins,
+                        cx.listener(|this, _, w, cx| this.open_loan_form(None, w, cx)),
+                    )
+                    .hint("Ctrl+L"),
+                )
+                .item(FabItem::new(
+                    t("Add capital", "Agregar capital"),
+                    IconName::Landmark,
+                    cx.listener(|this, _, w, cx| this.open_capital_form(CapitalKind::Contribution, w, cx)),
+                ));
+        }
+        Some(fab.into_any_element())
     }
 
     /// First-run checklist, shown until the first loan exists.
@@ -513,17 +872,71 @@ impl VzApp {
                 counted(st, s.outstanding_principal)
             }
             Figure::InterestEarned => {
-                let fees_sub = if s.fees_collected > 0 {
-                    let fees = money.format(s.fees_collected);
-                    tr!("plus {fees} in fees", "más {fees} en cargos")
-                } else {
-                    t("Received, all time", "Cobrado en total").to_string()
+                let period = self.settings().interest_period;
+                let spans = period.spans(self.today);
+                let paid = || self.snap.payments.iter().filter(|x| x.reversed_at.is_none()).map(|x| (x.paid_on, x.interest));
+                let (value, caption): (Cents, AnyElement) = match spans {
+                    None => {
+                        let sub = if s.fees_collected > 0 {
+                            let fees = money.format(s.fees_collected);
+                            tr!("plus {fees} in fees", "más {fees} en cargos")
+                        } else {
+                            t("Received, all time", "Cobrado en total").to_string()
+                        };
+                        (s.interest_collected, sel(sub).into_any_element())
+                    }
+                    Some((now, before)) => {
+                        let (a, b) = (interest_in(paid(), now), interest_in(paid(), before));
+                        let diff = a - b;
+                        let pct = (b > 0)
+                            .then(|| percent_label(diff, b).unwrap_or_default())
+                            .map(|x| format!(" ({}{x})", if diff > 0 { "+" } else { "" }));
+                        let versus = match period {
+                            Period::Day => t("vs yesterday", "vs ayer"),
+                            Period::Week => t("vs last week", "vs la semana pasada"),
+                            Period::Month => t("vs last month", "vs el mes pasado"),
+                            _ => t("vs last year", "vs el año pasado"),
+                        };
+                        let c = match diff.signum() {
+                            1 => p.positive,
+                            -1 => p.negative,
+                            _ => p.muted,
+                        };
+                        let el = h_flex()
+                            .gap(px(4.))
+                            .child(div().text_color(c).font_features(tabular()).child(sel(format!(
+                                "{}{}",
+                                money.format_signed(diff),
+                                pct.unwrap_or_default()
+                            ))))
+                            .child(div().min_w_0().truncate().child(versus))
+                            .into_any_element();
+                        (a, el)
+                    }
                 };
-                let st = Stat::new(t("Interest earned", "Interés cobrado"), money.format(s.interest_collected))
+                let app = cx.entity().downgrade();
+                let pick = Dropdown::new("interest-period")
+                    .icon(IconName::Calendar)
+                    .kind(crate::ui::kit::ButtonKind::Ghost)
+                    .small()
+                    .align_end()
+                    .tooltip(t("Choose the period", "Elegir el período"))
+                    .items(Period::ALL.iter().map(|x| {
+                        let (app, x) = (app.clone(), *x);
+                        DropdownItem::new(Self::period_name(x), move |_, w, cx| {
+                            let _ = app.update(cx, |this, cx| this.update_settings(|s| s.interest_period = x, w, cx));
+                        })
+                        .selected(x == period)
+                    }));
+                let st = Stat::new(t("Interest earned", "Interés cobrado"), money.format(value))
                     .icon(IconName::TrendingUp)
                     .chip(p.positive, p.positive_tint)
-                    .caption(sel(fees_sub));
-                counted(st, s.interest_collected)
+                    .above(Self::period_name(period))
+                    .when(!self.customizing, |st| st.accessory(pick))
+                    .caption(caption);
+                // A new period counts again from its own amount.
+                let money = money.clone();
+                st.counting(SharedString::from(format!("ov-count-{}-{}", f.key(), period.key())), value, move |v| money.format(v))
             }
             Figure::AvailableCapital => {
                 let pv = s.portfolio_value;
@@ -605,6 +1018,17 @@ impl VzApp {
             });
         });
         chart.render(SharedString::from(id.to_string()), p, hover, handler)
+    }
+
+    /// How a period is named on Interest earned.
+    fn period_name(p: Period) -> &'static str {
+        match p {
+            Period::Day => t("Today", "Hoy"),
+            Period::Week => t("This week", "Esta semana"),
+            Period::Month => t("This month", "Este mes"),
+            Period::Year => t("This year", "Este año"),
+            Period::All => t("All time", "Todo el tiempo"),
+        }
     }
 
     /// The chart range picker: a segmented control, or a dropdown when the

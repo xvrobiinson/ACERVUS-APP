@@ -897,6 +897,7 @@ impl VzApp {
                     // connection: ask as soon as the cloud can answer.
                     self.maybe_drive_backup(window, cx);
                     self.maybe_check_update(cx);
+                    self.load_prefs(window, cx);
                 }
             }
             Event::UpdateRequired { min_version } => c.update_required = Some(min_version),

@@ -247,7 +247,10 @@ fn main() {
         let options = window_options(cx);
         match store {
             Ok(store) => {
-                let opened = gpui_kit::open_window(options, cx, |window, cx| cx.new(|cx| VzApp::new(store, window, cx)));
+                let opened = gpui_kit::open_window(options, cx, |window, cx| {
+                    acervus::window_frame::hide_title_and_icon(window);
+                    cx.new(|cx| VzApp::new(store, window, cx))
+                });
                 if let Err(e) = opened {
                     log::error!("could not open window: {e:#}");
                     cx.quit();

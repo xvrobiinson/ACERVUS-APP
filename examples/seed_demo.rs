@@ -1,6 +1,10 @@
 //! Builds a demo database for screenshots and manual testing.
 //!
-//!     cargo run --example seed_demo -- <path-to-new.db> [es]
+//!     cargo run --example seed_demo -- <path-to-new.db> [es] [usd] [dark] [paid]
+//!
+//! `es` sets the app to Spanish, `usd` the currency to US dollars (RD$ by
+//! default), `dark` the dark theme and `paid` adds today's US$3,000.00
+//! payment on loan #2 (the landing page's "after" picture).
 //!
 //! Refuses to touch an existing file. Every record goes through the same
 //! validated services the app uses, with dates relative to today.
@@ -47,8 +51,10 @@ fn pay_periods(s: &mut Store, loan_id: i64, extra: impl Fn(u32) -> Option<Cents>
 }
 
 fn main() -> Result<()> {
-    let Some(path) = std::env::args().nth(1) else { bail!("usage: seed_demo <path-to-new.db> [es]") };
-    let spanish = std::env::args().nth(2).as_deref() == Some("es");
+    let Some(path) = std::env::args().nth(1) else { bail!("usage: seed_demo <path-to-new.db> [es] [usd] [dark] [paid]") };
+    let flags: Vec<String> = std::env::args().skip(2).collect();
+    let flag = |f: &str| flags.iter().any(|x| x == f);
+    let spanish = flag("es");
     let path = std::path::PathBuf::from(path);
     if path.exists() {
         bail!("{} already exists; refusing to modify it", path.display());
@@ -59,7 +65,10 @@ fn main() -> Result<()> {
 
     let mut settings = s.snapshot()?.settings;
     settings.receipt_name = "Préstamos Valdez".into();
-    settings.currency_code = "DOP".into();
+    settings.currency_code = if flag("usd") { "USD" } else { "DOP" }.into();
+    if flag("dark") {
+        settings.theme = acervus::services::settings::ThemePref::Dark;
+    }
     if spanish {
         settings.language = Lang::Es;
     }
@@ -156,6 +165,10 @@ fn main() -> Result<()> {
     let snap = s.snapshot()?;
     let fl = snap.loan(f).unwrap();
     s.update_loan(f, fl.client_id, &fl.terms.clone(), None, "Para inventario de la tienda", "Faltaba el motivo", t)?;
+
+    if flag("paid") {
+        s.record_payment(2, 300_000, 0, t, "", t)?;
+    }
 
     s.refresh(t)?;
     let snap = s.snapshot()?;

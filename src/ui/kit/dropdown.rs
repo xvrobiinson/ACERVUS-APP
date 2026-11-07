@@ -77,6 +77,7 @@ pub struct Dropdown {
     size: ButtonSize,
     align: OverlayAlign,
     tooltip: Option<SharedString>,
+    rest_ink: Option<Hsla>,
     items: Vec<DropdownItem>,
 }
 
@@ -90,6 +91,7 @@ impl Dropdown {
             size: ButtonSize::Medium,
             align: OverlayAlign::Start,
             tooltip: None,
+            rest_ink: None,
             items: Vec::new(),
         }
     }
@@ -125,6 +127,12 @@ impl Dropdown {
 
     pub fn tooltip(mut self, tip: impl Into<SharedString>) -> Self {
         self.tooltip = Some(tip.into());
+        self
+    }
+
+    /// The trigger's ink at rest (see `Button::rest_ink`).
+    pub fn rest_ink(mut self, ink: Hsla) -> Self {
+        self.rest_ink = Some(ink);
         self
     }
 
@@ -187,6 +195,9 @@ impl RenderOnce for Dropdown {
         }
         if let Some(c) = chevron {
             trigger = trigger.suffix(c);
+        }
+        if let Some(ink) = self.rest_ink {
+            trigger = trigger.rest_ink(ink);
         }
         if let Some(t) = self.tooltip.filter(|_| !open) {
             trigger = trigger.tooltip(t);

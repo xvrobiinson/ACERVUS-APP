@@ -345,6 +345,9 @@ pub struct Payment {
     /// How it was paid; none on older payments.
     #[serde(default)]
     pub paid_with: Option<String>,
+    /// Who recorded it (a user id), for the collections report.
+    #[serde(default)]
+    pub created_by: String,
     pub created_at: i64,
     pub version: i64,
 }

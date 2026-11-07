@@ -11,7 +11,7 @@ pub mod payments;
 pub mod settings;
 mod sign_in;
 pub mod team;
-pub(crate) use sign_in::sky;
+pub(crate) use sync::role_label;
 mod sync;
 mod welcome;
 

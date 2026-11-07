@@ -225,14 +225,20 @@ impl VzApp {
     }
 
     pub fn open_payment_form(&mut self, loan_id: Option<i64>, window: &mut Window, cx: &mut Context<Self>) {
-        self.payment_dialog(loan_id, None, window, cx)
+        self.payment_dialog(loan_id, None, window, cx);
     }
 
     pub fn edit_payment(&mut self, payment_id: i64, window: &mut Window, cx: &mut Context<Self>) {
-        self.payment_dialog(None, Some(payment_id), window, cx)
+        self.payment_dialog(None, Some(payment_id), window, cx);
     }
 
-    fn payment_dialog(&mut self, loan_id: Option<i64>, editing: Option<i64>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn payment_dialog(
+        &mut self,
+        loan_id: Option<i64>,
+        editing: Option<i64>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<PaymentForm> {
         let app = cx.entity().downgrade();
         let snap = self.snap.clone();
         let last = self.store.pref(crate::ui::forms::payment::LAST_PAID_WITH).ok().flatten();
@@ -244,12 +250,14 @@ impl VzApp {
         };
         let first = Cell::new(true);
         let changed = Changed::default();
+        let opened = form.clone();
         window.open_dialog(cx, move |dialog, window, cx| {
             let dialog = dialog.entrance(DialogEntrance::FadeSlide);
             let handle = form.read(cx).first_focus(cx);
             focus_once(&first, &handle, window, cx);
             dialog.title(title).w(px(600.)).child(changed.watch(form.clone())).on_ok(confirm(&form)).on_cancel(changed.ask())
         });
+        opened
     }
 
     pub fn open_capital_form(&mut self, kind: CapitalKind, window: &mut Window, cx: &mut Context<Self>) {
@@ -735,6 +743,66 @@ impl VzApp {
             return;
         }
         if self.is_linked() { self.open_cloud_restore(path, window, cx) } else { self.confirm_restore(path, window, cx) }
+    }
+
+    /// Reports: admins and viewers (collectors have none).
+    pub(crate) fn can_report(&self) -> bool {
+        self.role().is_none_or(|r| r != crate::sync::wire::Role::Collector)
+    }
+
+    /// The Reports window (the nav's Reports).
+    pub(crate) fn open_reports(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_report() {
+            return;
+        }
+        // Who brought each payment in, by payment number: the collector of a
+        // confirmed collector payment, else who recorded it.
+        let mut collectors = std::collections::HashMap::new();
+        if let Some(snap) = self.cloud_copy() {
+            for p in &snap.payments {
+                let confirmed = snap.pending.iter().find(|x| x.status == "confirmed" && x.record_no == p.record_no);
+                let name = match confirmed {
+                    Some(x) if !x.collector_name.is_empty() => x.collector_name.clone(),
+                    Some(x) => snap.name_of(&x.collected_by).to_string(),
+                    None => snap.name_of(&p.created_by).to_string(),
+                };
+                collectors.insert(p.record_no, name);
+            }
+        }
+        let app = cx.entity().downgrade();
+        let (snap, today) = (self.snap.clone(), self.today);
+        let form = cx.new(|cx| crate::ui::forms::reports::ReportsForm::new(app, snap, today, collectors, window, cx));
+        window.open_dialog(cx, move |dialog, _, _| {
+            dialog.entrance(DialogEntrance::FadeSlide).title(t("Reports", "Reportes")).w(px(640.)).child(form.clone())
+        });
+    }
+
+    /// Saves a report in the reports folder and opens it: the Letter page
+    /// in the browser (its print window makes the PDF) or the workbook.
+    pub(crate) fn save_report(
+        &mut self,
+        report: &crate::services::reports::Report,
+        out: crate::ui::forms::reports::Output,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::services::reports;
+        use crate::ui::forms::reports::Output;
+        let business = self.business_name();
+        let ctx = reports::Ctx { snap: &self.snap, today: self.today, collectors: Default::default() };
+        let (ext, bytes) = match out {
+            Output::Pdf => ("html", reports::html(&ctx, report, &business).into_bytes()),
+            Output::Excel => ("xlsx", reports::workbook(report, &business)),
+        };
+        let dir = self.store.reports_dir();
+        let path = dir.join(format!("{}-{}.{ext}", reports::file_safe(&business), report.file));
+        match std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&path, bytes)) {
+            Ok(()) => self.open_path(path, false, window, cx),
+            Err(e) => {
+                let shown = path.display().to_string();
+                self.notify_error(tr!("Could not save {shown}: {e}", "No se pudo guardar {shown}: {e}"), window, cx);
+            }
+        }
     }
 
     /// The "Update available" window.

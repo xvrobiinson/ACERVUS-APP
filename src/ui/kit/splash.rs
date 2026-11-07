@@ -1,27 +1,26 @@
-//! Splash: "Rising Bars", the launch splash (picked by the owner
-//! 2026-11-03, the same as the phone app's). The logo tile pops in, its
-//! three bars grow in turn, the name rises letter by letter, then the tile
-//! zooms open and the splash fades onto the screen behind. It always plays
+//! Splash: "Orbit", the launch splash (picked by the owner 2026-11-05, the
+//! same as the web app's). Over the hero's picture the black tile pops in,
+//! the dot circles the faint ring and lands in its gap as the ring lights
+//! up, the name rises letter by letter and a line fills. Then it opens
+//! "through the ring": the ring grows toward you, past the window's
+//! corners, while the picture fades onto the screen behind. It always plays
 //! in full and is over in under 3.5 s. The caller removes it after
 //! `Splash::SHOWN` and keeps its screen back until `Splash::OUT`, so the
 //! screen's own arrival plays as the splash opens.
 
-use std::f32::consts::TAU;
 use std::time::Duration;
 
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 
 use super::interact::faded;
-use super::motion::ease_out;
+use super::logo::{MarkLook, RING_CENTER, RING_HOLE, paint_mark};
 use crate::ui::theme::{SplashColors, Typeset as _, palette, text};
 
-/// The tile's side, and the bars inside it on the logo's 512 grid:
-/// (left, top, opacity); all are 72 wide and stand on y = 388.
+/// The tile's side.
 const TILE: f32 = 112.0;
-const BARS: [(f32, f32, f32); 3] = [(104., 270., 0.55), (220., 204., 0.8), (336., 124., 1.0)];
 /// The line under the name.
-const LINE_W: f32 = 148.0;
+const LINE_W: f32 = 110.0;
 
 #[derive(IntoElement)]
 pub struct Splash {
@@ -29,9 +28,9 @@ pub struct Splash {
 }
 
 impl Splash {
-    /// When the intro ends and the tile starts to zoom open.
+    /// When the intro ends and the splash starts to open.
     pub const OUT: Duration = Duration::from_millis(2200);
-    /// How long it stays, zoom and fade included.
+    /// How long it stays, the opening included.
     pub const SHOWN: Duration = Duration::from_millis(3450);
 
     pub fn new(id: impl Into<ElementId>) -> Self {
@@ -57,91 +56,59 @@ fn step(s: f32, from: f32, len: f32) -> f32 {
     ((s - from) / len).clamp(0.0, 1.0)
 }
 
-/// Overshoots a little, then settles (the tile and bars arriving).
-fn back(t: f32) -> f32 {
-    bezier(0.34, 1.56, 0.64, 1.0, t)
+/// Quick, then a long soft landing (the web's cubic-bezier(0.2, 0.8, 0.2, 1)).
+fn settle(t: f32) -> f32 {
+    bezier(0.2, 0.8, 0.2, 1.0, t)
 }
 
-/// Fast, then a long gentle settle (the letters rising).
-fn expo(t: f32) -> f32 {
-    bezier(0.16, 1.0, 0.3, 1.0, t)
+/// Slow, fast, slow (the opening).
+fn in_out(t: f32) -> f32 {
+    if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 }
 }
 
-/// A slow breath from 0 to 1 and back, `period` seconds long.
-fn breath(s: f32, period: f32) -> f32 {
-    0.5 - 0.5 * (s / period * TAU).cos()
+/// The tile's size at `s`: it pops in a little past its size, then settles.
+fn pop(s: f32) -> (f32, f32) {
+    let e = settle(step(s, 0.0, 0.45));
+    let scale = if e < 0.6 { 0.6 + 0.45 * (e / 0.6) } else { 1.05 - 0.05 * ((e - 0.6) / 0.4) };
+    (scale, (e / 0.6).min(1.0))
 }
 
-/// The ground and its glow, centered on the tile's place.
-fn sky(c: SplashColors, s: f32) -> impl IntoElement {
-    canvas(
-        |_, _, _| {},
-        move |b, _, window, _| {
-            window.paint_quad(fill(b, c.edge));
-            let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
-            let vmin = w.min(h);
-            let at = |y: f32| point(b.origin.x + px(w / 2.), b.origin.y + px(h * y));
-            // Soft light that thins toward the edges, like a radial gradient.
-            let glow = |center: Point<Pixels>, rx: f32, ry: f32, blur: f32, color: Hsla, window: &mut Window| {
-                let shape = Bounds::centered_at(center, size(px(rx * 2.), px(ry * 2.)));
-                let shadow = BoxShadow::new(px(0.), px(0.), color).blur_radius(px(blur));
-                window.paint_drop_shadows(shape, Corners::all(px(rx.min(ry))), &[shadow]);
-            };
-            glow(at(0.42), w * 0.26, h * 0.2, vmin * 0.22, c.mid, window);
-            glow(at(0.42), w * 0.1, h * 0.08, vmin * 0.16, c.center, window);
-            let breathe = breath(s, 3.8);
-            let r = vmin * 0.09 * (1.0 + 0.08 * breathe);
-            glow(at(0.46), r, r, vmin * 0.13, faded(c.glow, 1.0 - 0.45 * breathe), window);
-        },
-    )
-    .absolute()
-    .inset_0()
-}
-
-/// The logo tile at `s` seconds: popping in, bars growing then breathing,
-/// and from `Splash::OUT` zooming open.
-fn tile(c: SplashColors, s: f32) -> impl IntoElement {
-    let arrive = back(step(s, 0.0, 0.9));
-    let zoom = step(s, Splash::OUT.as_secs_f32(), 1.0);
-    let open = |t: f32| bezier(0.7, 0.0, 0.2, 1.0, t);
-    let scale = if zoom <= 0.0 {
-        0.45 + 0.55 * arrive
-    } else if zoom < 0.22 {
-        1.0 - 0.1 * open(zoom / 0.22)
-    } else {
-        0.9 + 23.1 * open((zoom - 0.22) / 0.78)
-    };
-    let alpha = arrive.clamp(0.0, 1.0) * if zoom < 0.7 { 1.0 } else { 1.0 - open((zoom - 0.7) / 0.3) };
-    let bars: Vec<f32> = (0..BARS.len())
-        .map(|k| {
-            let grown = back(step(s, 0.32 + 0.15 * k as f32, 0.85)).max(0.0);
-            let from = 1.8 + 0.18 * k as f32;
-            let rest = if s > from { 1.0 - 0.16 * breath(s - from, 2.1) } else { 1.0 };
-            grown * rest
-        })
-        .collect();
+/// The mark at `s` seconds, and from `Splash::OUT` the opening through the
+/// ring: it grows about the ring's center until the hole passes the
+/// window's farthest corner.
+fn mark(c: SplashColors, s: f32) -> impl IntoElement {
+    let (scale, shown) = pop(s);
+    let orbit = bezier(0.35, 0.05, 0.2, 1.0, step(s, 0.25, 1.5));
+    let lit = 0.22 + 0.78 * step(s, 1.5, 0.45);
+    let opening = in_out(step(s, Splash::OUT.as_secs_f32(), 1.0));
+    let tile_gone = step(s, Splash::OUT.as_secs_f32(), 0.35);
     canvas(
         |_, _, _| {},
         move |b, _, window, _| {
             let side = TILE * scale;
-            let t = Bounds::centered_at(b.center(), size(px(side), px(side)));
+            let tile = Bounds::centered_at(b.center(), size(px(side), px(side)));
+            // How far the hole must grow: from the ring's center to the
+            // window's farthest corner.
+            let view = window.viewport_size();
             let unit = side / 512.;
-            if zoom <= 0.0 {
-                let shadow = BoxShadow::new(px(0.), px(18. * scale), faded(c.tile_shadow, alpha)).blur_radius(px(40. * scale));
-                window.paint_drop_shadows(t, Corners::all(px(112. * unit)), &[shadow]);
-            }
-            window.paint_quad(fill(t, faded(c.tile, alpha)).corner_radii(px(112. * unit)));
-            for (&(x, top, a), &grown) in BARS.iter().zip(&bars) {
-                let tall = (388. - top) * grown;
-                if tall <= 0.0 {
-                    continue;
-                }
-                let bar = Bounds::new(
-                    point(t.origin.x + px(x * unit), t.origin.y + px((388. - tall) * unit)),
-                    size(px(72. * unit), px(tall * unit)),
-                );
-                window.paint_quad(fill(bar, faded(c.bar, a * alpha)).corner_radii(px(16f32.min(tall / 2.) * unit)));
-            }
+            let (rx, ry) = (f32::from(tile.origin.x) + RING_CENTER.0 * unit, f32::from(tile.origin.y) + RING_CENTER.1 * unit);
+            let (w, h) = (f32::from(view.width), f32::from(view.height));
+            let far = [(0., 0.), (w, 0.), (0., h), (w, h)].iter().map(|(x, y)| (x - rx).hypot(y - ry)).fold(0., f32::max) + 4.;
+            let grow = far / (RING_HOLE * unit);
+            let gone = 1.0 - step(opening, 0.7, 0.3);
+            let ring_alpha = lit * shown * gone;
+            paint_mark(
+                window,
+                tile,
+                MarkLook {
+                    tile: faded(c.tile, shown * (1.0 - tile_gone)),
+                    edge: c.tile_line.map(|e| faded(e, e.a * shown * (1.0 - tile_gone))),
+                    ring: faded(c.ring, ring_alpha),
+                    dot: faded(c.ring, shown * gone),
+                    dot_turn: -430. * (1.0 - orbit),
+                    zoom: 1.0 + (grow - 1.0) * opening,
+                },
+            );
         },
     )
     .size(px(TILE))
@@ -149,7 +116,9 @@ fn tile(c: SplashColors, s: f32) -> impl IntoElement {
 
 impl RenderOnce for Splash {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let c = palette(cx).splash;
+        let p = palette(cx);
+        let c = p.splash;
+        let picture = crate::ui::pictures::hero(p.dark);
         let (word, sub) = crate::APP_NAME.split_once(' ').unwrap_or((crate::APP_NAME, ""));
         let (word, sub): (Vec<char>, Vec<char>) = (word.chars().collect(), sub.to_uppercase().chars().collect());
         let total = Self::SHOWN.as_secs_f32();
@@ -159,29 +128,36 @@ impl RenderOnce for Splash {
             Animation::new(Self::SHOWN),
             move |d, t| {
                 let s = t * total;
-                // Everything under the tile steps down as it zooms open.
-                let leave = step(s, out, 0.35);
-                let drop = 10. * ease_out(step(s, out, 0.5));
-                let soft = |t: f32| bezier(0.25, 0.1, 0.25, 1.0, t);
+                // The words step away as the splash opens.
+                let leave = 1.0 - step(s, out, 0.25);
                 let letters = word.iter().enumerate().map(|(i, ch)| {
-                    let rise = expo(step(s, 0.76 + 0.056 * i as f32, 0.95));
-                    div().relative().top(px(text::BRAND.line * 1.1 * (1. - rise))).child(ch.to_string())
+                    let rise = settle(step(s, 1.6 + 0.045 * i as f32, 0.6));
+                    div().relative().top(px(48. * 1.1 * (1. - rise))).opacity(rise).child(ch.to_string())
                 });
-                let name = h_flex().overflow_hidden().pb(px(6.)).typeset(text::BRAND).text_color(c.ink).children(letters);
-                let caption = soft(step(s, 1.2, 0.9));
+                let name = h_flex()
+                    .overflow_hidden()
+                    .mt(px(10.))
+                    .pb(px(6.))
+                    .typeset(text::HERO_FIGURE)
+                    .text_size(px(44.))
+                    .line_height(px(48.))
+                    .text_color(c.ink)
+                    .children(letters);
+                let caption = settle(step(s, 2.0, 0.6));
                 let sub = h_flex()
-                    .gap(px(5.))
-                    .mt(px(-8.))
+                    .gap(px(4.5))
+                    .mt(px(-6.))
                     .typeset(text::MICRO)
+                    .font_weight(FontWeight::NORMAL)
                     .text_color(c.sub)
                     .opacity(caption)
                     .relative()
                     .top(px(6. * (1. - caption)))
                     .children(sub.iter().map(|ch| div().child(ch.to_string())));
-                let shown = soft(step(s, 1.32, 0.65));
-                let filled = 0.08 + 0.92 * bezier(0.2, 0.8, 0.2, 1.0, step(s, 1.32, out - 1.32));
+                let shown = settle(step(s, 0.2, 0.5));
+                let filled = 0.08 + 0.92 * settle(step(s, 0.2, out - 0.2));
                 let line = div()
-                    .mt(px(10.))
+                    .mt(px(8.))
                     .w(px(LINE_W))
                     .h(px(2.))
                     .rounded(px(2.))
@@ -190,17 +166,21 @@ impl RenderOnce for Splash {
                     .opacity(shown)
                     .relative()
                     .top(px(6. * (1. - shown)))
-                    .child(div().h_full().w(px(LINE_W * filled)).bg(linear_gradient(
-                        90.,
-                        linear_color_stop(c.line_from, 0.),
-                        linear_color_stop(c.line_to, 1.),
-                    )));
-                let below =
-                    v_flex().items_center().gap(px(18.)).opacity(1. - leave).relative().top(px(drop)).child(name).child(sub).child(line);
-                let gone = bezier(0.2, 0.8, 0.2, 1.0, step(s, out + 0.45, 0.8));
-                d.opacity(1. - gone)
-                    .child(sky(c, s))
-                    .child(v_flex().size_full().items_center().justify_center().gap(px(18.)).child(tile(c, s)).child(below))
+                    .child(div().h_full().w(px(LINE_W * filled)).bg(c.ink));
+                let below = v_flex().items_center().gap(px(10.)).opacity(leave).child(name).child(sub).child(line);
+                // The picture gives way as the ring opens, and is gone when
+                // the ring passes the corners.
+                let opening = in_out(step(s, out, 1.0));
+                let ground = (1.0 - opening).clamp(0.0, 1.0);
+                d.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .bg(c.base)
+                        .opacity(ground)
+                        .child(img(picture.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Cover)),
+                )
+                .child(v_flex().size_full().items_center().justify_center().gap(px(4.)).child(mark(c, s)).child(below))
             },
         )
     }
@@ -217,13 +197,20 @@ mod tests {
         assert!(bezier(0.7, 0.0, 0.2, 1.0, 0.0).abs() < 1e-4);
         assert!((bezier(0.7, 0.0, 0.2, 1.0, 1.0) - 1.0).abs() < 1e-4);
         assert!((bezier(1. / 3., 1. / 3., 2. / 3., 2. / 3., 0.4) - 0.4).abs() < 1e-3);
-        // The arriving curve overshoots before it settles.
-        assert!(back(0.6) > 1.0);
+    }
+
+    #[test]
+    fn the_tile_pops_past_its_size_then_settles() {
+        assert!((pop(0.0).0 - 0.6).abs() < 1e-3);
+        assert!((pop(1.0).0 - 1.0).abs() < 1e-3);
+        assert!((0..45).map(|i| pop(i as f32 / 100.).0).fold(0., f32::max) > 1.0);
     }
 
     #[test]
     fn it_is_over_in_under_three_and_a_half_seconds() {
         assert!(Splash::OUT < Splash::SHOWN);
         assert!(Splash::SHOWN <= Duration::from_millis(3500));
+        // The opening (1 s) and the picture's fade end within the time shown.
+        assert!(Splash::OUT + Duration::from_millis(1000) <= Splash::SHOWN);
     }
 }

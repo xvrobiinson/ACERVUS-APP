@@ -12,6 +12,7 @@ pub mod move_books;
 pub mod payment;
 pub mod reason;
 pub mod receipt_text;
+pub mod reports;
 pub mod reset;
 pub mod restore;
 pub mod schedule;

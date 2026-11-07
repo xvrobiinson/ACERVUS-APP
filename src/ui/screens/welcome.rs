@@ -19,7 +19,7 @@ impl VzApp {
     pub(crate) fn render_gate(&mut self, gate: Gate, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let p = palette(cx);
         let size = window.viewport_size();
-        let (w, h) = (f32::from(size.width), f32::from(size.height));
+        let w = f32::from(size.width);
         let Some(c) = &self.cloud else { return div().into_any_element() };
         let email = c.email.clone();
         let sign_out = Button::new("gate-sign-out")
@@ -128,6 +128,6 @@ impl VzApp {
                 }
             }
         };
-        glass_screen(&p, w, h, "business-gate", card, Some(sign_out))
+        glass_screen(&p, w, "business-gate", card, Some(sign_out))
     }
 }

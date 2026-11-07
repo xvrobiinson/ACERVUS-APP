@@ -2,13 +2,16 @@
 //! the accounting rules and committed atomically in one SQLite transaction.
 
 pub mod export;
+pub mod hero_layout;
 mod lending;
 pub mod overview_layout;
 pub mod picture;
 pub mod receipt;
 pub mod receipt_text;
 mod records;
+pub mod reports;
 pub mod settings;
+pub mod xlsx;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -261,6 +264,11 @@ impl Store {
 
     pub fn receipts_dir(&self) -> PathBuf {
         self.app_dir().join("receipts")
+    }
+
+    /// Where reports (their printable pages and Excel files) are saved.
+    pub fn reports_dir(&self) -> PathBuf {
+        self.app_dir().join("reports")
     }
 
     /// Where CSV exports go when no folder can be chosen.

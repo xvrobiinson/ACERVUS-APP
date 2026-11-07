@@ -4,4 +4,5 @@ pub mod installments;
 pub mod ledger;
 pub mod loans;
 pub mod money;
+pub mod periods;
 pub mod portfolio;

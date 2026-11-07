@@ -1,14 +1,17 @@
 //! The root view: owns the store and the current snapshot, routes between
 //! screens, and hosts the sidebar. Screens render from the snapshot only.
 
+mod account;
+mod brand;
 mod cloud;
 mod derived;
 mod dialogs;
 mod drive;
+mod hero;
 pub(crate) mod motion;
-mod sidebar;
+mod prefs;
 mod update;
-pub(crate) use sidebar::mark;
+pub(crate) use brand::mark;
 
 pub(crate) use cloud::Gate;
 pub use cloud::SyncStatus;
@@ -23,7 +26,6 @@ use chrono::NaiveDate;
 use gpui_kit::component::IndexPath;
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::select::{SelectEvent, SelectState};
-use gpui_kit::component::v_flex;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
@@ -44,7 +46,6 @@ actions!(
         NewLoan,
         NewClient,
         NewExpense,
-        ToggleSidebar,
         GoOverview,
         GoClients,
         GoLoans,
@@ -65,7 +66,6 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-l", NewLoan, Some(CONTEXT)),
         KeyBinding::new("ctrl-n", NewClient, Some(CONTEXT)),
         KeyBinding::new("ctrl-e", NewExpense, Some(CONTEXT)),
-        KeyBinding::new("ctrl-b", ToggleSidebar, Some(CONTEXT)),
         KeyBinding::new("ctrl-1", GoOverview, Some(CONTEXT)),
         KeyBinding::new("ctrl-2", GoClients, Some(CONTEXT)),
         KeyBinding::new("ctrl-3", GoLoans, Some(CONTEXT)),
@@ -170,6 +170,12 @@ pub struct VzApp {
     derived: derived::Derived,
     /// The Overview is being arranged (Customize).
     pub(crate) customizing: bool,
+    /// The account menu (top right) is open.
+    pub(crate) account_open: bool,
+    /// The business switcher under the sidebar's business name is open.
+    pub(crate) brand_open: bool,
+    /// Debug start screens only: the "+" button starts open.
+    pub(crate) add_open_at_start: bool,
     /// Messages showing at the bottom of the window.
     toasts: Rc<RefCell<Toasts>>,
     /// The last try at the daily copy in the backups folder.
@@ -320,6 +326,9 @@ impl VzApp {
             motion: Default::default(),
             derived: Default::default(),
             customizing: false,
+            account_open: false,
+            brand_open: false,
+            add_open_at_start: false,
             toasts: Default::default(),
             local_backup_tried: None,
             updates: Default::default(),
@@ -349,124 +358,154 @@ impl VzApp {
         if cfg!(debug_assertions)
             && let Ok(start) = std::env::var("ACERVUS_START")
         {
-            cx.defer_in(window, move |app, window, cx| match start.as_str() {
-                "clients" => app.navigate(Route::Clients, window, cx),
-                "loans" => app.navigate(Route::Loans, window, cx),
-                "analytics" => app.navigate(Route::Analytics, window, cx),
-                "settings" => app.navigate(Route::Settings, window, cx),
-                "settings-receipts" => {
-                    app.navigate(Route::Settings, window, cx);
-                    app.settings_panel = Some(crate::ui::screens::settings::SettingsPanel::Receipts);
-                }
-                "new-record" => app.open_entry_form(EntryKind::Expense, None, window, cx),
-                "new-payment" => app.open_payment_form(None, window, cx),
-                "new-income" => app.open_entry_form(EntryKind::Income, None, window, cx),
-                "wording" => app.open_receipt_text_form(window, cx),
-                "sign-in" | "sign-up" => {
-                    app.sign_in.open = true;
-                    app.sign_in.required = true;
-                    app.sign_in.creating = start == "sign-up";
-                }
-                "payments" => app.navigate(Route::Payments, window, cx),
-                "settings-business" | "settings-formats" | "settings-data" | "settings-receipt-look" | "settings-receipt-parts" => {
-                    use crate::ui::screens::settings::{SettingsPage, SettingsPanel};
-                    app.navigate(Route::Settings, window, cx);
-                    let (panel, page) = match start.as_str() {
-                        "settings-business" => (SettingsPanel::Business, None),
-                        "settings-formats" => (SettingsPanel::Formats, None),
-                        "settings-data" => (SettingsPanel::Data, None),
-                        "settings-receipt-look" => (SettingsPanel::Receipts, Some(SettingsPage::ReceiptLook)),
-                        _ => (SettingsPanel::Receipts, Some(SettingsPage::ReceiptParts)),
-                    };
-                    app.settings_panel = Some(panel);
-                    app.settings_page = page;
-                }
-                "customize" => app.customizing = true,
-                // The business welcome: no business yet with one invitation,
-                // or several businesses to choose from.
-                // The offer to move the books on this PC (the demo database).
-                "move-books" => app.open_move_books(window, cx),
-                "welcome" | "choose" | "switcher" | "drive" | "restore" | "update" => {
-                    use crate::sync::wire::{Membership, Role};
-                    let business = |id: &str, name: &str, role| Membership {
-                        business_id: id.into(),
-                        name: name.into(),
-                        role,
-                        timezone: "America/Santo_Domingo".into(),
-                    };
-                    let (list, invites) = if start == "welcome" {
-                        let invite = cloud::PendingInvite {
-                            invite_id: "i1".into(),
-                            business_name: "Préstamos Valdez".into(),
-                            role: Role::Collector,
-                        };
-                        (vec![], vec![invite])
-                    } else {
-                        (vec![business("b1", "Préstamos Valdez", Role::Admin), business("b2", "Cobros del Este", Role::Collector)], vec![])
-                    };
-                    app.demo_gate(list, invites, window, cx);
-                    // The demo database stands in for the first business.
-                    if start == "switcher" || start == "drive" || start == "restore" || start == "update" {
-                        if let Some(c) = &mut app.cloud {
-                            c.linked = Some("b1".into());
-                        }
-                        if start == "drive" {
+            // Several at once, joined by "+" ("switcher+payments").
+            cx.defer_in(window, move |app, window, cx| {
+                for start in start.split('+') {
+                    match start {
+                        "clients" => app.navigate(Route::Clients, window, cx),
+                        "loans" => app.navigate(Route::Loans, window, cx),
+                        "analytics" => app.navigate(Route::Analytics, window, cx),
+                        "settings" => app.navigate(Route::Settings, window, cx),
+                        "settings-receipts" => {
                             app.navigate(Route::Settings, window, cx);
+                            app.settings_panel = Some(crate::ui::screens::settings::SettingsPanel::Receipts);
                         }
-                        // Restoring the demo database over itself (give it a
-                        // sync_state row for business b1 first).
-                        if start == "restore" {
-                            let path = app.store.path().to_path_buf();
-                            app.open_cloud_restore(path, window, cx);
+                        "new-record" => app.open_entry_form(EntryKind::Expense, None, window, cx),
+                        "new-payment" => app.open_payment_form(None, window, cx),
+                        "new-income" => app.open_entry_form(EntryKind::Income, None, window, cx),
+                        "wording" => app.open_receipt_text_form(window, cx),
+                        "sign-in" | "sign-up" => {
+                            app.sign_in.open = true;
+                            app.sign_in.required = true;
+                            app.sign_in.creating = start == "sign-up";
                         }
-                        // The "Update available" window, with made-up notes.
-                        if start == "update" {
-                            app.updates.available = Some(crate::sync::update::Release {
-                                version: "0.13.1".into(),
-                                sha256: None,
-                                notes_en: vec![
-                                    "You now sign in to use the app, with an emailed code or your Google account.".into(),
-                                    "Backups: with Google, a copy goes to your Google Drive every day by itself.".into(),
-                                    "Messages show at the bottom of the window and never get in the way of a button.".into(),
-                                ],
-                                notes_es: vec![
-                                    "Ahora inicias sesión para usar la app, con un código por correo o tu cuenta de Google.".into(),
-                                    "Copias de seguridad: con Google, cada día se guarda sola una copia en tu Google Drive.".into(),
-                                    "Los mensajes aparecen abajo en la ventana y nunca tapan un botón.".into(),
-                                ],
-                            });
-                            app.open_update(window, cx);
+                        "payments" => app.navigate(Route::Payments, window, cx),
+                        "settings-business" | "settings-formats" | "settings-data" | "settings-receipt-look" | "settings-receipt-parts" => {
+                            use crate::ui::screens::settings::{SettingsPage, SettingsPanel};
+                            app.navigate(Route::Settings, window, cx);
+                            let (panel, page) = match start {
+                                "settings-business" => (SettingsPanel::Business, None),
+                                "settings-formats" => (SettingsPanel::Formats, None),
+                                "settings-data" => (SettingsPanel::Data, None),
+                                "settings-receipt-look" => (SettingsPanel::Receipts, Some(SettingsPage::ReceiptLook)),
+                                _ => (SettingsPanel::Receipts, Some(SettingsPage::ReceiptParts)),
+                            };
+                            app.settings_panel = Some(panel);
+                            app.settings_page = page;
                         }
+                        "customize" => app.customizing = true,
+                        "reports" => app.open_reports(window, cx),
+                        // The account menu, and the "+" button's stack, open.
+                        "account" => app.account_open = true,
+                        "brand" => app.brand_open = true,
+                        "add" => app.add_open_at_start = true,
+                        // The business welcome: no business yet with one invitation,
+                        // or several businesses to choose from.
+                        // The offer to move the books on this PC (the demo database).
+                        "move-books" => app.open_move_books(window, cx),
+                        "welcome" | "choose" | "switcher" | "drive" | "restore" | "update" => {
+                            use crate::sync::wire::{Membership, Role};
+                            let business = |id: &str, name: &str, role| Membership {
+                                business_id: id.into(),
+                                name: name.into(),
+                                role,
+                                timezone: "America/Santo_Domingo".into(),
+                            };
+                            let (list, invites) = if start == "welcome" {
+                                let invite = cloud::PendingInvite {
+                                    invite_id: "i1".into(),
+                                    business_name: "Préstamos Valdez".into(),
+                                    role: Role::Collector,
+                                };
+                                (vec![], vec![invite])
+                            } else {
+                                (
+                                    vec![
+                                        business("b1", "Préstamos Valdez", Role::Admin),
+                                        business("b2", "Cobros del Este", Role::Collector),
+                                    ],
+                                    vec![],
+                                )
+                            };
+                            app.demo_gate(list, invites, window, cx);
+                            // The demo database stands in for the first business.
+                            if start == "switcher" || start == "drive" || start == "restore" || start == "update" {
+                                if let Some(c) = &mut app.cloud {
+                                    c.linked = Some("b1".into());
+                                }
+                                if start == "drive" {
+                                    app.navigate(Route::Settings, window, cx);
+                                }
+                                // Restoring the demo database over itself (give it a
+                                // sync_state row for business b1 first).
+                                if start == "restore" {
+                                    let path = app.store.path().to_path_buf();
+                                    app.open_cloud_restore(path, window, cx);
+                                }
+                                // The "Update available" window, with made-up notes.
+                                if start == "update" {
+                                    app.updates.available = Some(crate::sync::update::Release {
+                                        version: "0.13.1".into(),
+                                        sha256: None,
+                                        notes_en: vec![
+                                            "You now sign in to use the app, with an emailed code or your Google account.".into(),
+                                            "Backups: with Google, a copy goes to your Google Drive every day by itself.".into(),
+                                            "Messages show at the bottom of the window and never get in the way of a button.".into(),
+                                        ],
+                                        notes_es: vec![
+                                            "Ahora inicias sesión para usar la app, con un código por correo o tu cuenta de Google.".into(),
+                                            "Copias de seguridad: con Google, cada día se guarda sola una copia en tu Google Drive.".into(),
+                                            "Los mensajes aparecen abajo en la ventana y nunca tapan un botón.".into(),
+                                        ],
+                                    });
+                                    app.open_update(window, cx);
+                                }
+                            }
+                        }
+                        // A form with a message and an error over it.
+                        "toasts" => {
+                            app.open_entry_form(EntryKind::Expense, None, window, cx);
+                            app.notify_success(t("Payment saved", "Pago guardado"), window, cx);
+                            app.notify_error(t("Enter your email address", "Escribe tu correo"), window, cx);
+                        }
+                        "settings-team" => {
+                            app.navigate(Route::Settings, window, cx);
+                            app.settings_panel = Some(crate::ui::screens::settings::SettingsPanel::Team);
+                        }
+                        // The bell, once the cloud's messages have had time to arrive.
+                        "messages" => cx
+                            .spawn_in(window, async move |this, cx| {
+                                cx.background_executor().timer(std::time::Duration::from_secs(6)).await;
+                                let _ = this.update_in(cx, |app, window, cx| app.open_messages(window, cx));
+                            })
+                            .detach(),
+                        s if s.starts_with("loan-") => {
+                            if let Ok(id) = s[5..].parse() {
+                                app.navigate(Route::Loan(id), window, cx);
+                            }
+                        }
+                        s if s.starts_with("client-") => {
+                            if let Ok(id) = s[7..].parse() {
+                                app.navigate(Route::Client(id), window, cx);
+                            }
+                        }
+                        // The payment form on loan <n>, with an amount typed in if
+                        // given ("pay-2" or "pay-2-3000").
+                        s if s.starts_with("pay-") => {
+                            let mut parts = s[4..].split('-');
+                            if let Some(Ok(id)) = parts.next().map(str::parse) {
+                                let form = app.payment_dialog(Some(id), None, window, cx);
+                                if let Some(amount) = parts.next() {
+                                    let amount = amount.to_string();
+                                    form.update(cx, |f, cx| f.type_amount(amount, window, cx));
+                                }
+                            }
+                        }
+                        // The message after saving a payment.
+                        "saved" => app.notify_success(t("Payment saved", "Pago guardado"), window, cx),
+                        _ => {}
                     }
                 }
-                // A form with a message and an error over it.
-                "toasts" => {
-                    app.open_entry_form(EntryKind::Expense, None, window, cx);
-                    app.notify_success(t("Payment saved", "Pago guardado"), window, cx);
-                    app.notify_error(t("Enter your email address", "Escribe tu correo"), window, cx);
-                }
-                "settings-team" => {
-                    app.navigate(Route::Settings, window, cx);
-                    app.settings_panel = Some(crate::ui::screens::settings::SettingsPanel::Team);
-                }
-                // The bell, once the cloud's messages have had time to arrive.
-                "messages" => cx
-                    .spawn_in(window, async move |this, cx| {
-                        cx.background_executor().timer(std::time::Duration::from_secs(6)).await;
-                        let _ = this.update_in(cx, |app, window, cx| app.open_messages(window, cx));
-                    })
-                    .detach(),
-                s if s.starts_with("loan-") => {
-                    if let Ok(id) = s[5..].parse() {
-                        app.navigate(Route::Loan(id), window, cx);
-                    }
-                }
-                s if s.starts_with("client-") => {
-                    if let Ok(id) = s[7..].parse() {
-                        app.navigate(Route::Client(id), window, cx);
-                    }
-                }
-                _ => {}
             });
         }
         // Left open past midnight: what is overdue and the late fees change
@@ -566,15 +605,7 @@ impl VzApp {
     /// Width available to a screen's content, for layouts that reflow on
     /// narrow windows.
     pub fn content_width(&self, window: &Window) -> f32 {
-        let side = if self.sidebar_collapsed(window) { theme::SIDEBAR_COLLAPSED } else { theme::SIDEBAR_WIDTH };
-        let viewport = f32::from(window.viewport_size().width);
-        viewport - side - 2.0 * theme::Width::gutter(viewport)
-    }
-
-    /// The sidebar shows icons only when the user collapsed it or the
-    /// window is too narrow to spare the room.
-    pub fn sidebar_collapsed(&self, window: &Window) -> bool {
-        self.settings().sidebar_collapsed || f32::from(window.viewport_size().width) < theme::SIDEBAR_AUTO_COLLAPSE
+        hero::content_width(f32::from(window.viewport_size().width))
     }
 
     /// The active loan the current screen is about, for context-aware
@@ -795,10 +826,6 @@ impl VzApp {
             CompanyField::Phone => t("Company phone saved", "Teléfono de la empresa guardado"),
         };
         self.notify_success(msg, window, cx);
-    }
-
-    fn toggle_sidebar(&mut self, _: &ToggleSidebar, window: &mut Window, cx: &mut Context<Self>) {
-        self.update_settings(|s| s.sidebar_collapsed = !s.sidebar_collapsed, window, cx);
     }
 
     /// Opens a file or folder with Windows, or shows a file in Explorer
@@ -1089,7 +1116,6 @@ impl Render for VzApp {
         self.begin_frame();
         crate::ui::components::begin_selectable_frame();
         let p = palette(cx);
-        let gutter = theme::Width::gutter(f32::from(window.viewport_size().width));
         let mut settings_popup = None;
         let content = match self.route {
             Route::Overview => self.render_overview(window, cx),
@@ -1106,6 +1132,9 @@ impl Render for VzApp {
                 page
             }
         };
+        // The hero look on every screen (approved 2026-11-06): the Overview's
+        // figures go on the picture, every screen's content on the panel.
+        let hero_figures = (self.route == Route::Overview).then(|| self.hero_figures(window, cx));
         let banner = self.load_error.clone().map(|e| {
             div()
                 .px(px(space::XXL))
@@ -1136,7 +1165,6 @@ impl Render for VzApp {
                     this.open_loan_form(client, w, cx)
                 }))
             })
-            .on_action(cx.listener(Self::toggle_sidebar))
             .on_action(cx.listener(Self::go_back))
             // Escape goes back from a page inside a settings popup, then
             // closes the popup.
@@ -1178,39 +1206,7 @@ impl Render for VzApp {
                 if let Some(gate) = self.business_gate() {
                     return d.child(self.render_gate(gate, window, cx));
                 }
-                // Dark mode puts the sign-in's night sky behind every screen;
-                // light mode keeps its plain ground.
-                let has_sky = p.dark;
-                let sky = has_sky.then(|| {
-                    let side = if self.sidebar_collapsed(window) { theme::SIDEBAR_COLLAPSED } else { theme::SIDEBAR_WIDTH };
-                    let size = window.viewport_size();
-                    crate::ui::screens::sky(&p, f32::from(size.width) - side, f32::from(size.height))
-                });
-                d.child(self.render_sidebar(window, cx)).child(
-                    v_flex().relative().flex_1().min_w_0().h_full().children(sky).children(banner).child(
-                        div()
-                            .id(SharedString::from(format!("scroll-{:?}", self.route.section())))
-                            .flex_1()
-                            .min_h_0()
-                            .overflow_y_scroll()
-                            // Over the sky, a near-invisible fill makes the
-                            // page one surface that draws after the clouds'
-                            // blurred glow, which would otherwise fade text
-                            // lying just outside a cloud.
-                            .when(has_sky, |d| d.bg(hsla(0., 0., 0., 0.004)))
-                            // A new screen fades in while rising into place
-                            // (at launch, once the splash starts to open).
-                            .when(!self.motion.covering, |d| {
-                                d.child(div().w_full().px(px(gutter)).pt(px(gutter.min(space::XXL - 4.))).pb(px(48.)).child(
-                                    crate::ui::kit::motion::rise(
-                                        content,
-                                        SharedString::from(format!("screen-{:?}", self.route)),
-                                        Duration::ZERO,
-                                    ),
-                                ))
-                            }),
-                    ),
-                )
+                d.child(self.render_hero(hero_figures, content, banner, window, cx))
             })
             // Over everything, the open settings popup.
             .children(settings_popup)

@@ -20,6 +20,7 @@ pub struct Stat {
     tone: Option<Hsla>,
     caption: Option<AnyElement>,
     accessory: Option<AnyElement>,
+    above: Option<SharedString>,
     lead: bool,
     count: Option<super::CountUp>,
 }
@@ -36,6 +37,7 @@ impl Stat {
             tone: None,
             caption: None,
             accessory: None,
+            above: None,
             lead: false,
             count: None,
         }
@@ -77,6 +79,12 @@ impl Stat {
         self
     }
 
+    /// A small line just above the figure (the period it covers).
+    pub fn above(mut self, text: impl Into<SharedString>) -> Self {
+        self.above = Some(text.into());
+        self
+    }
+
     /// The stat the strip is about: display size.
     pub fn lead(mut self, lead: bool) -> Self {
         self.lead = lead;
@@ -113,15 +121,22 @@ impl RenderOnce for Stat {
             .gap(px(if self.chip.is_some() { space::M } else { space::S }))
             .child(header.children(self.accessory))
             .child(
-                div()
-                    .typeset(if self.lead { text::DISPLAY } else { text::FIGURE })
-                    .font_features(tabular())
-                    .whitespace_nowrap()
-                    .text_color(self.tone.unwrap_or(p.text))
-                    .map(|d| match self.count {
-                        Some(count) => d.child(count.color(self.tone.unwrap_or(p.text))),
-                        None => d.child(self.value),
-                    }),
+                v_flex()
+                    .gap(px(2.))
+                    .children(self.above.map(|a| {
+                        div().typeset(text::MICRO).font_weight(FontWeight::SEMIBOLD).text_color(p.accent_text).child(a.to_uppercase())
+                    }))
+                    .child(
+                        div()
+                            .typeset(if self.lead { text::DISPLAY } else { text::FIGURE })
+                            .font_features(tabular())
+                            .whitespace_nowrap()
+                            .text_color(self.tone.unwrap_or(p.text))
+                            .map(|d| match self.count {
+                                Some(count) => d.child(count.color(self.tone.unwrap_or(p.text))),
+                                None => d.child(self.value),
+                            }),
+                    ),
             )
             .children(self.caption.map(|c| div().min_w_0().truncate().typeset(text::CAPTION).text_color(p.muted).child(c)))
     }

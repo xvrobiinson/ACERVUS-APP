@@ -264,9 +264,14 @@ pub struct Settings {
     pub theme: ThemePref,
     pub chart_range: ChartRange,
     pub show_interest_line: bool,
-    pub sidebar_collapsed: bool,
     /// What the Overview shows and in what order (this PC's own).
     pub overview_layout: OverviewLayout,
+    /// The period Interest earned shows on the Overview (the person's,
+    /// kept with their account; this is this PC's copy).
+    pub interest_period: crate::domain::periods::Period,
+    /// The hero's four figures as the person chose them, the JSON saved to
+    /// their account (`services::hero_layout`); empty for the defaults.
+    pub hero_figures: String,
     /// Written by the backup command, never by `save_settings`.
     pub last_backup_at: Option<String>,
 }
@@ -293,8 +298,9 @@ impl Default for Settings {
             theme: ThemePref::Light,
             chart_range: ChartRange::SixMonths,
             show_interest_line: true,
-            sidebar_collapsed: false,
             overview_layout: OverviewLayout::default(),
+            interest_period: crate::domain::periods::Period::Month,
+            hero_figures: String::new(),
             last_backup_at: None,
         }
     }
@@ -346,8 +352,9 @@ impl Settings {
             },
             chart_range: get("chart_range").map(ChartRange::from_key).unwrap_or(d.chart_range),
             show_interest_line: flag("show_interest_line", d.show_interest_line),
-            sidebar_collapsed: flag("sidebar_collapsed", d.sidebar_collapsed),
             overview_layout: get("overview_layout").map(OverviewLayout::from_key).unwrap_or_default(),
+            interest_period: get("interest_period").map(crate::domain::periods::Period::from_key).unwrap_or_default(),
+            hero_figures: get("hero_figures").unwrap_or_default().to_string(),
             last_backup_at: get("last_backup_at").map(str::to_string),
         }
     }
@@ -377,8 +384,9 @@ impl Settings {
             ("theme", self.theme.key().into()),
             ("chart_range", self.chart_range.key().into()),
             ("show_interest_line", b(self.show_interest_line)),
-            ("sidebar_collapsed", b(self.sidebar_collapsed)),
             ("overview_layout", self.overview_layout.key()),
+            ("interest_period", self.interest_period.key().into()),
+            ("hero_figures", self.hero_figures.clone()),
         ];
         pairs.extend(ReceiptShow::KEYS.iter().zip(self.receipt_show.values()).map(|((key, _), on)| (*key, b(on))));
         pairs.extend(self.receipt_text.to_pairs());

@@ -276,6 +276,12 @@ impl PaymentForm {
         self.snap.payments_for_loan(loan_id).filter(|x| !x.is_reversed() && Some(x.id) != self.editing && (x.paid_on, x.id) > key).count()
     }
 
+    /// An amount as if typed in (debug builds' ACERVUS_START, for screenshots).
+    pub(crate) fn type_amount(&mut self, amount: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.amount.update(cx, |s, cx| s.set_value(amount, window, cx));
+        cx.notify();
+    }
+
     pub fn first_focus(&self, cx: &App) -> FocusHandle {
         if self.loan_id.is_some() { self.amount.focus_handle(cx) } else { self.loan.focus_handle(cx) }
     }

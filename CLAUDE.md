@@ -23,16 +23,26 @@ left. Still on gpui-component on purpose: the form dialogs' engine, `Input`,
 `Select`, `Switch`, `Checkbox` (the kit has no text field or switch), and the
 date picker's hand-built toggle.
 
-Redesign (2026-10-30, approved): violet "Dashboard style" palette, sidebar
-with a filled selected item, `StatCards` (replaced the old `StatStrip`),
-boxed `ListRow`s on Overview, and the sign-in night sky behind every screen
-in dark mode only.
+Redesign (2026-10-30, approved): `StatCards` (replaced the old
+`StatStrip`) and boxed `ListRow`s on Overview.
+
+Hero look (2026-11-06, approved and rolled out; the web app's): no sidebar.
+Every screen has the hero header (`app/hero.rs`) over the fog picture
+(light) or the streaks (dark), `assets/hero/`: the section nav (Settings is
+in the account menu, Portfolio for admins, Loans shows the overdue count in
+red), search, the bell and the account, then the date, a greeting and the
+business (its name or logo opens the switcher, `app/brand.rs`). The page
+scrolls under it: the Overview's figures on `GlassFigure`s, then a rounded
+panel with the screen. Colors follow the web's hero tokens
+(`Palette::hero()` for words and glass on the picture); statuses
+(`components::pill`) are colored words, never a fill. The light/dark switch
+is in the account panel (Appearance), with the version at its foot.
 
 Cloud only (2026-11-04, decided with the user): the app needs an account.
 Signed out, the sign-in screen (or create an account) takes the window;
 signed in, it shows a cloud business, never the PC's own books. With none
 open, the business welcome (`ui/screens/welcome.rs`) lets the person create
-one, accept an invitation or choose; the sidebar switches businesses. Books
+one, accept an invitation or choose; the business name in the header switches businesses. Books
 kept only on a PC are offered once per sign-in to move into a new business
 (`sync::import`, the same mapping as the PWA's import script). Backups: Google
 Drive copies (the "cloud backup", `app::drive`) are on for an account whose
@@ -41,14 +51,42 @@ turned off for those books; others "Connect Google Drive". A daily copy also
 goes to the backups folder (`acervus-daily-<business>-…`, newest 7 kept).
 Updates: signed in and online, the app asks the Acervus site
 (`/download/windows/info`) for the newest version every 6 hours
-(`sync::update`, `app/update.rs`); "Update available" then shows in the
-sidebar's foot and opens what's new with "Update now" (download, SHA-256
+(`sync::update`, `app/update.rs`); "Version … is ready" then shows in the
+account panel (the avatar's ring turns to it) and opens what's new with "Update now" (download, SHA-256
 check, run the installer, quit). Each version's plain-words notes live in
 `whats-new.json` (English and Spanish, MAJOR.MINOR); a test fails until they
 match Cargo.toml, and the release workflow publishes them.
 Restore on a cloud business (admins, `ui/forms/restore.rs`) replaces the
 business's books in the cloud for everyone (`imports:restoreBook`) after a
 safety copy and the typed business name; Reset is refused there.
+
+Overview round 2 (2026-11-06, approved): the figure cards are solid, the
+panel's own surface (`Palette::figure`; the PWA does the same at the end of
+`src/hero.css`); in light the hero's words are dark (white was 2.4:1 on the
+fog) and `faint` is #6B7177; a Reports tab follows Portfolio after a thin
+line (admins and viewers; `ui/forms/reports.rs`, `services/reports.rs`,
+`services/xlsx.rs`: a PDF page in the browser, a real .xlsx); Arrange is a
+small ghost button at the hero's top right on the Overview.
+
+Overview round 3 (2026-11-07, approved): admins see "Cards Option B", six
+small cards with the business's totals (`hero_six`: portfolio, available
+capital, lent out, available interest, interest earned, overdue; one row,
+3 + 3 below 1,100px; amounts shrink to fit, never cut). Collectors and
+viewers keep four cards they pick themselves, saved to their account like
+the web (`services::hero_layout`, `app/prefs.rs`, `prefs:mine`/`prefs:save`,
+also Interest earned's period); while arranging, those cards are pickers.
+The top bar's counts are corner badges on the icons (`kit::Badge`): red for
+overdue loans, amber for collector payments to confirm (admins), blue for
+new messages on the bell.
+
+Brand (2026-11-07): the ring-and-dot mark everywhere (`kit::Logo`,
+`kit::paint_mark`, the web's `public/logo.svg` on its 512 grid); the app
+icon `assets/icons/acervus.ico` is made from that SVG (the installer's own
+artwork stays VZ Labs'). The launch splash is "Orbit" over the hero's
+picture: the dot circles the ring and lands, the name rises, then the ring
+grows past the window's corners while the picture fades ("through the
+ring"). The sign-in screen and the business welcome show the hero's
+picture (`ui::pictures`) behind one solid card.
 
 Motion and Customize (2026-11-03, approved and rolled out): the Overview can
 be arranged (blocks shown, hidden, reordered, half or full width; figures
@@ -61,8 +99,13 @@ optimize dependencies (`[profile.dev.package."*"]`) so motion stays smooth.
 
 Kit contents: `Button` (Primary, Secondary, Ghost, Danger, DangerGhost;
 Mini/Small/Medium; `.loading`, `.selected`, `.suffix`, `.prefix` for a mark
-in its own colors, `.wide` for a full-width button; approved 2026-10-30),
-`Card` (+ `face` for its shaded fill), `Stat` (`.chip`),
+in its own colors, `.wide` for a full-width button, `.rest_ink` for a
+button's ink at rest on a picture or a card; approved 2026-10-30),
+`Card` (+ `face` for its shaded fill), `Stat` (`.chip`), `GlassFigure`
+(the hero's figures: `.big`, `.row` with a `FigureTone`, `.action`,
+`.body` for other content, `.compact` for the six small cards), `Badge`
+(a count with a `BadgeTone`: Alert, Waiting, Info; placed on an icon's
+corner), `Logo` (the mark, `.edge` on dark backgrounds),
 `StatCards` (`.lifting` lifts cards under the pointer, `.keys`, `.frame`,
 `.glide`), `ListRow` (`.muted`, `.boxed`, `.rise(i)`, `.fresh`), `Chip`
 (`.spinning`, `.done`), `CountUp`, `Glide` (slides a block to its new place
@@ -129,7 +172,7 @@ the same springs. Searching and sorting rules live in `ui::lists`.
   `ACERVUS_DB=<new.db>`; in debug builds `ACERVUS_START` opens a screen
   or dialog at launch (`clients`, `loans`, `analytics`, `settings`, `payments`, `messages`, `loan-<n>`, `client-<n>`,
   `new-record`, `new-income`, `new-payment`, `wording`, `settings-receipts`, `settings-team`,
-  `settings-business`, `settings-formats`, `customize` (arranging the Overview), `toasts` (a form with two messages over it), `sign-in`, `sign-up` (both as the required screen, with no way back), `move-books` (the offer to move the PC's own books to the cloud), `update` (the "Update available" window with made-up notes), `welcome`, `choose`, `switcher`, `drive` and `restore` (the business welcome: none yet with an invitation, or two to pick from; then the sidebar switcher with the demo database as the first; then Settings with the Google Drive card; then the restore warning, which needs a demo database with a `sync_state` row for business `b1`; signed in offline as a made-up person), `settings-data`, `settings-receipt-look`,
+  `settings-business`, `settings-formats`, `customize` (arranging the Overview), `reports` (the Reports window), `account` (the account menu open), `add` (the "+" stack open), `brand` (the business switcher under the header's business name open), `pay-<loan>[-<amount>]` (the payment form on that loan, amount typed), `saved` (the "Payment saved" message); several join with "+" (`switcher+account`), `toasts` (a form with two messages over it), `sign-in`, `sign-up` (both as the required screen, with no way back), `move-books` (the offer to move the PC's own books to the cloud), `update` (the "Update available" window with made-up notes), `welcome`, `choose`, `switcher`, `drive` and `restore` (the business welcome: none yet with an invitation, or two to pick from; then the header's business switcher with the demo database as the first; then Settings with the Google Drive card; then the restore warning, which needs a demo database with a `sync_state` row for business `b1`; signed in offline as a made-up person), `settings-data`, `settings-receipt-look`,
   `settings-receipt-parts`). Capture the window with `PrintWindow`, which works
   even when it is covered. Never send synthetic keystrokes or clicks: when the
   app isn't the foreground window they land in the user's other programs.

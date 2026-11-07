@@ -15,8 +15,6 @@ pub struct Palette {
     /// Top of a card's face; cards shade from this down to `surface`
     /// (the same color in light mode, a touch lighter in dark).
     pub surface_top: Hsla,
-    /// The sidebar, a step darker than the ground in dark mode.
-    pub sidebar: Hsla,
     pub raised: Hsla,
     pub hover: Hsla,
     pub active: Hsla,
@@ -52,72 +50,48 @@ pub struct Palette {
     /// Hairline of light along the top edge of raised surfaces.
     pub highlight: Hsla,
     pub overlay: Hsla,
-    /// The sign-in screen: a sky (night in dark mode) behind a glass card.
-    pub sky_top: Hsla,
-    pub sky_low: Hsla,
-    pub cloud: Hsla,
-    pub arc: Hsla,
-    pub glass_top: Hsla,
-    pub glass: Hsla,
-    pub glass_edge: Hsla,
     /// The launch splash (kit::Splash).
     pub splash: SplashColors,
     pub dark: bool,
 }
 
-/// The launch splash: a soft glow behind the logo tile, the name, and a
-/// line. The tile keeps the brand blue in both themes.
+/// The launch splash (Orbit, 2026-11-05): the hero picture behind the
+/// black tile, the white ring and dot, the name and a line.
 #[derive(Clone, Copy, Debug)]
 pub struct SplashColors {
-    /// The ground at the edges, a step lighter around the logo, and the
-    /// heart of the glow.
-    pub edge: Hsla,
-    pub mid: Hsla,
-    pub center: Hsla,
-    /// The colored glow that breathes behind the tile.
-    pub glow: Hsla,
+    /// Under the picture, while it loads.
+    pub base: Hsla,
     pub tile: Hsla,
-    pub tile_shadow: Hsla,
-    pub bar: Hsla,
+    /// A thin line around the tile (dark only, so it shows on black).
+    pub tile_line: Option<Hsla>,
+    pub ring: Hsla,
     pub ink: Hsla,
     pub sub: Hsla,
     pub track: Hsla,
-    pub line_from: Hsla,
-    pub line_to: Hsla,
 }
 
 impl SplashColors {
     fn light() -> Self {
         Self {
-            edge: hex(0xF6F7FB),
-            mid: hex(0xF0EEFE),
-            center: hex(0xFFFFFF),
-            glow: hexa(0x5B47E8, 0.16),
-            tile: hex(0x365CF5),
-            tile_shadow: hexa(0x365CF5, 0.32),
-            bar: hex(0xFFFFFF),
-            ink: hex(0x17181C),
-            sub: hex(0x5E6270),
-            track: hexa(0x17181C, 0.08),
-            line_from: hex(0x5B47E8),
-            line_to: hex(0x7B8CFF),
+            base: hex(0xA4A8AA),
+            tile: hex(0x000000),
+            tile_line: None,
+            ring: hex(0xFFFFFF),
+            ink: hex(0x1D2024),
+            sub: hexa(0x1D2024, 0.72),
+            track: hexa(0x1D2024, 0.16),
         }
     }
 
     fn dark() -> Self {
         Self {
-            edge: hex(0x0D0E13),
-            mid: hex(0x121226),
-            center: hex(0x1F1A47),
-            glow: hexa(0x6E5BF6, 0.32),
-            tile: hex(0x365CF5),
-            tile_shadow: hexa(0x365CF5, 0.45),
-            bar: hex(0xFFFFFF),
-            ink: hex(0xF1F2F5),
-            sub: hex(0xA3A7B4),
-            track: hexa(0xFFFFFF, 0.1),
-            line_from: hex(0x6E5BF6),
-            line_to: hex(0x8FA4FF),
+            base: hex(0x040405),
+            tile: hex(0x000000),
+            tile_line: Some(hexa(0xFFFFFF, 0.16)),
+            ring: hex(0xFFFFFF),
+            ink: hex(0xF1F2F3),
+            sub: hexa(0xF1F2F3, 0.7),
+            track: hexa(0xFFFFFF, 0.14),
         }
     }
 }
@@ -132,51 +106,142 @@ fn hexa(v: u32, a: f32) -> Hsla {
     c
 }
 
+/// The hero (2026-11-06, the web's look): the words and glass cards drawn
+/// over the fog (light) or the streaks (dark).
+#[derive(Clone, Copy, Debug)]
+pub struct HeroColors {
+    pub ink: Hsla,
+    pub mute: Hsla,
+    /// The glass cards and pills: their fill and their edge.
+    pub glass: Hsla,
+    pub glass_edge: Hsla,
+    pub glass_hover: Hsla,
+    /// A line under the nav row.
+    pub rule: Hsla,
+    /// Overdue on the hero: red words, readable on the fog.
+    pub bad: Hsla,
+    pub good: Hsla,
+    /// The business's initials square when it has no logo.
+    pub mark: Hsla,
+    pub mark_ink: Hsla,
+}
+
+/// Notification badges (`kit::Badge`): solid fills with white numbers, the
+/// same in light and dark (white reads 5:1 or better on each).
+#[derive(Clone, Copy, Debug)]
+pub struct BadgeColors {
+    /// Something is late.
+    pub alert: Hsla,
+    /// Someone is waiting on you.
+    pub waiting: Hsla,
+    /// News.
+    pub info: Hsla,
+    pub on: Hsla,
+}
+
 impl Palette {
+    pub fn badge(&self) -> BadgeColors {
+        BadgeColors { alert: hex(0xC03A3A), waiting: hex(0xB45309), info: hex(0x2F6DB5), on: hex(0xFFFFFF) }
+    }
+}
+
+/// The hero figure cards (2026-11-06, option A): solid, the panel's own
+/// surface (white in light, the panel's slate in dark) with its words, so
+/// they match the cards below.
+#[derive(Clone, Copy, Debug)]
+pub struct FigureColors {
+    pub fill: Hsla,
+    pub edge: Hsla,
+    pub ink: Hsla,
+    pub mute: Hsla,
+    /// The big figure's cents.
+    pub cents: Hsla,
+    pub good: Hsla,
+    pub bad: Hsla,
+}
+
+impl Palette {
+    pub fn figure(&self) -> FigureColors {
+        FigureColors {
+            fill: self.surface,
+            edge: if self.dark { hexa(0xFFFFFF, 0.08) } else { hexa(0x000000, 0.06) },
+            ink: self.text,
+            mute: self.muted,
+            cents: self.muted,
+            good: self.positive,
+            bad: self.negative,
+        }
+    }
+
+    pub fn hero(&self) -> HeroColors {
+        if self.dark {
+            HeroColors {
+                ink: hex(0xFFFFFF),
+                mute: hexa(0xFFFFFF, 0.7),
+                glass: hexa(0xFFFFFF, 0.05),
+                glass_edge: hexa(0xFFFFFF, 0.1),
+                glass_hover: hexa(0xFFFFFF, 0.12),
+                rule: hexa(0xFFFFFF, 0.07),
+                bad: hex(0xFF8A8A),
+                good: hex(0x8FE8C2),
+                mark: hex(0xF1F2F3),
+                mark_ink: hex(0x111316),
+            }
+        } else {
+            // Dark words on the fog (2026-11-06): white measured 2.4:1 on
+            // it; these are 7:1 (ink) and 4.9:1 (mute, the date's line).
+            HeroColors {
+                ink: hex(0x16181B),
+                mute: hex(0x33373B),
+                glass: hexa(0xFFFFFF, 0.16),
+                glass_edge: hexa(0xFFFFFF, 0.3),
+                glass_hover: hexa(0xFFFFFF, 0.3),
+                rule: hexa(0x000000, 0.1),
+                bad: hex(0x7A1010),
+                good: hex(0x0F5F3D),
+                mark: hex(0x16181B),
+                mark_ink: hex(0xFFFFFF),
+            }
+        }
+    }
+
     pub fn light() -> Self {
         Self {
-            ground: hex(0xF6F7FB),
+            ground: hex(0xE6E9EB),
             surface: hex(0xFFFFFF),
             surface_top: hex(0xFFFFFF),
-            sidebar: hex(0xFFFFFF),
-            raised: hex(0xFAFAFC),
-            hover: hex(0xF3F3F8),
-            active: hex(0xEEEDF6),
-            border: hex(0xE6E7EE),
-            rule: hex(0xEEEFF4),
-            control: hex(0xDCDDE6),
-            text: hex(0x17181C),
-            muted: hex(0x5E6270),
-            faint: hex(0x6B6F7C),
-            accent: hex(0x5B47E8),
-            accent_hover: hex(0x4B37D6),
-            accent_tint: hex(0xEEEBFF),
-            accent_text: hex(0x4B37D6),
+            raised: hex(0xF6F7F8),
+            hover: hex(0xF1F3F4),
+            active: hex(0xE8EBED),
+            border: hex(0xE3E6E9),
+            rule: hex(0xEEF0F2),
+            control: hex(0xD3D7DA),
+            text: hex(0x1A1D21),
+            muted: hex(0x5F656B),
+            // 5:1 on white (was 3.9:1, under the 4.5:1 small text needs).
+            faint: hex(0x6B7177),
+            accent: hex(0x3B3E41),
+            accent_hover: hex(0x25282B),
+            accent_tint: hex(0xECEEF0),
+            accent_text: hex(0x25282B),
             on_accent: hex(0xFFFFFF),
-            positive: hex(0x047857),
-            positive_tint: hex(0xE3F7EE),
-            warning: hex(0x8A5300),
-            warning_tint: hex(0xFFF4DC),
-            negative: hex(0xB42323),
-            negative_tint: hex(0xFDECEC),
-            info: hex(0x2459C9),
-            info_tint: hex(0xE6F0FF),
-            neutral_tint: hex(0xF1F2F6),
-            grid: hex(0xEEEFF4),
-            chart_reference: hex(0xF08A2C),
-            chart_secondary: hex(0x0E9F6E),
+            positive: hex(0x17784E),
+            positive_tint: hex(0xE3F3EB),
+            warning: hex(0x8F5A00),
+            warning_tint: hex(0xFBF0DC),
+            negative: hex(0xC03A3A),
+            negative_tint: hex(0xFBEAEA),
+            info: hex(0x44627F),
+            info_tint: hex(0xE8EEF4),
+            neutral_tint: hex(0xEEF0F2),
+            grid: hex(0xEEF0F2),
+            chart_reference: hex(0x8A9096),
+            chart_secondary: hex(0x17784E),
             shadow: hexa(0x141E32, 0.045),
             shadow_ink: hex(0x0F1A2E),
             shadow_gain: 1.0,
             highlight: hexa(0xFFFFFF, 0.0),
             overlay: hexa(0x0B1020, 0.32),
-            sky_top: hex(0x9FC9F1),
-            sky_low: hex(0xF1F6FC),
-            cloud: hexa(0xFFFFFF, 0.9),
-            arc: hexa(0xFFFFFF, 0.55),
-            glass_top: hex(0xDCF2FB),
-            glass: hexa(0xFFFFFF, 0.9),
-            glass_edge: hexa(0xFFFFFF, 0.95),
             splash: SplashColors::light(),
             dark: false,
         }
@@ -184,48 +249,40 @@ impl Palette {
 
     pub fn dark() -> Self {
         Self {
-            ground: hex(0x16171B),
-            surface: hex(0x1B1C21),
-            surface_top: hex(0x23242A),
-            sidebar: hex(0x121316),
-            raised: hex(0x1F2025),
-            hover: hex(0x26272E),
-            active: hex(0x2C2D34),
-            border: hex(0x2A2B31),
-            rule: hex(0x24252A),
-            control: hex(0x3A3B42),
-            text: hex(0xF1F2F5),
-            muted: hex(0x9A9CA7),
-            faint: hex(0x8E909B),
-            accent: hex(0x6E5BF6),
-            accent_hover: hex(0x7C6CFF),
-            accent_tint: hex(0x26213F),
-            accent_text: hex(0xA99DFF),
-            on_accent: hex(0xFFFFFF),
-            positive: hex(0x34D399),
-            positive_tint: hex(0x14291F),
-            warning: hex(0xF5B451),
-            warning_tint: hex(0x2E2414),
-            negative: hex(0xF87171),
-            negative_tint: hex(0x351C1E),
-            info: hex(0x7FB2FF),
-            info_tint: hex(0x1B2538),
-            neutral_tint: hex(0x26272E),
-            grid: hex(0x26272C),
-            chart_reference: hex(0xF59E42),
-            chart_secondary: hex(0x34D399),
+            ground: hex(0x0B0C0E),
+            surface: hex(0x15181C),
+            surface_top: hex(0x191C21),
+            raised: hex(0x1B1F24),
+            hover: hex(0x21252B),
+            active: hex(0x292E35),
+            border: hex(0x262B32),
+            rule: hex(0x1F2329),
+            control: hex(0x363C44),
+            text: hex(0xECEEF0),
+            muted: hex(0x9BA2A9),
+            faint: hex(0x858C93),
+            accent: hex(0xECEEF0),
+            accent_hover: hex(0xFFFFFF),
+            accent_tint: hex(0x262B31),
+            accent_text: hex(0xECEEF0),
+            on_accent: hex(0x15181B),
+            positive: hex(0x4FD19B),
+            positive_tint: hex(0x13281F),
+            warning: hex(0xE9B35C),
+            warning_tint: hex(0x2C2414),
+            negative: hex(0xF07B7B),
+            negative_tint: hex(0x331C1E),
+            info: hex(0x8FB3D9),
+            info_tint: hex(0x1A2430),
+            neutral_tint: hex(0x22262C),
+            grid: hex(0x1D2126),
+            chart_reference: hex(0x6B7178),
+            chart_secondary: hex(0x4FD19B),
             shadow: hexa(0x000000, 0.25),
             shadow_ink: hex(0x000000),
             shadow_gain: 4.0,
             highlight: hexa(0xFFFFFF, 0.045),
             overlay: hexa(0x000000, 0.5),
-            sky_top: hex(0x091226),
-            sky_low: hex(0x0E0F11),
-            cloud: hexa(0x6E87C8, 0.1),
-            arc: hexa(0x8CA5E6, 0.13),
-            glass_top: hex(0x19223C),
-            glass: hexa(0x17181B, 0.94),
-            glass_edge: hexa(0xFFFFFF, 0.07),
             splash: SplashColors::dark(),
             dark: true,
         }
@@ -302,6 +359,10 @@ pub mod text {
     pub const MICRO: TextRole = role(font::TEXT, 11.0, 14.0, FontWeight::MEDIUM);
     /// The app's name on the launch splash.
     pub const BRAND: TextRole = role(font::DISPLAY, 46.0, 48.0, FontWeight::SEMIBOLD);
+    /// The hero's big thin figures (Inter Light).
+    pub const HERO_FIGURE: TextRole = role(font::TEXT, 36.0, 42.0, FontWeight::LIGHT);
+    /// The business's name in the hero.
+    pub const HERO_NAME: TextRole = role(font::TEXT, 28.0, 34.0, FontWeight::NORMAL);
 }
 
 /// Applies a [`TextRole`] to any styled element.
@@ -355,9 +416,6 @@ impl Width {
     }
 }
 
-/// Below this window width the sidebar collapses to icons on its own.
-pub const SIDEBAR_AUTO_COLLAPSE: f32 = 1024.0;
-
 /// Spacing on an 8px base (4px half steps for tight places).
 pub mod space {
     pub const XS: f32 = 4.0;
@@ -371,8 +429,6 @@ pub mod space {
 pub const RADIUS_CARD: f32 = 14.0;
 pub const RADIUS_CONTROL: f32 = 8.0;
 pub const RADIUS_CHIP: f32 = 6.0;
-pub const SIDEBAR_WIDTH: f32 = 232.0;
-pub const SIDEBAR_COLLAPSED: f32 = 64.0;
 pub const FONT: &str = font::TEXT;
 
 /// Depth. Every level is the same three layers (contact, key, ambient) so
@@ -496,6 +552,8 @@ pub fn tabular() -> FontFeatures {
 /// inputs, menus and dialogs match the app.
 pub fn install(pref: ThemePref, cx: &mut App) {
     let fonts: Vec<std::borrow::Cow<'static, [u8]>> = vec![
+        // The hero's big thin figures (2026-11-06).
+        std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Light.ttf")),
         std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Regular.ttf")),
         std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-Medium.ttf")),
         std::borrow::Cow::Borrowed(include_bytes!("../../assets/fonts/Inter-SemiBold.ttf")),

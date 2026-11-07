@@ -243,7 +243,7 @@ fn settings_round_trip() {
     st.receipt_name = "Préstamos Valdez".into();
     st.language = crate::i18n::Lang::Es;
     st.default_rate = Rate(150_000);
-    st.sidebar_collapsed = true;
+    st.show_interest_line = !st.show_interest_line;
     s.save_settings(&st).unwrap();
     assert_eq!(s.snapshot().unwrap().settings, st);
     st.receipt_name = "x".repeat(61);

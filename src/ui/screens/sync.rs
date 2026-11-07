@@ -7,11 +7,11 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::*;
 
-use crate::app::{Route, SyncStatus, VzApp};
+use crate::app::{SyncStatus, VzApp};
 use crate::i18n::t;
 use crate::sync::wire::Role;
 use crate::tr;
-use crate::ui::kit::{Button, Chip, ListRow};
+use crate::ui::kit::{Button, ListRow};
 use crate::ui::theme::{Palette, Typeset as _, space, text};
 
 pub(crate) fn role_label(r: Role) -> &'static str {
@@ -52,30 +52,6 @@ fn change_label(mutation: &str) -> &'static str {
 }
 
 impl VzApp {
-    /// How the cloud sync stands, as a chip that opens Settings. None when
-    /// not signed in.
-    pub(crate) fn sync_chip(&self, id: &'static str, cx: &mut Context<Self>) -> Option<Chip> {
-        let (icon, label, accent) = self.sync_look()?;
-        let status = self.sync_status();
-        // Sending: the arrows turn. Just finished: "Up to date" in green.
-        let sending = matches!(status, Some(SyncStatus::Sending(_)));
-        let done = status == Some(SyncStatus::Synced) && self.motion.up_to_date();
-        let (icon, label) = match (sending, done) {
-            (true, _) => (IconName::RefreshCw, label),
-            (_, true) => (IconName::CircleCheck, t("Up to date", "Al día").to_string()),
-            _ => (icon, label),
-        };
-        Some(
-            Chip::new(id, label)
-                .icon(icon)
-                .accent(accent)
-                .spinning(sending)
-                .done(done)
-                .tooltip(t("Cloud sync: open in Settings", "Sincronización: abrir en Configuración"))
-                .on_click(cx.listener(|this, _, w, cx| this.navigate(Route::Settings, w, cx))),
-        )
-    }
-
     /// The sync status as icon, words and whether it needs the person.
     /// None when not signed in.
     pub(crate) fn sync_look(&self) -> Option<(IconName, String, bool)> {

@@ -21,6 +21,7 @@ pub mod shell;
 pub mod sync;
 pub mod ui;
 pub mod utils;
+pub mod window_frame;
 
 /// The product name. Fixed: it is not a setting.
 pub const APP_NAME: &str = "Acervus Finance";

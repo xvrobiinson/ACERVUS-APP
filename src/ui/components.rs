@@ -12,7 +12,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::domain::ledger::DisplayStatus;
-use crate::ui::theme::{Palette, RADIUS_CHIP, Typeset as _, space, tabular, text};
+use crate::ui::theme::{Palette, Typeset as _, space, tabular, text};
 
 thread_local! {
     /// How many times each `sel` call site has run in the frame being built.
@@ -72,14 +72,13 @@ pub fn tone_colors(p: &Palette, tone: Tone) -> (Hsla, Hsla) {
     }
 }
 
+/// A status or count in its tone's color: colored words only, no fill
+/// (the hero look, as on the web, 2026-11-06).
 pub fn pill(p: &Palette, text: impl Into<SharedString>, tone: Tone) -> Div {
-    let (bg, fg) = tone_colors(p, tone);
+    let (_, fg) = tone_colors(p, tone);
     h_flex()
         .flex_none()
         .h(px(22.))
-        .px(px(8.))
-        .rounded(px(RADIUS_CHIP))
-        .bg(bg)
         .text_color(fg)
         .typeset(text::CAPTION)
         .font_weight(FontWeight::MEDIUM)

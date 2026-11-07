@@ -51,6 +51,8 @@ windows = { version = "0.62.2", features = [
     "Win32_System_Com",
     "Win32_System_Registry",
     "Win32_System_Threading",
+    # The title bar without the app's name and icon (src/window_frame.rs).
+    "Win32_UI_Controls",
     "Win32_UI_Controls_Dialogs",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",

@@ -145,6 +145,7 @@ pub struct Button {
     disabled: bool,
     loading: bool,
     selected: bool,
+    rest_ink: Option<Hsla>,
     on_click: Option<ClickHandler>,
 }
 
@@ -163,6 +164,7 @@ impl Button {
             disabled: false,
             loading: false,
             selected: false,
+            rest_ink: None,
             on_click: None,
         }
     }
@@ -235,6 +237,13 @@ impl Button {
         self
     }
 
+    /// The ink while not hovered or held, for a button on a picture or a
+    /// colored card (a hero figure's calendar).
+    pub fn rest_ink(mut self, ink: Hsla) -> Self {
+        self.rest_ink = Some(ink);
+        self
+    }
+
     /// Shown after the pointer rests; put the shortcut here ("Ctrl+P").
     /// Disabled buttons keep it, so it can say why.
     pub fn tooltip(mut self, tip: impl Into<SharedString>) -> Self {
@@ -270,7 +279,11 @@ impl RenderOnce for Button {
         let size = self.size;
         let square = self.label.is_none() && self.suffix.is_none() && self.prefix.is_none();
         let lit = (hovered && live) || self.selected;
-        let ink = if self.kind == ButtonKind::Ghost && !lit && self.label.is_none() { p.muted } else { c.ink };
+        let ink = match self.rest_ink {
+            Some(ink) if !lit => ink,
+            _ if self.kind == ButtonKind::Ghost && !lit && self.label.is_none() => p.muted,
+            _ => c.ink,
+        };
         let shadows = depth(&p, self.kind);
         let focus_shadows = [shadows.clone(), ring(&p)].concat();
 

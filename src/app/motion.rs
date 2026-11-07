@@ -36,7 +36,6 @@ pub(crate) enum Fresh {
 #[derive(Default)]
 pub(crate) struct Motion {
     pub(crate) overdue: Counter,
-    pub(crate) unread: Counter,
     /// The sync was sending changes at the last frame.
     pub(crate) sync_was_sending: bool,
     /// "Up to date" shows until then, after sending finished.
@@ -79,10 +78,6 @@ impl Motion {
 
     pub(crate) fn gliding(&self) -> bool {
         self.glide_until.is_some_and(|t| Instant::now() < t)
-    }
-
-    pub(crate) fn up_to_date(&self) -> bool {
-        self.up_to_date_until.is_some_and(|t| Instant::now() < t)
     }
 
     /// A collected payment was just confirmed or rejected here.
