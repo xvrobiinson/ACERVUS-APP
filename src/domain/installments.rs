@@ -175,6 +175,55 @@ pub struct PlanPayment {
     pub instruction: Instruction,
 }
 
+/// How a late fee is worked out (2026-11-10; the owner chose ways B, C and
+/// D next to A, today's): the day after an installment's due date, while
+/// something on it is unpaid, the loan's rate is charged on
+/// - A `Installment`: what is unpaid of that installment, once;
+/// - B `Monthly`: the same, then again every 30 days while it stays unpaid;
+/// - C `Overdue`: everything overdue on the loan that day, once;
+/// - D `Balance`: all the capital still owed on the loan, once.
+///
+/// The web's twin is shared/domain/installments.ts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FeeMode {
+    #[default]
+    Installment,
+    Monthly,
+    Overdue,
+    Balance,
+}
+
+/// Way B charges again this many days after the last charge.
+pub const FEE_REPEAT_DAYS: i64 = 30;
+
+impl FeeMode {
+    pub const ALL: [FeeMode; 4] = [FeeMode::Installment, FeeMode::Monthly, FeeMode::Overdue, FeeMode::Balance];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            FeeMode::Installment => "installment",
+            FeeMode::Monthly => "monthly",
+            FeeMode::Overdue => "overdue",
+            FeeMode::Balance => "balance",
+        }
+    }
+
+    /// Unknown or missing: today's way.
+    pub fn from_key(k: &str) -> Self {
+        Self::ALL.into_iter().find(|m| m.key() == k).unwrap_or_default()
+    }
+
+    /// In plain words (the web's `feeModeLabel`).
+    pub fn label(self) -> &'static str {
+        match self {
+            FeeMode::Installment => t("Once on the late installment", "Una vez sobre la cuota atrasada"),
+            FeeMode::Monthly => t("Each month it stays late", "Cada mes que siga atrasada"),
+            FeeMode::Overdue => t("On everything overdue", "Sobre todo lo atrasado"),
+            FeeMode::Balance => t("On what is left of the loan", "Sobre lo que queda del préstamo"),
+        }
+    }
+}
+
 /// An installment loan's schedule and recorded payments.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Plan {
@@ -183,6 +232,8 @@ pub struct Plan {
     /// Edited by hand: the scheduled interest is used as written.
     pub edited: bool,
     pub fee_rate: Rate,
+    /// The loan's way of charging late fees.
+    pub fee_mode: FeeMode,
     /// Installments whose late fee was waived.
     pub waived: Vec<u32>,
     /// Recorded payments in ledger order, with their stored splits.
@@ -201,8 +252,13 @@ pub struct InstallmentState {
     pub charged: bool,
     /// Capital owed when its period began (once charged).
     pub balance_at_start: Cents,
+    /// Late fees owed on it (none when waived).
     pub fee: Cents,
-    /// What was unpaid when the late fee was assessed.
+    /// Every late fee charged on it, before any waiver.
+    pub fee_assessed: Cents,
+    /// How many times a late fee was charged (more than once only with way B).
+    pub fee_charges: u32,
+    /// What the first late fee was charged on.
     pub fee_base: Cents,
     pub fee_assessed_on: Option<NaiveDate>,
     pub fee_waived: bool,
@@ -475,15 +531,56 @@ impl Engine<'_> {
             }
             let s = &self.st[k];
             if s.fee_assessed_on.is_none() && s.charged && s.due < at && self.limit.is_none_or(|d| s.due < d) {
-                let base = s.unpaid_principal() + s.unpaid_interest();
-                if base > 0 && self.plan.fee_rate.0 > 0 {
-                    let fee = div_round_half_up(base as i128 * self.plan.fee_rate.0 as i128, RATE_SCALE as i128) as Cents;
+                let own = s.unpaid_principal() + s.unpaid_interest();
+                if own > 0 && self.plan.fee_rate.0 > 0 {
+                    let base = self.fee_base(k, own);
+                    let fee = self.fee_on(base);
                     let s = &mut self.st[k];
                     s.fee_base = base;
+                    s.fee_assessed = fee;
+                    s.fee_charges = 1;
                     s.fee = if s.fee_waived { 0 } else { fee };
                     s.fee_assessed_on = Some(s.due + chrono::Duration::days(1));
                 }
             }
+            // Way B: again every 30 days while the installment stays unpaid.
+            if self.plan.fee_mode == FeeMode::Monthly
+                && let Some(first) = self.st[k].fee_assessed_on
+            {
+                loop {
+                    let on = first + chrono::Duration::days(FEE_REPEAT_DAYS * i64::from(self.st[k].fee_charges));
+                    if on > at || self.limit.is_some_and(|d| on > d) {
+                        break;
+                    }
+                    let own = self.st[k].unpaid_principal() + self.st[k].unpaid_interest();
+                    if own <= 0 {
+                        break;
+                    }
+                    let fee = self.fee_on(own);
+                    let s = &mut self.st[k];
+                    s.fee_assessed += fee;
+                    s.fee_charges += 1;
+                    s.fee = if s.fee_waived { 0 } else { s.fee_assessed };
+                }
+            }
+        }
+    }
+
+    fn fee_on(&self, base: Cents) -> Cents {
+        div_round_half_up(base as i128 * self.plan.fee_rate.0 as i128, RATE_SCALE as i128) as Cents
+    }
+
+    /// What installment `k`'s first late fee is charged on, by the loan's way;
+    /// `own` is what is unpaid of the installment itself.
+    fn fee_base(&self, k: usize, own: Cents) -> Cents {
+        match self.plan.fee_mode {
+            FeeMode::Installment | FeeMode::Monthly => own,
+            // Everything overdue that day: installments due on or before this one.
+            FeeMode::Overdue => {
+                let due = self.st[k].due;
+                self.st.iter().filter(|x| x.charged && x.due <= due).map(|x| x.unpaid_principal() + x.unpaid_interest()).sum()
+            }
+            FeeMode::Balance => self.outstanding(),
         }
     }
 
@@ -693,6 +790,7 @@ mod tests {
             schedule: proposed_schedule(f, method, n),
             edited: false,
             fee_rate: Rate(50_000),
+            fee_mode: FeeMode::Installment,
             waived: Vec::new(),
             payments: Vec::new(),
         }
@@ -899,5 +997,36 @@ mod tests {
         f.rate = PeriodRate::new(Rate(10_000), Frequency::Daily, Frequency::Daily);
         let s = proposed_schedule(&f, Method::Flat, 10);
         assert_eq!((s[0].interest, s[9].due), (10_000, d(2026, 1, 11)));
+    }
+
+    /// The 0.15 proposal's example: 10,000 at 10% a month in 5; installment 1
+    /// paid on time, installment 2 (2,800) not paid at all. Late fee 5%.
+    #[test]
+    fn charges_late_fees_the_four_ways() {
+        let f = facts(1_000_000, 10);
+        let at = |mode: FeeMode, as_of: NaiveDate, more: Vec<PlanPayment>| {
+            let mut p = plan(&f, Method::Declining, 5);
+            p.fee_mode = mode;
+            let mut pays = vec![PlanPayment { paid_on: d(2026, 2, 1), amount: 300_000, instruction: Instruction::Auto }];
+            pays.extend(more);
+            run(&f, &p, &pays, as_of, as_of).unwrap().installments
+        };
+        let ten_late = d(2026, 3, 11);
+        assert_eq!(at(FeeMode::Installment, ten_late, vec![])[1].fee, 14_000);
+        assert_eq!(at(FeeMode::Monthly, ten_late, vec![])[1].fee, 14_000);
+        assert_eq!(at(FeeMode::Overdue, ten_late, vec![])[1].fee, 14_000);
+        assert_eq!(at(FeeMode::Balance, ten_late, vec![])[1].fee, 40_000);
+        let later = d(2026, 4, 1);
+        assert_eq!(at(FeeMode::Installment, later, vec![])[1].fee, 14_000);
+        let b = &at(FeeMode::Monthly, later, vec![])[1];
+        assert_eq!((b.fee, b.fee_assessed, b.fee_charges), (28_000, 28_000, 2));
+        let next = d(2026, 4, 2);
+        assert_eq!(at(FeeMode::Overdue, next, vec![])[2].fee, 28_000);
+        assert_eq!(at(FeeMode::Balance, next, vec![])[2].fee, 40_000);
+        let paid = PlanPayment { paid_on: d(2026, 3, 20), amount: 294_000, instruction: Instruction::Installment(2) };
+        let x = &at(FeeMode::Monthly, d(2026, 6, 1), vec![paid])[1];
+        assert_eq!((x.fee, x.fee_charges), (14_000, 1));
+        assert_eq!(FeeMode::from_key("monthly"), FeeMode::Monthly);
+        assert_eq!(FeeMode::from_key(""), FeeMode::Installment);
     }
 }

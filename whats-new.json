@@ -1,29 +1,17 @@
 {
-  "version": "0.14",
+  "version": "0.15",
   "en": [
-    "A new, cleaner look: no sidebar. The sections sit at the top, with search, messages and your account, and the Overview starts with what needs your attention today.",
-    "Admins see six cards with the business's totals. Each has a small \"i\" that says what it means, and a Reports tab gives a monthly statement, collections and overdue loans as a PDF or an Excel file.",
-    "A Calendar shows what falls due each day or week, what was received and what is late. Pick a day to record a payment or send a reminder.",
-    "Send payment reminders and receipts by WhatsApp from your own number, with the words you choose (Settings › WhatsApp messages).",
-    "Recording a payment is simpler: it pays the oldest installment first and says in plain words what the amount covers. Made a mistake? Press Undo right after saving.",
-    "The loan form says the loan in one sentence and who each loan type suits. Short of capital? Add it from the loan form without losing what you typed.",
-    "Receipts: choose the full schedule or just the next payment, and print on Letter paper or a 58, 80 or 112 mm receipt printer.",
-    "Search clients and loans from any screen (Ctrl+F).",
-    "New here? A short welcome tour shows the essentials, and Help explains how Acervus works in plain words. Both are in your account menu.",
-    "Your profile: add your name and a photo.",
-    "Clearer messages when something goes wrong, saying what happened and what to do."
+    "Choose how late fees are charged (Settings › Lending defaults): once on the late installment as before, again each month it stays late, on everything overdue, or on what is left of the loan. Each loan keeps the way it was made with.",
+    "Decide what happens to the interest you collect, on each loan: keep it as profit, reinvest it into your capital, or split it. The Portfolio shows how much was reinvested this month.",
+    "Short of capital for a loan? \"Lend and add capital\" saves the capital and the loan together, in one step.",
+    "Receipts and the loan page say how each loan's late fee is charged.",
+    "A security update for the database the app uses."
   ],
   "es": [
-    "Un diseño nuevo y más limpio, sin menú lateral. Las secciones están arriba, con la búsqueda, los mensajes y tu cuenta, y el Resumen empieza con lo que necesita tu atención hoy.",
-    "Los administradores ven seis tarjetas con los totales del negocio. Cada una tiene una pequeña \"i\" que explica qué significa, y la pestaña Reportes da el estado mensual, los cobros y los préstamos atrasados en PDF o Excel.",
-    "Un Calendario muestra lo que vence cada día o semana, lo cobrado y lo atrasado. Elige un día para registrar un pago o enviar un recordatorio.",
-    "Envía recordatorios de pago y recibos por WhatsApp desde tu propio número, con las palabras que elijas (Configuración › Mensajes de WhatsApp).",
-    "Registrar un pago es más sencillo: paga primero la cuota más antigua y dice en palabras sencillas qué cubre el monto. ¿Te equivocaste? Pulsa Deshacer justo después de guardar.",
-    "El formulario de préstamo dice el préstamo en una frase y para quién es cada tipo. ¿Falta capital? Agrégalo desde el mismo formulario sin perder lo que escribiste.",
-    "Recibos: elige el calendario completo o solo el próximo pago, e imprime en papel Carta o en una impresora de recibos de 58, 80 o 112 mm.",
-    "Busca clientes y préstamos desde cualquier pantalla (Ctrl+F).",
-    "¿Eres nuevo? Un recorrido corto muestra lo esencial, y Ayuda explica cómo funciona Acervus en palabras sencillas. Ambos están en el menú de tu cuenta.",
-    "Tu perfil: agrega tu nombre y una foto.",
-    "Mensajes más claros cuando algo sale mal: qué pasó y qué hacer."
+    "Elige cómo se cobra la mora (Configuración › Valores de préstamos): una vez sobre la cuota atrasada como antes, otra vez cada mes que siga atrasada, sobre todo lo atrasado o sobre lo que queda del préstamo. Cada préstamo conserva la forma con que se hizo.",
+    "Decide qué pasa con el interés que cobras, en cada préstamo: dejarlo como ganancia, reinvertirlo en tu capital o dividirlo. El Portafolio muestra cuánto se reinvirtió este mes.",
+    "¿Falta capital para un préstamo? \"Prestar y agregar capital\" guarda el capital y el préstamo juntos, en un solo paso.",
+    "Los recibos y la página del préstamo dicen cómo se cobra la mora de cada préstamo.",
+    "Una actualización de seguridad de la base de datos que usa la app."
   ]
 }

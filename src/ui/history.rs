@@ -76,6 +76,8 @@ fn field_label(entity: Entity, field: &str) -> String {
         "method" => t("Loan type", "Tipo de préstamo"),
         "installments" => t("Installments", "Cuotas"),
         "late_fee_rate" => t("Late fee rate", "Tasa de mora"),
+        "late_fee_mode" => t("How late fees are charged", "Cómo se cobra la mora"),
+        "reinvest" => t("Interest reinvested", "Interés reinvertido"),
         "schedule" => t("Payment plan", "Plan de pagos"),
         "schedule_edited" => t("Plan changed by hand", "Plan cambiado a mano"),
         "allocation" => t("Applied to", "Aplicado a"),
@@ -104,6 +106,8 @@ fn field_value(field: &str, raw: &str, snap: &Snapshot) -> String {
         "rate" | "late_fee_rate" => raw.parse().map(|ppm| Rate(ppm).percent_label()).unwrap_or_else(|_| raw.into()),
         "frequency" | "interest_period" => Frequency::from_key(raw).map(|f| f.label().to_string()).unwrap_or_else(|| raw.into()),
         "method" => Method::from_key(raw).map(|m| m.short_label().to_string()).unwrap_or_else(|| raw.into()),
+        "late_fee_mode" => crate::domain::installments::FeeMode::from_key(raw).label().to_string(),
+        "reinvest" => format!("{raw}%"),
         "paid_with" => {
             crate::database::repositories::payments::PaidWith::from_key(raw).map_or_else(|| raw.into(), |w| w.label().to_string())
         }

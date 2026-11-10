@@ -253,7 +253,8 @@ fn changes_made_here_reach_the_cloud() {
         installments: Some(4),
         late_fee_rate: Rate(50_000),
     };
-    let loan = Change::NewLoan { client_id: client, terms: terms.clone(), schedule: None, notes: String::new() };
+    let loan =
+        Change::NewLoan { client_id: client, terms: terms.clone(), schedule: None, notes: String::new(), choices: Default::default() };
     check(&mut store, &mut rx, loan, "loan", &|s| s.loans.len() == 1);
     let loan = store.snapshot().unwrap().loans[0].id;
     let pay = Change::NewPayment {
@@ -320,8 +321,15 @@ fn changes_made_here_reach_the_cloud() {
         reason: "Conteo de caja".into(),
     };
     check(&mut store, &mut rx, count, "adjustment", &|s| s.entries.len() == 2);
-    let loan_notes =
-        Change::EditLoan { id: loan, client_id: client, terms, schedule: None, notes: "Fiador: Pedro".into(), reason: "Nota".into() };
+    let loan_notes = Change::EditLoan {
+        id: loan,
+        client_id: client,
+        terms,
+        schedule: None,
+        notes: "Fiador: Pedro".into(),
+        reason: "Nota".into(),
+        choices: Default::default(),
+    };
     check(&mut store, &mut rx, loan_notes, "loan edit", &|s| s.loans[0].notes == "Fiador: Pedro");
     let default = Change::MarkDefaulted { id: loan, on: today, note: "No contesta".into() };
     check(&mut store, &mut rx, default, "default", &|s| s.loans[0].status == "defaulted");
@@ -496,7 +504,7 @@ fn a_late_fee_is_waived_from_the_desktop() {
         late_fee_rate: Rate(50_000),
     };
     let client = store.snapshot().unwrap().clients[0].id;
-    let loan = Change::NewLoan { client_id: client, terms, schedule: None, notes: String::new() };
+    let loan = Change::NewLoan { client_id: client, terms, schedule: None, notes: String::new(), choices: Default::default() };
     assert!(matches!(save_and_send(&mut store, &worker, loan, today), Outcome::Accepted(_)));
     println!("READY FOR LATE FEES");
     apply_when(&mut rx, &mut store, "the late fee", |s| !s.late_fees.is_empty());

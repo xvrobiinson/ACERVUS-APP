@@ -617,6 +617,12 @@ impl VzApp {
                 )
                 .child(crate::ui::components::progress_bar(p, ratio, p.accent))
                 .child(kv(p, t("Available to lend", "Disponible para prestar"), sel(money.format(s.available_cash))))
+                // Interest reinvested this month (0.15), when any.
+                .children({
+                    let today = crate::utils::dates::today();
+                    let r = self.snap.book.reinvested_between(crate::utils::dates::month_start(today), today);
+                    (r > 0).then(|| kv(p, t("Interest reinvested this month", "Interés reinvertido este mes"), sel(money.format(r))))
+                })
                 .child(div().h(px(1.)).bg(p.border))
                 .child(
                     div()

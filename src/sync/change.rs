@@ -16,7 +16,7 @@ use super::replica::{self, Entity};
 use super::wire::Need;
 use crate::database::repositories::clients::ClientInput;
 use crate::database::repositories::payments::PaidWith;
-use crate::domain::installments::{Installment, Instruction};
+use crate::domain::installments::{FeeMode, Installment, Instruction};
 use crate::domain::loans::LoanTerms;
 use crate::domain::money::Cents;
 use crate::domain::portfolio::{Account, CapitalKind, EntryKind};
@@ -65,6 +65,7 @@ pub enum Change {
         terms: LoanTerms,
         schedule: Option<Vec<Installment>>,
         notes: String,
+        choices: LoanChoices,
     },
     EditLoan {
         id: i64,
@@ -73,6 +74,7 @@ pub enum Change {
         schedule: Option<Vec<Installment>>,
         notes: String,
         reason: String,
+        choices: LoanChoices,
     },
     DeleteLoan {
         id: i64,
@@ -223,11 +225,26 @@ impl Change {
             EditClient { id, input, photo } => s.save_client(Some(*id), input, photo).map(|_| None)?,
             ArchiveClient { id, archived } => s.set_client_archived(*id, *archived).map(|_| None)?,
             DeleteClient { id, reason } => s.delete_client(*id, reason).map(|_| None)?,
-            NewLoan { client_id, terms, schedule, notes } => {
-                Some(s.create_loan_with_schedule(*client_id, terms, schedule.clone(), notes, today)?)
+            NewLoan { client_id, terms, schedule, notes, choices } => {
+                if choices.add_capital > 0 {
+                    s.add_capital(CapitalKind::Contribution, choices.add_capital, terms.start_date, &capital_note(s, *client_id), today)?;
+                }
+                let id = s.create_loan_with_schedule(*client_id, terms, schedule.clone(), notes, today)?;
+                let reinvest = if choices.reinvest > 0 {
+                    vec![crate::domain::portfolio::Reinvest { from: terms.start_date, percent: choices.reinvest }]
+                } else {
+                    Vec::new()
+                };
+                s.set_loan_choices(id, choices.fee_mode, &reinvest)?;
+                Some(id)
             }
-            EditLoan { id, client_id, terms, schedule, notes, reason } => {
-                s.update_loan(*id, *client_id, terms, schedule.clone(), notes, reason, today).map(|_| None)?
+            EditLoan { id, client_id, terms, schedule, notes, reason, choices } => {
+                if choices.add_capital > 0 {
+                    s.add_capital(CapitalKind::Contribution, choices.add_capital, terms.start_date, &capital_note(s, *client_id), today)?;
+                }
+                s.update_loan(*id, *client_id, terms, schedule.clone(), notes, reason, today)?;
+                s.change_reinvest(*id, choices.reinvest, today)?;
+                None
             }
             DeleteLoan { id, reason } => s.delete_loan(*id, reason).map(|_| None)?,
             MarkDefaulted { id, on, note } => s.mark_defaulted(*id, *on, note, today).map(|_| None)?,
@@ -298,17 +315,23 @@ impl Change {
             DeleteClient { id: local, reason } => {
                 ("clients:remove", json!({ "clientId": id(Entity::Client, *local)?.0, "reason": reason }))
             }
-            NewLoan { client_id, terms: tm, schedule, notes } => (
-                "loans:create",
-                json!({ "clientId": id(Entity::Client, *client_id)?.0, "terms": terms(tm), "schedule": schedule.as_deref().map(installments), "notes": notes }),
-            ),
-            EditLoan { id: local, client_id, terms: tm, schedule, notes, reason } => {
+            NewLoan { client_id, terms: tm, schedule, notes, choices } => {
+                let mut args = json!({ "clientId": id(Entity::Client, *client_id)?.0, "terms": terms(tm), "schedule": schedule.as_deref().map(installments),
+                                       "notes": notes, "lateFeeMode": choices.fee_mode.key(), "reinvest": choices.reinvest });
+                if choices.add_capital > 0 {
+                    args["addCapital"] = json!(choices.add_capital);
+                }
+                ("loans:create", args)
+            }
+            EditLoan { id: local, client_id, terms: tm, schedule, notes, reason, choices } => {
                 let (lid, version) = id(Entity::Loan, *local)?;
-                (
-                    "loans:update",
-                    json!({ "loanId": lid, "expectedVersion": version, "clientId": id(Entity::Client, *client_id)?.0, "terms": terms(tm),
-                            "schedule": schedule.as_deref().map(installments), "notes": notes, "reason": reason }),
-                )
+                let mut args = json!({ "loanId": lid, "expectedVersion": version, "clientId": id(Entity::Client, *client_id)?.0, "terms": terms(tm),
+                                       "schedule": schedule.as_deref().map(installments), "notes": notes, "reason": reason,
+                                       "reinvest": choices.reinvest });
+                if choices.add_capital > 0 {
+                    args["addCapital"] = json!(choices.add_capital);
+                }
+                ("loans:update", args)
             }
             DeleteLoan { id: local, reason } => {
                 let (lid, version) = id(Entity::Loan, *local)?;
@@ -518,6 +541,22 @@ fn instruction(i: Option<&Instruction>) -> Result<Value> {
     })
 }
 
+/// A new or edited loan's choices (0.15): its way of charging late fees, the
+/// part of its interest reinvested (an edit applies it from today on) and
+/// capital added in the same save ("Lend and add capital"; 0 for none).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LoanChoices {
+    pub fee_mode: FeeMode,
+    pub reinvest: u8,
+    pub add_capital: Cents,
+}
+
+/// The capital entry's note, as the cloud writes it.
+fn capital_note(s: &Store, client_id: i64) -> String {
+    let name = s.snapshot().ok().map(|snap| snap.client_name(client_id).to_string()).unwrap_or_default();
+    format!("Added to lend to {name}").trim().to_string()
+}
+
 /// Whether two settings differ in what the business shares through the
 /// cloud (not this PC's language, theme, charts or sidebar).
 pub fn business_differs(a: &Settings, b: &Settings) -> bool {
@@ -535,6 +574,8 @@ pub fn business_differs(a: &Settings, b: &Settings) -> bool {
         || a.default_rate != b.default_rate
         || a.default_frequency != b.default_frequency
         || a.late_fee_rate != b.late_fee_rate
+        || a.late_fee_mode != b.late_fee_mode
+        || a.default_reinvest != b.default_reinvest
         || a.receipt_after_payment != b.receipt_after_payment
         || a.receipt_after_loan != b.receipt_after_loan
 }
@@ -557,6 +598,10 @@ fn settings(conn: &Connection, s: &Settings) -> Result<Value> {
                            "address": s.receipt_client.address },
         "receiptShow": show,
         "receiptFormat": s.receipt_format.key(),
+        "lateFeeMode": s.late_fee_mode.key(),
+        "defaultReinvest": s.default_reinvest,
+        "lateFeeMode": s.late_fee_mode.key(),
+        "defaultReinvest": s.default_reinvest,
         "receiptText": wording,
         "currencyCode": s.currency_code,
         "numberStyle": s.number_style.key(),
@@ -598,6 +643,51 @@ mod tests {
 
     fn payments(s: &Store) -> usize {
         s.snapshot().unwrap().payments.len()
+    }
+
+    /// 0.15: "Lend and add capital" saves both; the loan keeps its way and
+    /// reinvest choice; reinvested interest lands in available capital; and
+    /// the cloud gets the same choices.
+    #[test]
+    fn a_loan_keeps_its_choices_and_lends_with_added_capital() {
+        use crate::domain::installments::FeeMode;
+        use crate::domain::loans::{Frequency, LoanTerms, Method};
+        use crate::domain::money::Rate;
+        let on = today();
+        let mut s = Store::in_memory();
+        let client = s.create_client(&juan()).unwrap();
+        s.add_capital(CapitalKind::Contribution, 400_000, on, "", on).unwrap();
+        let terms = LoanTerms {
+            principal: 1_000_000,
+            rate: Rate(100_000),
+            interest_period: Frequency::Monthly,
+            frequency: Frequency::Monthly,
+            start_date: on,
+            method: Method::Declining,
+            installments: Some(5),
+            late_fee_rate: Rate(50_000),
+        };
+        let lend = |choices| Change::NewLoan { client_id: client, terms: terms.clone(), schedule: None, notes: String::new(), choices };
+        // Short of 6,000: refused without the capital, saved with it.
+        assert!(s.save(&lend(LoanChoices::default()), on).is_err());
+        let choices = LoanChoices { fee_mode: FeeMode::Monthly, reinvest: 60, add_capital: 600_000 };
+        let (id, _) = s.save(&lend(choices.clone()), on).unwrap();
+        let snap = s.snapshot().unwrap();
+        let loan = snap.loan(id.unwrap()).unwrap();
+        assert_eq!(loan.late_fee_mode, FeeMode::Monthly);
+        assert_eq!(loan.reinvest, vec![crate::domain::portfolio::Reinvest { from: on, percent: 60 }]);
+        assert_eq!(snap.book.balances_on(on).capital, 0, "4,000 + 6,000 added, 10,000 lent");
+        // The cloud gets the same.
+        let mut linked = linked();
+        let client = linked.snapshot().unwrap().clients[0].id;
+        let (_, q) = linked
+            .save(&Change::NewLoan { client_id: client, terms: terms.clone(), schedule: None, notes: String::new(), choices }, on)
+            .unwrap();
+        let args = &q.unwrap().op.args;
+        assert_eq!(
+            (args["lateFeeMode"].as_str(), args["reinvest"].as_i64(), args["addCapital"].as_i64()),
+            (Some("monthly"), Some(60), Some(600_000))
+        );
     }
 
     #[test]

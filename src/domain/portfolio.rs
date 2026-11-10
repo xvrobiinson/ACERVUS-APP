@@ -169,6 +169,24 @@ pub struct LoanBook {
     /// The installment schedule and stored splits; `None` for interest-only
     /// loans.
     pub plan: Option<Plan>,
+    /// Interest reinvested, from each date (none: all kept as profit).
+    pub reinvest: Vec<Reinvest>,
+}
+
+/// From `from` on, `percent` of each payment's interest is reinvested: it
+/// goes to available capital instead of available interest (2026-11-10, the
+/// owner's choice per loan; the web's `Reinvest`). Late fees always stay in
+/// available interest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Reinvest {
+    pub from: NaiveDate,
+    pub percent: u8,
+}
+
+/// The part of `interest` reinvested on `on`, by the loan's choices.
+pub fn reinvested(choices: &[Reinvest], on: NaiveDate, interest: Cents) -> Cents {
+    let percent = choices.iter().rfind(|c| c.from <= on).map_or(0, |c| c.percent);
+    if percent == 0 { 0 } else { crate::domain::money::div_round_half_up(interest as i128 * i128::from(percent), 100) as Cents }
 }
 
 impl LoanBook {
@@ -340,6 +358,19 @@ impl Summary {
 }
 
 impl Book {
+    /// Interest reinvested by payments dated `from` to `to` (inclusive).
+    pub fn reinvested_between(&self, from: NaiveDate, to: NaiveDate) -> Cents {
+        self.loans
+            .iter()
+            .flat_map(|l| {
+                l.payments
+                    .iter()
+                    .filter(move |p| p.paid_on >= from && p.paid_on <= to)
+                    .map(move |p| reinvested(&l.reinvest, p.paid_on, p.interest))
+            })
+            .sum()
+    }
+
     /// Every cash movement in the order it is applied.
     fn moves(&self) -> Vec<(NaiveDate, u8, Move)> {
         let mut out = Vec::new();
@@ -360,8 +391,9 @@ impl Book {
         for l in &self.loans {
             out.push((l.facts.start_date, 3, Move::Lend(l.facts.principal)));
             for p in &l.payments {
-                out.push((p.paid_on, 1, Move::Add(Account::Capital, p.principal)));
-                out.push((p.paid_on, 1, Move::Add(Account::Interest, p.interest + p.fee)));
+                let back = reinvested(&l.reinvest, p.paid_on, p.interest);
+                out.push((p.paid_on, 1, Move::Add(Account::Capital, p.principal + back)));
+                out.push((p.paid_on, 1, Move::Add(Account::Interest, p.interest - back + p.fee)));
             }
         }
         // Stable: equal keys keep their recorded order.
@@ -670,6 +702,7 @@ mod tests {
             },
             payments: Vec::new(),
             plan: None,
+            reinvest: Vec::new(),
         }
     }
 

@@ -337,6 +337,10 @@ pub struct Settings {
     pub receipt_show: ReceiptShow,
     /// Payment receipts: the full schedule or the next payment (the business's).
     pub receipt_format: ReceiptFormat,
+    /// New loans' way of charging late fees and part of their interest
+    /// reinvested (the business's, 0.15).
+    pub late_fee_mode: crate::domain::installments::FeeMode,
+    pub default_reinvest: u8,
     /// The paper this PC prints receipts on (this PC's own).
     pub receipt_paper: Paper,
     pub theme: ThemePref,
@@ -380,6 +384,8 @@ impl Default for Settings {
             receipt_client: ReceiptClientFields::default(),
             receipt_show: ReceiptShow::default(),
             receipt_format: ReceiptFormat::Full,
+            late_fee_mode: crate::domain::installments::FeeMode::Installment,
+            default_reinvest: 0,
             receipt_paper: Paper::Letter,
             theme: ThemePref::Light,
             chart_range: ChartRange::SixMonths,
@@ -435,6 +441,8 @@ impl Settings {
             },
             receipt_show: ReceiptShow::from_values(ReceiptShow::KEYS.map(|(key, _)| flag(key, true))),
             receipt_format: get("receipt_format").map(ReceiptFormat::from_key).unwrap_or_default(),
+            late_fee_mode: get("late_fee_mode").map(crate::domain::installments::FeeMode::from_key).unwrap_or_default(),
+            default_reinvest: get("default_reinvest").and_then(|v| v.parse::<u8>().ok()).unwrap_or(0).min(100),
             receipt_paper: get("receipt_paper").map(Paper::from_key).unwrap_or_default(),
             theme: match get("theme") {
                 Some("dark") => ThemePref::Dark,
@@ -474,6 +482,8 @@ impl Settings {
             ("receipt_client_phone", b(self.receipt_client.phone)),
             ("receipt_client_address", b(self.receipt_client.address)),
             ("receipt_format", self.receipt_format.key().into()),
+            ("late_fee_mode", self.late_fee_mode.key().into()),
+            ("default_reinvest", self.default_reinvest.to_string()),
             ("receipt_paper", self.receipt_paper.key().into()),
             ("theme", self.theme.key().into()),
             ("chart_range", self.chart_range.key().into()),

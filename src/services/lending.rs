@@ -19,7 +19,7 @@ use crate::database::repositories::{
 use crate::domain::installments::{self, Applied, Installment, Instruction, PlanError, PlanPayment, PlanState};
 use crate::domain::ledger::{Allocation, ContractStatus, PaymentError, PaymentInput, reallocate};
 use crate::domain::loans::LoanTerms;
-use crate::domain::money::{Cents, MoneyFormat, RATE_SCALE, div_round_half_up};
+use crate::domain::money::{Cents, MoneyFormat};
 use crate::i18n::t;
 use crate::services::settings::Settings;
 use crate::tr;
@@ -109,7 +109,8 @@ pub(super) fn fee_changes_for(stored: &[LateFee], loan: &Loan, state: &PlanState
     for x in &state.installments {
         let Some(on) = x.fee_assessed_on else { continue };
         // The fee as assessed, before any waiver.
-        let amount = div_round_half_up(x.fee_base as i128 * rate.0 as i128, RATE_SCALE as i128) as Cents;
+        // Every fee charged on it, before any waiver (more than one with way B).
+        let amount = x.fee_assessed;
         match stored.iter().find(|f| f.loan_id == loan.id && f.seq == x.seq) {
             None => out.push(FeeChange::Add { seq: x.seq, on, base: x.fee_base, amount }),
             Some(f) if (f.assessed_on, f.base_amount, f.rate, f.amount) != (on, x.fee_base, rate, amount) => {
@@ -241,6 +242,29 @@ impl Store {
 
     /// Creates a loan. For installment loans `schedule` is the reviewed
     /// schedule, possibly edited by hand; `None` uses the proposed one.
+    /// Sets a loan's late-fee way and reinvest choices (0.15).
+    pub fn set_loan_choices(
+        &mut self,
+        loan_id: i64,
+        mode: crate::domain::installments::FeeMode,
+        reinvest: &[crate::domain::portfolio::Reinvest],
+    ) -> Result<()> {
+        loans::set_choices(&self.conn, loan_id, mode, reinvest)
+    }
+
+    /// Reinvests `percent` of the loan's interest from `today` on (a change
+    /// the same day replaces that day's); nothing when already in force.
+    pub fn change_reinvest(&mut self, loan_id: i64, percent: u8, today: NaiveDate) -> Result<()> {
+        let loan = loans::get(&self.conn, loan_id)?.ok_or_else(|| anyhow!("loan {loan_id} not found"))?;
+        let now = loan.reinvest.iter().rfind(|c| c.from <= today).map_or(0, |c| c.percent);
+        if now == percent && loan.reinvest.iter().all(|c| c.from <= today) {
+            return Ok(());
+        }
+        let mut next: Vec<_> = loan.reinvest.iter().copied().filter(|c| c.from < today).collect();
+        next.push(crate::domain::portfolio::Reinvest { from: today, percent });
+        loans::set_choices(&self.conn, loan_id, loan.late_fee_mode, &next)
+    }
+
     pub fn create_loan_with_schedule(
         &mut self,
         client_id: i64,

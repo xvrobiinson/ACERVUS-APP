@@ -165,6 +165,11 @@ pub struct Settings {
     pub default_rate: i64,
     pub default_frequency: String,
     pub late_fee_rate: i64,
+    /// 0.15: new loans' way of charging late fees and interest reinvested.
+    #[serde(default)]
+    pub late_fee_mode: Option<String>,
+    #[serde(default)]
+    pub default_reinvest: Option<i64>,
     pub receipt_after_payment: bool,
     pub receipt_after_loan: bool,
     pub logo_url: Option<String>,
@@ -306,12 +311,23 @@ pub struct Loan {
     pub schedule_edited: bool,
     pub schedule: Vec<Installment>,
     pub late_fee_rate: i64,
+    /// 0.15: its way of charging late fees and interest reinvested.
+    #[serde(default)]
+    pub late_fee_mode: Option<String>,
+    #[serde(default)]
+    pub reinvest: Vec<ReinvestChoice>,
     pub start_date: Day,
     pub status: String,
     pub status_date: Option<Day>,
     pub notes: String,
     pub created_at: i64,
     pub version: i64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+pub struct ReinvestChoice {
+    pub from: Day,
+    pub percent: i64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]

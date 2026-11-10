@@ -143,6 +143,19 @@ Google Drive card (`ui/screens/sync.rs`); the businesses list shows only
 while none is chosen; "Delete this business" is in Settings › Business.
 Admins see a small ⇄ under the business name on the Overview.
 
+Money round (0.15, 2026-11-10, the owner approved the proposals at
+https://claude.ai/artifact/1Nx1BVFvq29LnuuXGJKpWn): each loan's way of
+charging late fees (`FeeMode`: installment, monthly, overdue, balance;
+`Plan::fee_mode`, `InstallmentState::fee_assessed`/`fee_charges`), its
+interest reinvested from a date (`Loan::reinvest`, `portfolio::Reinvest`,
+split in the cash accounts' moves; late fees stay profit), both stored in
+migration 9 and synced (`lateFeeMode`, `reinvest`, the settings'
+`lateFeeMode`/`defaultReinvest`), and "Lend and add capital"
+(`LoanChoices::add_capital`, `addCapital` to the cloud). The web engine
+(shared/domain) is cross-checked against these files by
+tools/engine-oracle in the PWA repo: regenerate its vectors after any engine
+change. MIN_DESKTOP_VERSION is 0.15.0.
+
 Motion and Customize (2026-11-03, approved and rolled out): the Overview can
 be arranged (blocks shown, hidden, reordered, half or full width; figures
 shown, hidden, reordered), saved as this PC's `overview_layout` setting.

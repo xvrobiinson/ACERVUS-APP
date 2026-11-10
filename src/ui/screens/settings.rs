@@ -500,6 +500,20 @@ impl VzApp {
             .map(|v| (Rate(*v), if *v == 0 { t("None", "Ninguno").to_string() } else { Rate(*v).percent_label() }))
             .collect();
         let fee_opts: Vec<(Rate, &str)> = fee_labels.iter().map(|(r, l)| (*r, l.as_str())).collect();
+        let fee_mode_opts: Vec<(crate::domain::installments::FeeMode, &str)> =
+            crate::domain::installments::FeeMode::ALL.iter().map(|m| (*m, m.label())).collect();
+        // A split set on the web (say 60%) shows as itself.
+        let other_split = format!("{}%", s.default_reinvest);
+        let mut reinvest_opts: Vec<(u8, &str)> = vec![
+            (0, t("Keep as profit", "Dejar como ganancia")),
+            (25, "25%"),
+            (50, "50%"),
+            (75, "75%"),
+            (100, t("Reinvest all", "Reinvertir todo")),
+        ];
+        if !reinvest_opts.iter().any(|(v, _)| *v == s.default_reinvest) {
+            reinvest_opts.insert(4, (s.default_reinvest, other_split.as_str()));
+        }
         let range_opts: Vec<(ChartRange, &str)> = ChartRange::ALL.iter().map(|r| (*r, r.label())).collect();
         let theme_opts = [(ThemePref::Light, t("Light", "Claro")), (ThemePref::Dark, t("Dark", "Oscuro"))];
         let paper_opts: Vec<(Paper, &str)> = Paper::ALL.iter().map(|p| (*p, p.label())).collect();
@@ -728,6 +742,24 @@ impl VzApp {
                     "Se cobra una vez sobre lo que falte cuando una cuota se atrasa. Cada préstamo conserva la tasa con que se hizo.",
                 )),
                 Segmented::pick("fee", fee_opts.iter().copied(), s.late_fee_rate, cx, |app, v, w, cx| app.update_settings(|s| s.late_fee_rate = v, w, cx)),
+            ))
+            .child(row(
+                &p,
+                t("How late fees are charged", "Cómo se cobra la mora"),
+                Some(t(
+                    "For new installment loans; each loan keeps the way it was made with.",
+                    "Para préstamos por cuotas nuevos; cada préstamo conserva la forma con que se hizo.",
+                )),
+                select("fee-mode", &fee_mode_opts, s.late_fee_mode, cx, |app, v, w, cx| app.update_settings(|s| s.late_fee_mode = v, w, cx)),
+            ))
+            .child(row(
+                &p,
+                t("Interest collected on new loans", "Interés cobrado en préstamos nuevos"),
+                Some(t(
+                    "The part reinvested goes to available capital; the rest stays profit. Each loan can change it. Late fees stay profit.",
+                    "La parte reinvertida va al capital disponible; el resto queda como ganancia. Cada préstamo puede cambiarlo. Las moras quedan como ganancia.",
+                )),
+                select("reinvest", &reinvest_opts, s.default_reinvest, cx, |app, v, w, cx| app.update_settings(|s| s.default_reinvest = v, w, cx)),
             ))
             .child(
                 v_flex()

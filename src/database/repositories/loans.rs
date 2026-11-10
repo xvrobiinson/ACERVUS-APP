@@ -6,10 +6,11 @@ use rusqlite::{Connection, OptionalExtension, Row, params};
 
 use super::Day;
 use crate::database::now_timestamp;
-use crate::domain::installments::Installment;
+use crate::domain::installments::{FeeMode, Installment};
 use crate::domain::ledger::ContractStatus;
 use crate::domain::loans::{Frequency, LoanTerms, Method};
 use crate::domain::money::Rate;
+use crate::domain::portfolio::Reinvest;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Loan {
@@ -24,10 +25,37 @@ pub struct Loan {
     pub status_date: Option<NaiveDate>,
     pub notes: String,
     pub created_at: String,
+    /// Its way of charging late fees (version 0.15).
+    pub late_fee_mode: FeeMode,
+    /// What part of its interest is reinvested, from each date (0.15).
+    pub reinvest: Vec<Reinvest>,
+}
+
+/// The reinvest choices as stored: "2026-11-10:60;2026-12-01:0".
+pub fn encode_reinvest(choices: &[Reinvest]) -> String {
+    choices.iter().map(|c| format!("{}:{}", c.from.format("%Y-%m-%d"), c.percent)).collect::<Vec<_>>().join(";")
+}
+
+pub fn decode_reinvest(text: &str) -> Vec<Reinvest> {
+    text.split(';')
+        .filter_map(|part| {
+            let (day, percent) = part.trim().split_once(':')?;
+            Some(Reinvest { from: NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()?, percent: percent.parse::<u8>().ok()?.min(100) })
+        })
+        .collect()
+}
+
+/// Sets a loan's late-fee way and reinvest choices.
+pub fn set_choices(conn: &Connection, loan_id: i64, mode: FeeMode, reinvest: &[Reinvest]) -> Result<()> {
+    conn.execute(
+        "UPDATE loans SET late_fee_mode = ?1, reinvest = ?2 WHERE id = ?3",
+        params![mode.key(), encode_reinvest(reinvest), loan_id],
+    )?;
+    Ok(())
 }
 
 const COLUMNS: &str = "id, client_id, principal, period_rate, interest_period, frequency, method, installments, schedule_edited, \
-                       late_fee_rate, start_date, status, status_date, notes, created_at";
+                       late_fee_rate, start_date, status, status_date, notes, created_at, late_fee_mode, reinvest";
 
 fn from_row(r: &Row<'_>) -> rusqlite::Result<Loan> {
     let bad = |what: &str, v: String| {
@@ -61,6 +89,8 @@ fn from_row(r: &Row<'_>) -> rusqlite::Result<Loan> {
         status_date: status_date.map(|d| d.0),
         notes: r.get(13)?,
         created_at: r.get(14)?,
+        late_fee_mode: FeeMode::from_key(&r.get::<_, String>(15)?),
+        reinvest: decode_reinvest(&r.get::<_, String>(16)?),
     })
 }
 

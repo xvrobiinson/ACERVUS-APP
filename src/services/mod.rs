@@ -159,6 +159,7 @@ fn plan_for(loan: &Loan, fees: &[LateFee], payments: Vec<PlanPayment>) -> Option
         schedule: loan.schedule.clone(),
         edited: loan.schedule_edited,
         fee_rate: loan.terms.late_fee_rate,
+        fee_mode: loan.late_fee_mode,
         waived: fees.iter().filter(|f| f.loan_id == loan.id && f.is_waived()).map(|f| f.seq).collect(),
         payments,
     })
@@ -182,6 +183,7 @@ fn build_book(loans: &[Loan], payments: &[Payment], capital: &[CapitalTx], entri
                 facts: loan_facts(l),
                 payments: payments.iter().filter(|p| p.loan_id == l.id && !p.is_reversed()).map(Payment::fact).collect(),
                 plan: plan_for(l, fees, stored_plan_payments(l.id, payments)),
+                reinvest: l.reinvest.clone(),
             })
             .collect(),
         capital: capital.iter().map(CapitalTx::fact).collect(),

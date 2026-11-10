@@ -97,11 +97,12 @@ impl RuleLine {
 }
 
 /// Tags a line can hold, with what each stands for.
-pub fn tags() -> [(&'static str, &'static str); 8] {
+pub fn tags() -> [(&'static str, &'static str); 9] {
     [
         ("{amount}", t("amount lent", "monto prestado")),
         ("{interest}", t("interest per payment", "interés por pago")),
         ("{late_fee}", t("late fee rate", "tasa de mora")),
+        ("{late_fee_how}", t("how the late fee is charged", "cómo se cobra la mora")),
         ("{conversion}", t("how the rate converts", "cómo se convierte la tasa")),
         ("{example_payment}", t("example payment (interest only)", "pago de ejemplo (solo interés)")),
         ("{example_capital}", t("its capital part", "su parte de capital")),
@@ -122,8 +123,8 @@ pub fn default_rules(set: RuleSet) -> Vec<RuleLine> {
             RuleLine::new(
                 When::LateFee,
                 t(
-                    "An installment not fully paid by its due date is charged a late fee of {late_fee} of what is still unpaid, once, the day after.",
-                    "Una cuota que no se pague completa a su vencimiento tiene un cargo por mora de {late_fee} de lo que falte, una sola vez, al día siguiente.",
+                    "An installment not fully paid by its due date is charged a late fee of {late_fee} {late_fee_how}.",
+                    "Una cuota que no se pague completa a su vencimiento tiene un cargo por mora de {late_fee} {late_fee_how}.",
                 ),
             ),
             RuleLine::new(
@@ -179,6 +180,25 @@ pub fn default_payment_footer() -> String {
 /// Loan receipts had no closing line.
 pub fn default_loan_footer() -> String {
     String::new()
+}
+
+/// "{late_fee_how}": how a loan's late fee is charged, by its way (0.15; the
+/// web's `feeHow`). Today's way reads as the built-in line always did.
+pub fn fee_how(mode: crate::domain::installments::FeeMode) -> &'static str {
+    use crate::domain::installments::FeeMode;
+    match mode {
+        FeeMode::Installment => t("of what is still unpaid, once, the day after", "de lo que falte, una sola vez, al día siguiente"),
+        FeeMode::Monthly => t(
+            "of what is still unpaid, the day after and again every 30 days while it stays unpaid",
+            "de lo que falte, al día siguiente y otra vez cada 30 días mientras siga sin pagar",
+        ),
+        FeeMode::Overdue => {
+            t("of everything overdue on the loan, once, the day after", "de todo lo atrasado del préstamo, una sola vez, al día siguiente")
+        }
+        FeeMode::Balance => {
+            t("of all the capital still owed, once, the day after", "de todo el capital que se debe, una sola vez, al día siguiente")
+        }
+    }
 }
 
 /// Receipt wording. `None` everywhere is the built-in text.
@@ -397,6 +417,8 @@ pub struct Tags {
     pub amount: String,
     pub interest: String,
     pub late_fee: String,
+    /// How this loan's late fee is charged (0.15), the end of a sentence.
+    pub late_fee_how: String,
     pub conversion: String,
     pub example_payment: String,
     pub example_capital: String,
@@ -410,6 +432,7 @@ impl Tags {
             ("{amount}", &self.amount),
             ("{interest}", &self.interest),
             ("{late_fee}", &self.late_fee),
+            ("{late_fee_how}", &self.late_fee_how),
             ("{conversion}", &self.conversion),
             ("{example_payment}", &self.example_payment),
             ("{example_capital}", &self.example_capital),
@@ -467,7 +490,12 @@ mod tests {
 
     #[test]
     fn conditional_lines_print_only_when_they_apply() {
-        let tags = Tags { late_fee: "5%".into(), conversion: "x".into(), ..Default::default() };
+        let tags = Tags {
+            late_fee: "5%".into(),
+            late_fee_how: fee_how(crate::domain::installments::FeeMode::Installment).into(),
+            conversion: "x".into(),
+            ..Default::default()
+        };
         let lines = default_rules(RuleSet::Declining);
         assert_eq!(lines_for(&lines, &tags, false, false, false).len(), 2);
         let all = lines_for(&lines, &tags, true, true, true);

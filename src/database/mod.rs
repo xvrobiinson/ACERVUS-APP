@@ -18,12 +18,13 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (6, include_str!("migrations/0006_income_entries.sql")),
     (7, include_str!("migrations/0007_cloud_sync.sql")),
     (8, include_str!("migrations/0008_paid_with.sql")),
+    (9, include_str!("migrations/0009_loan_choices.sql")),
 ];
 
 /// Migrations that rebuild tables and must run with foreign keys disabled.
 const REBUILDS: &[i64] = &[2, 4, 6];
 
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// The tables every Acervus database has had since version 1 (backups
 /// from older versions are upgraded after they are restored).

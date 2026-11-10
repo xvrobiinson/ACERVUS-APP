@@ -18,7 +18,7 @@ use super::{
     value,
 };
 use crate::app::{Route, VzApp};
-use crate::domain::installments::{self, Installment};
+use crate::domain::installments::{self, FeeMode, Installment};
 use crate::domain::ledger::{ContractStatus, LoanFacts};
 use crate::domain::loans::{Frequency, LoanTerms, MAX_INSTALLMENTS, MAX_PERIOD_RATE, Method, RATE_PRESETS};
 use crate::domain::money::{Cents, MoneyFormat, ParseError, Rate, parse_money};
@@ -26,6 +26,7 @@ use crate::domain::portfolio::{Account, Book};
 use crate::i18n::t;
 use crate::services::{Record, Snapshot};
 use crate::sync::change::Change;
+use crate::sync::change::LoanChoices;
 use crate::tr;
 use crate::ui::components::{icon, kv, num};
 use crate::ui::kit::{Button, Segmented, Stat};
@@ -87,6 +88,12 @@ pub struct LoanForm {
     reason: Entity<InputState>,
     /// New loans: open the printable loan receipt after saving.
     print_receipt: bool,
+    /// 0.15: its way of charging late fees (new loans take the business's)
+    /// and the part of its interest reinvested (an edit applies it from
+    /// today on); the percent typed for a split.
+    fee_mode: FeeMode,
+    reinvest: u8,
+    reinvest_pct: Entity<InputState>,
     error: Option<String>,
     show_errors: bool,
     _subs: Vec<Subscription>,
@@ -236,6 +243,14 @@ impl LoanForm {
                 None => s,
             }
         });
+        let fee_mode = existing.as_ref().map_or(snap.settings.late_fee_mode, |l| l.late_fee_mode);
+        let today = crate::utils::dates::today();
+        let reinvest = existing
+            .as_ref()
+            .map_or(snap.settings.default_reinvest, |l| l.reinvest.iter().rfind(|c| c.from <= today).map_or(0, |c| c.percent));
+        let reinvest_pct = cx.new(|cx| {
+            InputState::new(window, cx).default_value(if reinvest > 0 && reinvest < 100 { reinvest.to_string() } else { "50".into() })
+        });
         let frequency = existing.as_ref().map_or(snap.settings.default_frequency, |l| l.terms.frequency);
         let interest_period = existing.as_ref().map_or(frequency, |l| l.terms.interest_period);
         let method = existing.as_ref().map_or(Method::Declining, |l| l.terms.method);
@@ -278,6 +293,9 @@ impl LoanForm {
             editing,
             reason,
             print_receipt,
+            fee_mode,
+            reinvest,
+            reinvest_pct,
             error: None,
             show_errors: false,
             _subs: subs,
@@ -305,21 +323,6 @@ impl LoanForm {
 
     pub fn client_id(&self) -> Option<i64> {
         self.client_id
-    }
-
-    /// Opens the capital form with what this loan is short of; once it saved,
-    /// the form sees the new capital.
-    fn add_capital(&mut self, short: Cents, on: chrono::NaiveDate, window: &mut Window, cx: &mut Context<Self>) {
-        let form = cx.entity().downgrade();
-        let app = self.app.clone();
-        let on_saved: crate::ui::kit::Callback = Rc::new(move |_, cx| {
-            let Some(snap) = app.upgrade().map(|a| a.read(cx).snap.clone()) else { return };
-            let _ = form.update(cx, |f, cx| {
-                f.snap = snap;
-                cx.notify();
-            });
-        });
-        let _ = self.app.update(cx, |app, cx| app.open_capital_for(short, on, on_saved, window, cx));
     }
 
     /// Opens the client form on top of this one and returns it. Everything
@@ -455,6 +458,20 @@ impl LoanForm {
     /// Validates and saves; closes the dialog only on success. Bound to the
     /// dialog's Confirm action (Enter) and to the primary button.
     pub fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.submit_with(0, window, cx);
+    }
+
+    /// The part of interest reinvested as chosen (a split takes the percent typed).
+    fn reinvest_now(&self, cx: &App) -> u8 {
+        if self.reinvest == 0 || self.reinvest == 100 {
+            return self.reinvest;
+        }
+        value(&self.reinvest_pct, cx).trim().parse::<u8>().unwrap_or(50).clamp(1, 99)
+    }
+
+    /// Saves; `add_capital` > 0 adds that much capital on the loan's date in
+    /// the same save ("Lend and add capital", 0.15).
+    fn submit_with(&mut self, add_capital: Cents, window: &mut Window, cx: &mut Context<Self>) {
         self.show_errors = true;
         let parsed = self.parse(cx);
         let (Some(client_id), Some(terms), None) = (self.client_id, parsed.terms, parsed.start_err) else {
@@ -477,10 +494,11 @@ impl LoanForm {
         let editing = self.editing;
         let print = self.print_receipt && editing.is_none();
         let remember = self.print_receipt;
+        let choices = LoanChoices { fee_mode: self.fee_mode, reinvest: self.reinvest_now(cx), add_capital };
         let result = self.app.update(cx, |app, cx| {
             let change = match editing {
-                Some(id) => Change::EditLoan { id, client_id, terms: terms.clone(), schedule, notes, reason },
-                None => Change::NewLoan { client_id, terms: terms.clone(), schedule, notes },
+                Some(id) => Change::EditLoan { id, client_id, terms: terms.clone(), schedule, notes, reason, choices },
+                None => Change::NewLoan { client_id, terms: terms.clone(), schedule, notes, choices },
             };
             match app.save(change, window, cx) {
                 Ok(saved) => {
@@ -698,10 +716,8 @@ impl LoanForm {
                     }
                 }))
                 .when(terms.late_fee_rate.0 > 0, |d| {
-                    d.child(bullet(tr!(
-                        "Late fee: {fee} of what is still unpaid on an installment, charged once the day after its due date.",
-                        "Cargo por mora: {fee} de lo que falte por pagar de una cuota, cobrado una vez el día después de su vencimiento."
-                    )))
+                    let how = crate::services::receipt_text::fee_how(self.fee_mode);
+                    d.child(bullet(tr!("Late fee: {fee} {how}.", "Cargo por mora: {fee} {how}.")))
                 })
                 .when(terms.method == Method::Declining, |d| {
                     d.child(bullet(
@@ -914,17 +930,24 @@ impl Render for LoanForm {
                     principal_err,
                 )
                 .when_some(short, |d, short| {
+                    let s = money.format(short);
+                    let editing = self.editing.is_some();
                     d.child(
-                        div()
-                            .id("add-capital")
-                            .typeset(text::LABEL)
-                            .text_color(p.accent_text)
-                            .cursor_pointer()
-                            .child({
-                                let s = money.format(short);
-                                tr!("Add {s} of capital", "Agregar {s} de capital")
-                            })
-                            .on_click(cx.listener(move |this, _, w, cx| this.add_capital(short, on, w, cx))),
+                        h_flex().child(
+                            Button::new("lend-and-add-capital")
+                                .small()
+                                .primary()
+                                .label(if editing {
+                                    tr!("Save and add {s} of capital", "Guardar y agregar {s} de capital")
+                                } else {
+                                    tr!("Lend and add {s} of capital", "Prestar y agregar {s} de capital")
+                                })
+                                .tooltip(t(
+                                    "Saves the capital, dated the loan's day, and the loan together.",
+                                    "Guarda el capital, con la fecha del préstamo, y el préstamo juntos.",
+                                ))
+                                .on_click(cx.listener(move |this, _, w, cx| this.submit_with(short, w, cx))),
+                        ),
                     )
                 }),
             )
@@ -964,11 +987,49 @@ impl Render for LoanForm {
                             &p,
                             t("Late fee", "Cargo por mora"),
                             Input::new(&self.late_fee).suffix(div().text_color(p.muted).child("%")),
-                            Some(t("Once per overdue installment", "Una vez por cuota atrasada").to_string()),
+                            Some(self.fee_mode.label().to_string()),
                             parsed.fee_err.clone(),
                         )))
                     }),
             )
+            .child(field(
+                &p,
+                t("Interest collected", "Interés cobrado"),
+                h_flex()
+                    .gap(px(space::S))
+                    .items_center()
+                    .flex_wrap()
+                    .child(Segmented::pick(
+                        "loan-reinvest",
+                        [(0u8, t("Keep as profit", "Dejar como ganancia")), (100, t("Reinvest", "Reinvertir")), (50, t("Split", "Dividir"))],
+                        match self.reinvest {
+                            0 => 0,
+                            100 => 100,
+                            _ => 50,
+                        },
+                        cx,
+                        |this: &mut Self, k, _, cx| {
+                            this.reinvest = k;
+                            cx.notify();
+                        },
+                    ))
+                    .when(self.reinvest > 0 && self.reinvest < 100, |d| {
+                        d.child(div().w(px(90.)).child(Input::new(&self.reinvest_pct).suffix(div().text_color(p.muted).child("%"))))
+                            .child(div().typeset(text::CAPTION).text_color(p.muted).child(t("reinvested", "reinvertido")))
+                    }),
+                Some(
+                    if self.editing.is_some() {
+                        t(
+                            "Which account each payment's interest goes to. A change applies to payments from today on. Late fees stay profit.",
+                            "A qué cuenta va el interés de cada pago. Un cambio aplica a los pagos de hoy en adelante. Las moras quedan como ganancia.",
+                        )
+                    } else {
+                        t("Which account each payment's interest goes to. Late fees stay profit.", "A qué cuenta va el interés de cada pago. Las moras quedan como ganancia.")
+                    }
+                    .to_string(),
+                ),
+                None,
+            ))
             .child(field(&p, t("Notes", "Notas"), Textarea::new(&self.notes), None, None))
             .when(self.editing.is_none(), |d| {
                 d.child(

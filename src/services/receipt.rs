@@ -406,6 +406,8 @@ pub struct LoanReceipt {
     pub conversion: Option<String>,
     pub frequency: Frequency,
     pub late_fee_rate: Rate,
+    /// Its way of charging late fees (0.15).
+    pub late_fee_mode: crate::domain::installments::FeeMode,
     /// Interest each period while the capital is unchanged (interest only).
     pub interest_per_period: Cents,
     /// Interest only: the interest after half the capital is repaid, for
@@ -439,6 +441,7 @@ pub fn loan_data(snap: &Snapshot, loan_id: i64) -> Option<LoanReceipt> {
         conversion: terms.period_rate().conversion_note(),
         frequency: terms.frequency,
         late_fee_rate: terms.late_fee_rate,
+        late_fee_mode: loan.late_fee_mode,
         interest_per_period: terms.interest_per_period(),
         interest_after_half: terms.period_rate().interest(terms.principal - terms.principal / 2),
         schedule: if terms.method.has_installments() { loan.schedule.clone() } else { Vec::new() },
@@ -1179,6 +1182,7 @@ pub fn render_loan(d: &LoanReceipt, snap: &Snapshot) -> String {
         amount: plain(d.principal),
         interest: plain(d.interest_per_period),
         late_fee: d.late_fee_rate.percent_label(),
+        late_fee_how: super::receipt_text::fee_how(d.late_fee_mode).to_string(),
         conversion: d.conversion.clone().unwrap_or_default(),
         example_payment: plain(d.interest_per_period + half),
         example_capital: plain(half),

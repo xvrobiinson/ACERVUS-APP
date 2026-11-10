@@ -296,8 +296,9 @@ pub fn apply(conn: &mut Connection, snap: &Snapshot) -> Result<()> {
     for l in &snap.loans {
         tx.execute(
             "INSERT INTO loans (id, client_id, principal, period_rate, interest_period, frequency, method, installments,
-                                schedule_edited, late_fee_rate, start_date, status, status_date, notes, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                                schedule_edited, late_fee_rate, start_date, status, status_date, notes, created_at,
+                                late_fee_mode, reinvest)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             params![
                 l.record_no,
                 client_no(&l.client_id)?,
@@ -313,7 +314,14 @@ pub fn apply(conn: &mut Connection, snap: &Snapshot) -> Result<()> {
                 l.status,
                 l.status_date.map(|d| d.0.to_string()),
                 l.notes,
-                stamp(l.created_at)
+                stamp(l.created_at),
+                crate::domain::installments::FeeMode::from_key(l.late_fee_mode.as_deref().unwrap_or_default()).key(),
+                crate::database::repositories::loans::encode_reinvest(
+                    &l.reinvest
+                        .iter()
+                        .map(|c| crate::domain::portfolio::Reinvest { from: c.from.0, percent: c.percent.clamp(0, 100) as u8 })
+                        .collect::<Vec<_>>()
+                ),
             ],
         )
         .with_context(|| format!("loan {}", l.record_no))?;
@@ -432,6 +440,8 @@ pub fn apply(conn: &mut Connection, snap: &Snapshot) -> Result<()> {
             ("receipt_after_payment", b(s.receipt_after_payment)),
             ("receipt_after_loan", b(s.receipt_after_loan)),
             ("receipt_format", s.receipt_format.as_deref().unwrap_or("full")),
+            ("late_fee_mode", s.late_fee_mode.as_deref().unwrap_or("installment")),
+            ("default_reinvest", &s.default_reinvest.unwrap_or(0).clamp(0, 100).to_string()),
         ];
         for (k, v) in pairs {
             crate::database::repositories::settings::set(&tx, k, v)?;

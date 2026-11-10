@@ -576,7 +576,12 @@ impl VzApp {
                                 let every = terms.frequency.label().to_lowercase();
                                 d.child(kv(&p, t("Installments", "Cuotas"), sel(format!("{n} · {every}"))))
                                     .when(terms.late_fee_rate.0 > 0 && view.late_fees, |d| {
-                                        d.child(kv(&p, t("Late fee", "Cargo por mora"), sel(terms.late_fee_rate.percent_label())))
+                                        let way = loan.late_fee_mode.label().to_lowercase();
+                                        d.child(kv(
+                                            &p,
+                                            t("Late fee", "Cargo por mora"),
+                                            sel(format!("{} · {way}", terms.late_fee_rate.percent_label())),
+                                        ))
                                     })
                                     .when(loan.schedule_edited, |d| {
                                         d.child(kv(&p, t("Schedule", "Calendario"), sel(t("Set by hand", "Fijado a mano"))))
@@ -584,6 +589,12 @@ impl VzApp {
                             })
                             .when(!installment_loan, |d| {
                                 d.child(kv(&p, t("Interest per period now", "Interés por período ahora"), sel(money.format(interest_now))))
+                            })
+                            // Where its interest goes (0.15; admins).
+                            .when(self.can(crate::sync::wire::Need::Manage), |d| {
+                                let today = self.today;
+                                let pct = loan.reinvest.iter().rfind(|c| c.from <= today).map_or(0, |c| c.percent);
+                                d.child(kv(&p, t("Interest", "Interés"), sel(reinvest_label(pct))))
                             })
                             .child(kv(&p, t("Next payment", "Próximo pago"), sel(next_line)))
                             .when(q.overdue_amount > 0, |d| {
@@ -989,5 +1000,14 @@ impl VzApp {
             .children(self.pending_on_loan(id, w == Width::Compact, cx))
             .child(body)
             .into_any_element()
+    }
+}
+
+/// Where a loan's collected interest goes (0.15; the web's `reinvestLabel`).
+fn reinvest_label(percent: u8) -> String {
+    match percent {
+        0 => t("Kept as profit", "Se queda como ganancia").to_string(),
+        100 => t("Reinvested into capital", "Se reinvierte en capital").to_string(),
+        p => crate::tr!("{p}% reinvested, the rest kept as profit", "{p}% se reinvierte, el resto queda como ganancia"),
     }
 }

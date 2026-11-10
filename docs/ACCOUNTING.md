@@ -72,12 +72,23 @@ week; 1% a day paid weekly is 7% a week.
 
 - An installment that is not fully paid by its due date is charged a **late
   fee** on the next day: the loan's late-fee rate (5% by default, set per loan;
-  0% means none) × what is still unpaid on it (capital + interest).
-  10,000 in 5 at 10%: if only 1,000 of the first 3,000 is paid, the fee is
-  5% × 2,000 = 100.
-- It is charged **once per installment**, never again for the same
-  installment and never on the fee itself. The database enforces one fee per
-  installment.
+  0% means none) × a base that depends on the loan's **way** (version 0.15;
+  the business picks the way for new loans, and each loan keeps its own):
+
+  | Way | Base | When |
+  | --- | --- | --- |
+  | A, `installment` (the only way before 0.15) | what is still unpaid on that installment (capital + interest) | once, the day after its due date |
+  | B, `monthly` | the same | the day after its due date, then again every 30 days while it stays unpaid |
+  | C, `overdue` | everything overdue on the loan that day (capital + interest of every installment due on or before it) | once per missed due date |
+  | D, `balance` | all the capital still owed on the loan | once per missed due date |
+
+  10,000 in 5 at 10%, the first paid on time and the second (2,800) not paid:
+  A 5% × 2,800 = 140; B 140, and 140 again 30 days later; C 140, and on the
+  third due date 5% × (2,800 + 2,800) = 280 (unpaid capital keeps the third
+  installment's interest at 800); D 5% × 8,000 = 400 on each missed due date.
+- A fee is never charged on a fee. One fee record is kept per installment;
+  with way B its amount is every charge added up. A fee stops once the
+  installment is paid, and no fee is charged after a loan is defaulted.
 - Fees are brought up to date when the app starts, within a minute of the
   date changing while it is open, and whenever a loan or payment changes. If an earlier payment is added
   or edited so an installment was in fact paid on time, its fee is removed;
@@ -251,12 +262,24 @@ Cash is kept in two accounts:
 - **Available capital** receives capital added and the capital part of every
   payment. Withdrawals come out of it.
 - **Available interest** receives the interest and fees of every payment.
+- **Reinvested interest** (version 0.15): each loan says what part of its
+  interest is reinvested (0%, keep as profit, by default; the business picks
+  the default for new loans), from a date. That part of each payment's
+  interest goes to available capital instead, by the choice in force on the
+  payment's date: 60% of 1,000 of interest puts 600 in capital and 400 in
+  interest. A change applies to payments from that day on. Late fees always
+  stay in available interest. Interest earned, income received, portfolio
+  value and gain are unchanged; capital invested doesn't rise (it is profit
+  kept in the business, not new money).
 
 Movements between and out of them:
 
 - **New loan:** paid from available capital first; if that is not enough, the
   rest comes from available interest. Capital repaid always returns to
-  available capital.
+  available capital. When both together are short, the loan is refused, or
+  (version 0.15, "Lend and add capital") the missing amount is added as a
+  capital contribution dated the loan's day, saved together with the loan;
+  no account ever goes below zero.
 - **Expense** (money used outside the business, from *New record*): paid from
   the account you choose. Only that account goes down; loans and interest
   earned are unchanged. An expense from capital lowers capital invested; an
