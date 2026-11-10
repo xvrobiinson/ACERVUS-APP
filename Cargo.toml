@@ -27,7 +27,7 @@ gpui-kit = "0.8.0"
 # Same version GPUI already builds; used to shrink an uploaded logo.
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 log = "0.4.34"
-rusqlite = { version = "0.40.2", features = ["bundled", "backup"] }
+rusqlite = { version = "0.41.1", features = ["bundled", "backup"] }
 thiserror = "2.0.21"
 # Both already built for GPUI. Used by the Windows file window (file_picker.rs).
 raw-window-handle = "0.6.2"

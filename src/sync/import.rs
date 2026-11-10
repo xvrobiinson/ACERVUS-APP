@@ -87,7 +87,7 @@ fn prepare_copy(source: &Path, copy: &Path, timezone: &str, today: NaiveDate) ->
 /// Every row of `sql` as a JSON object (column name → value; files left out).
 fn rows(db: &Connection, sql: &str) -> Result<Vec<Map<String, Value>>> {
     let mut stmt = db.prepare(sql)?;
-    let names: Vec<String> = stmt.column_names().iter().map(|n| n.to_string()).collect();
+    let names: Vec<String> = stmt.column_names().map(|n| n.to_string()).collect();
     let found = stmt.query_map([], |r| {
         let mut m = Map::new();
         for (i, name) in names.iter().enumerate() {
