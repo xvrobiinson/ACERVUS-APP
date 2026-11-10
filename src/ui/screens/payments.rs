@@ -77,7 +77,7 @@ impl VzApp {
 
         // Wide rows label the receipt button and show the reversed pill;
         // narrower ones keep three icon buttons.
-        let actions_w = if wide { 240. } else { 96. };
+        let actions_w = if wide { 272. } else { 128. };
         let manage = self.can(Need::Manage);
         let view = self.view();
         let body = if !view.history {
@@ -173,6 +173,7 @@ impl VzApp {
                                         this.open_receipt(pid, w, cx)
                                     })),
                             )
+                            .children(self.wa_receipt_button(pid, cx))
                             .when(!rev && manage, |d| {
                                 d.child(row_icon_button(
                                     ("pl-edit", pid as u64),

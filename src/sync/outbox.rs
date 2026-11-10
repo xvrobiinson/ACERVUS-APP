@@ -179,6 +179,12 @@ pub fn retry(conn: &Connection, op_id: &str, args: Option<&Value>) -> Result<()>
     Ok(())
 }
 
+/// Takes back a change not sent yet (a collector's Undo). False when it
+/// isn't waiting here any more.
+pub fn drop_unsent(conn: &Connection, op_id: &str) -> Result<bool> {
+    Ok(conn.execute("DELETE FROM outbox WHERE op_id = ?1 AND refused_at IS NULL", [op_id])? > 0)
+}
+
 /// Removes a refused change for good, after a person decided to.
 pub fn discard(conn: &Connection, op_id: &str) -> Result<()> {
     conn.execute("DELETE FROM outbox WHERE op_id = ?1 AND refused_at IS NOT NULL", [op_id])?;

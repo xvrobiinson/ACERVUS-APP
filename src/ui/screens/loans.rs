@@ -1,5 +1,6 @@
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::Input;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -425,11 +426,26 @@ impl VzApp {
                         h_flex()
                             .gap(px(space::M))
                             .child(div().typeset(text::TITLE).text_color(p.text).child(sel(tr!("Loan #{id}", "Préstamo #{id}"))))
-                            .child(status_detail_pill(&p, status, &q, today)),
+                            .child(
+                                div()
+                                    .id("loan-status")
+                                    .child(status_detail_pill(&p, status, &q, today))
+                                    .tooltip(move |w, cx| Tooltip::new(status.hint()).build(w, cx)),
+                            ),
                     )
-                    .child(div().text_color(p.muted).child(self.loan_subtitle(&p, &loan, cx))),
+                    .child(div().text_color(p.muted).child(self.loan_subtitle(&p, &loan, cx)))
+                    // A closed loan says what its status means.
+                    .when(matches!(status, DisplayStatus::Defaulted | DisplayStatus::Restructured), |d| {
+                        d.child(div().max_w(px(560.)).typeset(text::CAPTION).text_color(p.muted).child(status.hint()))
+                    }),
             )
-            .child(h_flex().gap(px(space::S)).flex_none().children(self.loan_actions(id, loan.status, w, cx)));
+            .child(
+                h_flex()
+                    .gap(px(space::S))
+                    .flex_none()
+                    .children(self.whatsapp_button(loan.client_id, Some(id), cx))
+                    .children(self.loan_actions(id, loan.status, w, cx)),
+            );
 
         let owes_label = match loan.status {
             ContractStatus::PaidOff => t("Paid off", "Saldado"),
@@ -840,7 +856,7 @@ impl VzApp {
         let ds = self.settings().date_style;
         let full = w >= Width::Wide;
         let split = w > Width::Compact;
-        let actions_w = if full { 190. } else { 140. };
+        let actions_w = if full { 222. } else { 172. };
         let manage = self.can(Need::Manage);
         let payments: Vec<_> = self.snap.payments_for_loan(id).cloned().collect();
         let view = self.view();
@@ -902,6 +918,7 @@ impl VzApp {
                         .gap(px(2.))
                         .when(reversed, |d| d.child(pill(p, t("Reversed", "Anulado"), Tone::Neutral)))
                         .child(if full { receipt.label(t("Receipt", "Recibo")) } else { receipt.tooltip(t("Receipt", "Recibo")) })
+                        .children(self.wa_receipt_button(pid, cx))
                         .when(!reversed && manage, |d| {
                             d.child(row_icon_button(
                                 ("pay-edit", pid as u64),

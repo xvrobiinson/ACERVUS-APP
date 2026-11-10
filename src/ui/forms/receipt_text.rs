@@ -37,6 +37,8 @@ pub struct ReceiptTextForm {
     loan_footer: Entity<InputState>,
     error: Option<String>,
     saved: bool,
+    /// The business's WhatsApp messages, kept as they are (their own page).
+    wa: [Option<String>; 5],
     _subs: Vec<Subscription>,
 }
 
@@ -75,6 +77,7 @@ impl ReceiptTextForm {
             loan_footer,
             error: None,
             saved: false,
+            wa: text.wa.clone(),
             _subs: subs,
         }
     }
@@ -121,6 +124,7 @@ impl ReceiptTextForm {
             lender_sign: custom(&self.lender_sign, receipt_text::default_lender_sign()),
             payment_footer: custom(&self.payment_footer, receipt_text::default_payment_footer()),
             loan_footer: custom(&self.loan_footer, receipt_text::default_loan_footer()),
+            wa: self.wa.clone(),
             ..Default::default()
         };
         for set in RuleSet::ALL {

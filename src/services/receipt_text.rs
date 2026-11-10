@@ -190,6 +190,83 @@ pub struct ReceiptText {
     pub lender_sign: Option<String>,
     pub payment_footer: Option<String>,
     pub loan_footer: Option<String>,
+    /// The business's own WhatsApp messages, by `WaMsg` (2026-11-10).
+    pub wa: [Option<String>; 5],
+}
+
+/// The WhatsApp messages a business can word itself (the web's
+/// src/lib/wa-messages.ts): three reminders, and a line before and after a
+/// receipt's figures. Tags in braces are filled in when it is sent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WaMsg {
+    Tomorrow,
+    Today,
+    Late,
+    ReceiptTop,
+    ReceiptEnd,
+}
+
+/// The tags a WhatsApp message can hold.
+pub const WA_TAGS: [&str; 5] = ["client", "amount", "date", "loan", "business"];
+pub const WA_MAX: usize = 1000;
+
+impl WaMsg {
+    pub const ALL: [WaMsg; 5] = [WaMsg::Tomorrow, WaMsg::Today, WaMsg::Late, WaMsg::ReceiptTop, WaMsg::ReceiptEnd];
+
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            WaMsg::Tomorrow => "receipt_wa_tomorrow",
+            WaMsg::Today => "receipt_wa_today",
+            WaMsg::Late => "receipt_wa_late",
+            WaMsg::ReceiptTop => "receipt_wa_top",
+            WaMsg::ReceiptEnd => "receipt_wa_end",
+        }
+    }
+
+    /// The built-in wording, with tags (what the app sent before it could
+    /// be changed).
+    pub fn default_text(self) -> String {
+        let thanks = format!("{}\n— {{business}}", t("Thank you!", "¡Gracias!"));
+        match self {
+            WaMsg::Tomorrow => format!(
+                "{} {thanks}",
+                t(
+                    "Hi {client}, a friendly reminder that your installment of {amount} on loan #{loan} is due tomorrow, {date}.",
+                    "Hola {client}, le recordamos que su cuota de {amount} del préstamo #{loan} vence mañana, {date}."
+                )
+            ),
+            WaMsg::Today => format!(
+                "{} {thanks}",
+                t(
+                    "Hi {client}, your installment of {amount} on loan #{loan} is due today, {date}.",
+                    "Hola {client}, su cuota de {amount} del préstamo #{loan} vence hoy, {date}."
+                )
+            ),
+            WaMsg::Late => format!(
+                "{} {thanks}",
+                t(
+                    "Hi {client}, loan #{loan} has {amount} past due since {date}. Please get in touch with us to bring it up to date.",
+                    "Hola {client}, el préstamo #{loan} tiene {amount} atrasado desde el {date}. Por favor comuníquese con nosotros para ponerse al día."
+                )
+            ),
+            WaMsg::ReceiptTop => String::new(),
+            WaMsg::ReceiptEnd => t("Thank you for your payment!", "¡Gracias por su pago!").to_string(),
+        }
+    }
+}
+
+/// Fills a message's tags; unknown ones stay as written.
+pub fn fill_wa(template: &str, tags: &[(&str, String)]) -> String {
+    tags.iter().fold(template.to_string(), |s, (k, v)| s.replace(&format!("{{{k}}}"), v))
+}
+
+/// Line breaks are kept (a message has lines); other control characters go.
+fn multi_line(s: &str) -> String {
+    s.replace("\r\n", "\n").chars().map(|c| if c.is_control() && c != '\n' { ' ' } else { c }).collect::<String>().trim().to_string()
 }
 
 /// Stored values start with this; anything else (missing or empty) means
@@ -234,6 +311,10 @@ impl ReceiptText {
     pub fn loan_footer(&self) -> String {
         self.loan_footer.clone().unwrap_or_else(default_loan_footer)
     }
+    /// A WhatsApp message: the business's own wording, else the built-in.
+    pub fn wa(&self, m: WaMsg) -> String {
+        self.wa[m.index()].clone().unwrap_or_else(|| m.default_text())
+    }
 
     pub fn from_map(get: impl Fn(&str) -> Option<String>) -> Self {
         let mut rules: [Option<Vec<RuleLine>>; 3] = Default::default();
@@ -255,6 +336,7 @@ impl ReceiptText {
             lender_sign: decode(get("receipt_lender_sign").as_deref()),
             payment_footer: decode(get("receipt_payment_footer").as_deref()),
             loan_footer: decode(get("receipt_loan_footer").as_deref()),
+            wa: WaMsg::ALL.map(|m| decode(get(m.key()).as_deref())),
         }
     }
 
@@ -273,6 +355,9 @@ impl ReceiptText {
             });
             out.push((set.key(), v.unwrap_or_default()));
         }
+        for m in WaMsg::ALL {
+            out.push((m.key(), self.wa[m.index()].as_ref().map(|s| format!("{CUSTOM}{}", multi_line(s))).unwrap_or_default()));
+        }
         out
     }
 
@@ -290,6 +375,9 @@ impl ReceiptText {
         }
         if too_long(&self.payment_footer, 300) || too_long(&self.loan_footer, 300) {
             return Some(t("A closing line is too long (300 characters at most)", "Una línea final es muy larga (máximo 300 caracteres)"));
+        }
+        if self.wa.iter().flatten().any(|s| s.chars().count() > WA_MAX) {
+            return Some(t("A message is too long (1000 characters at most)", "Un mensaje es muy largo (máximo 1000 caracteres)"));
         }
         for lines in self.rules.iter().flatten() {
             if lines.len() > 20 {
@@ -385,5 +473,36 @@ mod tests {
         let all = lines_for(&lines, &tags, true, true, true);
         assert_eq!(all.len(), 5);
         assert!(all[2].contains("late fee of 5% of what"));
+    }
+
+    #[test]
+    fn whatsapp_messages_keep_their_lines_and_fill_their_tags() {
+        let mut w = ReceiptText::default();
+        assert!(w.wa(WaMsg::Tomorrow).contains("{amount}"), "built-in text until the business writes its own");
+        w.wa[WaMsg::Late.index()] = Some(
+            "Hola {client},
+ya pasó el {date}.
+{business}"
+                .into(),
+        );
+        let pairs: std::collections::HashMap<_, _> = w.to_pairs().into_iter().collect();
+        assert_eq!(
+            pairs["receipt_wa_late"],
+            "=Hola {client},
+ya pasó el {date}.
+{business}"
+        );
+        assert_eq!(pairs["receipt_wa_today"], "", "unchanged ones stay built-in");
+        let back = ReceiptText::from_map(|k| pairs.get(k).cloned());
+        assert_eq!(back, w);
+        let tags = [("client", "Marta".to_string()), ("date", "Nov 10".to_string()), ("business", "Préstamos Valdez".to_string())];
+        assert_eq!(
+            fill_wa(&back.wa(WaMsg::Late), &tags),
+            "Hola Marta,
+ya pasó el Nov 10.
+Préstamos Valdez"
+        );
+        w.wa[WaMsg::Today.index()] = Some("x".repeat(WA_MAX + 1));
+        assert!(w.problem().is_some());
     }
 }

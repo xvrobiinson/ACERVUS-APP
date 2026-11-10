@@ -33,6 +33,8 @@ pub struct Palette {
     pub positive_tint: Hsla,
     pub warning: Hsla,
     pub warning_tint: Hsla,
+    /// Amber as a fill (bars), lighter than the words' amber in light.
+    pub warning_fill: Hsla,
     pub negative: Hsla,
     pub negative_tint: Hsla,
     /// Icon chips that tell stats apart. Never a money state.
@@ -164,7 +166,7 @@ impl Palette {
     pub fn figure(&self) -> FigureColors {
         FigureColors {
             fill: self.surface,
-            edge: if self.dark { hexa(0xFFFFFF, 0.08) } else { hexa(0x000000, 0.06) },
+            edge: self.border,
             ink: self.text,
             mute: self.muted,
             cents: self.muted,
@@ -173,55 +175,43 @@ impl Palette {
         }
     }
 
+    /// The clean look (2026-11-09, the owner's pick from a drawing): the
+    /// header sits on the plain page, so its words are the page's and its
+    /// pills (search, the sections, the bell) are white (dark grey in dark)
+    /// with a thin edge.
     pub fn hero(&self) -> HeroColors {
-        if self.dark {
-            HeroColors {
-                ink: hex(0xFFFFFF),
-                mute: hexa(0xFFFFFF, 0.7),
-                glass: hexa(0xFFFFFF, 0.05),
-                glass_edge: hexa(0xFFFFFF, 0.1),
-                glass_hover: hexa(0xFFFFFF, 0.12),
-                rule: hexa(0xFFFFFF, 0.07),
-                bad: hex(0xFF8A8A),
-                good: hex(0x8FE8C2),
-                mark: hex(0xF1F2F3),
-                mark_ink: hex(0x111316),
-            }
-        } else {
-            // Dark words on the fog (2026-11-06): white measured 2.4:1 on
-            // it; these are 7:1 (ink) and 4.9:1 (mute, the date's line).
-            HeroColors {
-                ink: hex(0x16181B),
-                mute: hex(0x33373B),
-                glass: hexa(0xFFFFFF, 0.16),
-                glass_edge: hexa(0xFFFFFF, 0.3),
-                glass_hover: hexa(0xFFFFFF, 0.3),
-                rule: hexa(0x000000, 0.1),
-                bad: hex(0x7A1010),
-                good: hex(0x0F5F3D),
-                mark: hex(0x16181B),
-                mark_ink: hex(0xFFFFFF),
-            }
+        HeroColors {
+            ink: self.text,
+            mute: self.muted,
+            glass: self.surface,
+            glass_edge: if self.dark { hex(0x2C3035) } else { hex(0xE6E6E3) },
+            glass_hover: self.hover,
+            rule: self.border,
+            bad: self.negative,
+            good: self.positive,
+            mark: self.text,
+            mark_ink: if self.dark { hex(0x15181B) } else { hex(0xFFFFFF) },
         }
     }
 
     pub fn light() -> Self {
         Self {
-            ground: hex(0xE6E9EB),
+            // The clean look (2026-11-09): a warm light grey page, white cards.
+            ground: hex(0xF2F2F0),
             surface: hex(0xFFFFFF),
             surface_top: hex(0xFFFFFF),
-            raised: hex(0xF6F7F8),
-            hover: hex(0xF1F3F4),
-            active: hex(0xE8EBED),
-            border: hex(0xE3E6E9),
-            rule: hex(0xEEF0F2),
-            control: hex(0xD3D7DA),
-            text: hex(0x1A1D21),
-            muted: hex(0x5F656B),
+            raised: hex(0xF6F6F4),
+            hover: hex(0xF0F0EE),
+            active: hex(0xE9E9E6),
+            border: hex(0xECECE9),
+            rule: hex(0xF0F0EE),
+            control: hex(0xD6D7D4),
+            text: hex(0x1C1E21),
+            muted: hex(0x5E6369),
             // 5:1 on white (was 3.9:1, under the 4.5:1 small text needs).
             faint: hex(0x6B7177),
-            accent: hex(0x3B3E41),
-            accent_hover: hex(0x25282B),
+            accent: hex(0x1C1E21),
+            accent_hover: hex(0x33373B),
             accent_tint: hex(0xECEEF0),
             accent_text: hex(0x25282B),
             on_accent: hex(0xFFFFFF),
@@ -229,10 +219,11 @@ impl Palette {
             positive_tint: hex(0xE3F3EB),
             warning: hex(0x8F5A00),
             warning_tint: hex(0xFBF0DC),
+            warning_fill: hex(0xE0A040),
             negative: hex(0xC03A3A),
             negative_tint: hex(0xFBEAEA),
-            info: hex(0x44627F),
-            info_tint: hex(0xE8EEF4),
+            info: hex(0x2F6FDB),
+            info_tint: hex(0xE5EEFB),
             neutral_tint: hex(0xEEF0F2),
             grid: hex(0xEEF0F2),
             chart_reference: hex(0x8A9096),
@@ -249,18 +240,18 @@ impl Palette {
 
     pub fn dark() -> Self {
         Self {
-            ground: hex(0x0B0C0E),
-            surface: hex(0x15181C),
-            surface_top: hex(0x191C21),
-            raised: hex(0x1B1F24),
-            hover: hex(0x21252B),
-            active: hex(0x292E35),
-            border: hex(0x262B32),
-            rule: hex(0x1F2329),
-            control: hex(0x363C44),
+            ground: hex(0x0E1012),
+            surface: hex(0x17191C),
+            surface_top: hex(0x1B1E22),
+            raised: hex(0x1D2024),
+            hover: hex(0x202327),
+            active: hex(0x26292E),
+            border: hex(0x24272B),
+            rule: hex(0x202327),
+            control: hex(0x363A40),
             text: hex(0xECEEF0),
-            muted: hex(0x9BA2A9),
-            faint: hex(0x858C93),
+            muted: hex(0xA3A8AE),
+            faint: hex(0x8C9197),
             accent: hex(0xECEEF0),
             accent_hover: hex(0xFFFFFF),
             accent_tint: hex(0x262B31),
@@ -270,10 +261,11 @@ impl Palette {
             positive_tint: hex(0x13281F),
             warning: hex(0xE9B35C),
             warning_tint: hex(0x2C2414),
+            warning_fill: hex(0xE9B35C),
             negative: hex(0xF07B7B),
             negative_tint: hex(0x331C1E),
-            info: hex(0x8FB3D9),
-            info_tint: hex(0x1A2430),
+            info: hex(0x6E9CEB),
+            info_tint: hex(0x16233A),
             neutral_tint: hex(0x22262C),
             grid: hex(0x1D2126),
             chart_reference: hex(0x6B7178),
@@ -426,7 +418,7 @@ pub mod space {
     pub const XXL: f32 = 32.0;
 }
 
-pub const RADIUS_CARD: f32 = 14.0;
+pub const RADIUS_CARD: f32 = 18.0;
 pub const RADIUS_CONTROL: f32 = 8.0;
 pub const RADIUS_CHIP: f32 = 6.0;
 pub const FONT: &str = font::TEXT;

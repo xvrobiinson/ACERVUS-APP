@@ -10,6 +10,7 @@ pub mod entry;
 pub mod loan;
 pub mod move_books;
 pub mod payment;
+pub mod profile;
 pub mod reason;
 pub mod receipt_text;
 pub mod reports;
@@ -17,6 +18,7 @@ pub mod reset;
 pub mod restore;
 pub mod schedule;
 pub mod update;
+pub mod wa_text;
 
 use std::cell::Cell;
 

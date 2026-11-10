@@ -10,7 +10,12 @@ mod drive;
 mod hero;
 pub(crate) mod motion;
 mod prefs;
+mod profile;
+pub(crate) use profile::initials_of;
+mod search;
+mod tour;
 mod update;
+mod whatsapp;
 pub(crate) use brand::mark;
 
 pub(crate) use cloud::Gate;
@@ -86,6 +91,8 @@ pub enum Route {
     Loans,
     Loan(i64),
     Payments,
+    /// What falls due when (2026-11-10).
+    Calendar,
     Analytics,
     Settings,
 }
@@ -137,6 +144,9 @@ pub struct VzApp {
     history: Vec<Route>,
     pub(crate) focus: FocusHandle,
     pub(crate) client_search: Entity<InputState>,
+    /// The top bar's search box, and whether it is open (`app/search.rs`).
+    pub(crate) global_search: Entity<InputState>,
+    pub(crate) search_open: bool,
     pub(crate) payment_search: Entity<InputState>,
     pub(crate) currency_select: Entity<SelectState<Vec<Choice>>>,
     pub(crate) receipt_name_input: Entity<InputState>,
@@ -147,6 +157,11 @@ pub struct VzApp {
     pub(crate) client_sort: crate::ui::kit::Sort<crate::ui::screens::clients::ClientColumn>,
     pub(crate) loan_sort: crate::ui::kit::Sort<crate::ui::screens::loans::LoanColumn>,
     pub(crate) loan_filter: LoanFilter,
+    /// The calendar's month or week, the day it shows, and the day picked
+    /// (None: today).
+    pub(crate) calendar_view: crate::ui::screens::calendar::CalendarView,
+    pub(crate) calendar_anchor: Option<chrono::NaiveDate>,
+    pub(crate) calendar_picked: Option<chrono::NaiveDate>,
     pub(crate) show_archived: bool,
     /// The Clients list's filter by collector.
     pub(crate) collector_filter: crate::ui::screens::collect::CollectorFilter,
@@ -172,6 +187,20 @@ pub struct VzApp {
     pub(crate) customizing: bool,
     /// The account menu (top right) is open.
     pub(crate) account_open: bool,
+    /// The welcome tour's step while it runs (`app/tour.rs`), whether it was
+    /// offered this session, where its targets were drawn, and whether the
+    /// account's preferences have answered (so the offer knows).
+    pub(crate) tour_at: Option<usize>,
+    /// Frames to wait on the Overview before a step whose target isn't
+    /// drawn moves on: the places come from the frame before.
+    pub(crate) tour_settle: u8,
+    /// The tour's last move was Back.
+    pub(crate) tour_back: bool,
+    pub(crate) tour_offered: bool,
+    /// The signed-in person's name and photo (`app/profile.rs`).
+    pub(crate) profile: profile::Profile,
+    pub(crate) tour_targets: crate::ui::kit::TourTargets,
+    pub(crate) prefs_known: bool,
     /// The business switcher under the sidebar's business name is open.
     pub(crate) brand_open: bool,
     /// Debug start screens only: the "+" button starts open.
@@ -189,7 +218,7 @@ pub struct VzApp {
 #[derive(Default)]
 struct Toasts {
     next: u64,
-    shown: Vec<(u64, SharedString, bool)>,
+    shown: Vec<(u64, SharedString, bool, Option<crate::ui::kit::ToastAction>)>,
 }
 
 /// The logo as an image the UI can draw, reusing `current` when the bytes
@@ -225,6 +254,8 @@ impl VzApp {
         i18n::set(snap.settings.language);
         window.set_window_title(crate::APP_NAME);
         let client_search = cx.new(|cx| InputState::new(window, cx));
+        let global_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder(t("Search clients & loans…", "Buscar clientes y préstamos…")));
         let payment_search = cx.new(|cx| InputState::new(window, cx));
         let receipt_name_input = cx.new(|cx| InputState::new(window, cx).default_value(snap.settings.receipt_name.clone()));
         let company_address_input = cx.new(|cx| InputState::new(window, cx).default_value(snap.settings.company_address.clone()));
@@ -263,6 +294,13 @@ impl VzApp {
                 if matches!(e, InputEvent::Change) {
                     cx.notify();
                 }
+            }),
+            // The top bar's search: results follow the typing; left empty,
+            // it folds back into its button.
+            cx.subscribe_in(&global_search, window, |this, input, e: &InputEvent, window, cx| match e {
+                InputEvent::Change => cx.notify(),
+                InputEvent::Blur if input.read(cx).value().trim().is_empty() => this.close_search(window, cx),
+                _ => {}
             }),
             cx.subscribe(&payment_search, |_, _, e: &InputEvent, cx| {
                 if matches!(e, InputEvent::Change) {
@@ -303,6 +341,8 @@ impl VzApp {
             history: Vec::new(),
             focus,
             client_search,
+            global_search,
+            search_open: false,
             payment_search,
             currency_select,
             receipt_name_input,
@@ -312,6 +352,9 @@ impl VzApp {
             client_sort: Default::default(),
             loan_sort: Default::default(),
             loan_filter: LoanFilter::default(),
+            calendar_view: Default::default(),
+            calendar_anchor: None,
+            calendar_picked: None,
             show_archived: false,
             collector_filter: Default::default(),
             team_view: None,
@@ -327,6 +370,13 @@ impl VzApp {
             derived: Default::default(),
             customizing: false,
             account_open: false,
+            tour_at: None,
+            tour_settle: 0,
+            tour_back: false,
+            tour_offered: false,
+            profile: Default::default(),
+            tour_targets: Default::default(),
+            prefs_known: false,
             brand_open: false,
             add_open_at_start: false,
             toasts: Default::default(),
@@ -380,6 +430,10 @@ impl VzApp {
                             app.sign_in.creating = start == "sign-up";
                         }
                         "payments" => app.navigate(Route::Payments, window, cx),
+                        "calendar" => app.navigate(Route::Calendar, window, cx),
+                        "tour" => app.start_tour(window, cx),
+                        "help" => app.open_help(window, cx),
+                        "wa-text" => app.open_wa_text_form(window, cx),
                         "settings-business" | "settings-formats" | "settings-data" | "settings-receipt-look" | "settings-receipt-parts" => {
                             use crate::ui::screens::settings::{SettingsPage, SettingsPanel};
                             app.navigate(Route::Settings, window, cx);
@@ -697,7 +751,10 @@ impl VzApp {
             return v.0.clone();
         }
         log::error!("write failed: {e:#}");
-        tr!("Something went wrong and nothing was saved. {e}", "Algo salió mal y no se guardó nada. {e}")
+        tr!(
+            "Something went wrong and nothing was saved. Try again; if it keeps happening, copy the diagnostics in Settings › Data and backups and send them to us. ({e})",
+            "Algo salió mal y no se guardó nada. Inténtalo de nuevo; si sigue pasando, copia el diagnóstico en Ajustes › Datos y copias y envíanoslo. ({e})"
+        )
     }
 
     pub fn notify_success(&self, msg: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
@@ -721,18 +778,50 @@ impl VzApp {
             .flex_col()
             .items_center()
             .gap(px(space::S))
-            .children(toasts.shown.iter().map(|(n, text, error)| crate::ui::kit::Toast::new(("toast", *n), text.clone()).error(*error)))
+            .children(toasts.shown.iter().map(|(n, text, error, action)| {
+                crate::ui::kit::Toast::new(("toast", *n), text.clone()).error(*error).action(action.clone())
+            }))
     }
 
     /// Shows a message at the bottom of the window for a moment. The same
     /// message again replaces the one showing; at most three show at once.
     fn toast(&self, text: SharedString, error: bool, window: &mut Window, cx: &mut App) {
+        self.toast_with(text, error, None, window, cx)
+    }
+
+    /// A message with a button (Undo): pressing it runs `run` once and
+    /// takes the message away.
+    pub fn notify_with_action(
+        &self,
+        msg: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        run: impl Fn(&mut Window, &mut App) + 'static,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let list = self.toasts.clone();
+        let msg: SharedString = msg.into();
+        let key = msg.clone();
+        let done = Rc::new(std::cell::Cell::new(false));
+        let run: crate::ui::kit::Callback = Rc::new(move |window, cx| {
+            if done.replace(true) {
+                return;
+            }
+            list.borrow_mut().shown.retain(|(_, x, ..)| *x != key);
+            window.refresh();
+            run(window, cx);
+        });
+        self.toast_with(msg, false, Some((label.into(), run)), window, cx)
+    }
+
+    fn toast_with(&self, text: SharedString, error: bool, action: Option<crate::ui::kit::ToastAction>, window: &mut Window, cx: &mut App) {
+        let stays = if action.is_some() { crate::ui::kit::Toast::shown_with_action() } else { crate::ui::kit::Toast::shown(error) };
         let n = {
             let mut t = self.toasts.borrow_mut();
             t.next += 1;
             let n = t.next;
-            t.shown.retain(|(_, x, _)| *x != text);
-            t.shown.push((n, text, error));
+            t.shown.retain(|(_, x, ..)| *x != text);
+            t.shown.push((n, text, error, action));
             if t.shown.len() > 3 {
                 t.shown.remove(0);
             }
@@ -741,7 +830,7 @@ impl VzApp {
         window.refresh();
         let (list, handle) = (self.toasts.clone(), window.window_handle());
         cx.spawn(async move |cx| {
-            cx.background_executor().timer(crate::ui::kit::Toast::shown(error)).await;
+            cx.background_executor().timer(stays).await;
             list.borrow_mut().shown.retain(|(m, ..)| *m != n);
             let _ = handle.update(cx, |_, window, _| window.refresh());
         })
@@ -1124,6 +1213,7 @@ impl Render for VzApp {
             Route::Loans => self.render_loans(window, cx),
             Route::Loan(id) => self.render_loan(id, window, cx),
             Route::Payments => self.render_payments(window, cx),
+            Route::Calendar => self.render_calendar(window, cx),
             Route::Analytics if self.can(Need::Manage) => self.render_analytics(window, cx),
             Route::Analytics => self.render_overview(window, cx),
             Route::Settings => {
@@ -1183,14 +1273,7 @@ impl Render for VzApp {
             .on_action(cx.listener(|this, _: &GoPayments, w, cx| this.navigate(Route::Payments, w, cx)))
             .on_action(cx.listener(|this, _: &GoAnalytics, w, cx| this.navigate(Route::Analytics, w, cx)))
             .on_action(cx.listener(|this, _: &GoSettings, w, cx| this.navigate(Route::Settings, w, cx)))
-            .on_action(cx.listener(|this, _: &FocusSearch, w, cx| {
-                if this.route != Route::Payments {
-                    this.navigate(Route::Clients, w, cx);
-                    this.client_search.update(cx, |s, cx| s.focus(w, cx));
-                } else {
-                    this.payment_search.update(cx, |s, cx| s.focus(w, cx));
-                }
-            }))
+            .on_action(cx.listener(|this, _: &FocusSearch, w, cx| this.open_search(w, cx)))
             .size_full()
             .flex()
             .flex_row()
@@ -1216,6 +1299,7 @@ impl Render for VzApp {
                     .map(|(n, _)| crate::ui::kit::SavedCheck::new(("saved-check", n as u64), t("Payment saved", "Pago guardado"))),
             )
             // Messages over everything, dialogs included; they take no clicks.
+            .children(self.render_tour(window, cx).map(|t| deferred(t).with_priority(3)))
             .child(deferred(self.render_toasts()).with_priority(2))
             .when(self.motion.splash, |d| d.child(crate::ui::kit::Splash::new("launch-splash")))
     }

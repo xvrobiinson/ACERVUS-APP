@@ -88,6 +88,61 @@ grows past the window's corners while the picture fades ("through the
 ring"). The sign-in screen and the business welcome show the hero's
 picture (`ui::pictures`) behind one solid card.
 
+Clean look (2026-11-09, the owner's pick from a drawing; replaces the
+hero picture and glass): a plain grey page (#F2F2F0; #0E1012 in dark) with
+white cards (#17191C) and thin edges, no picture, no panel. A bar on top
+(`app/hero.rs`) holds the mark and "Acervus.", the sections as pills (the
+open one filled black, white in dark; counts after the word), search in the
+middle, the bell and the account; the page starts with the greeting, the
+business (opens the switcher) · the date, and Arrange on the Overview.
+Graphite is the accent; colors only mean something (green paid, red late,
+amber waiting, blue lent and news). The Overview gained "Needs attention
+today" and "Loans by status" (`ui/screens/today.rs`); the old list is
+"Late and due soon". The web's twin is `src/clean.css`.
+Life (2026-11-10, the owner's list; Overview first): the six cards count
+up (`CountUp`, waiting at zero under the splash) and lift under the
+pointer (`GlassFigure::compact`), the money and status bars fill
+(`kit::motion::fill_in`), the growth chart's newest point glows and
+pulses (`charts/line.rs`), and search is a round magnifying glass beside
+the bell. Screens already fade in (`motion::rise`). The web does the same
+at the end of `src/clean.css`, with its screens fading instead of sliding.
+
+Usability round (2026-11-10, the owner approved all 14 review items and a
+welcome tour; both apps): status words explain themselves (`DisplayStatus::hint`,
+a tooltip on the loan page, a line for defaulted or restructured loans); the
+six cards have an "i" with what each means (`six_hint`); the payment form
+starts with oldest first and says in plain words what the amount pays
+(`covers_line`), the other ways under "Apply it another way", the charge
+under "+ Add a charge"; the loan form says the loan in one sentence
+(`loan_sentence`) and who each type suits (`Method::suits`); short of
+capital, "Add … of capital" opens the capital form over the loan form
+(`open_capital_for`, `CapitalForm::prefilled`); a new payment's toast offers
+Undo (`notify_with_action`; `kit::Toast` takes clicks only on its button;
+`kit::Callback`); clearer unexpected errors; the receipt pages are "Business
+and client details" and "What receipts show" (the format leads it); search
+is a real box from any screen (`app/search.rs`, Ctrl+F); Help
+(`open_help`, the account panel and Settings › About); the welcome tour
+(`kit::Tour`, `tour_mark` on what it points at, `app/tour.rs`: offered once,
+finished or skipped kept with the account as `prefs.tour`, replayed from the
+account panel, Settings and Help); and the Calendar (`Route::Calendar`,
+`services::calendar`). Debug starts: `calendar`, `tour`, `help`.
+Undo after a new payment goes by the change's operation id, never the PC's
+number for it (`undo_payment`: unsent, it leaves the outbox; sent, an
+admin's is deleted by its cloud id, a collector's is taken back with
+`payments:withdraw`). Profile (roadmap 41, `app/profile.rs`,
+`ui/forms/profile.rs`): the account panel shows the name, the email under it
+and the photo (`StatusAvatar::photo`), from `account:profile`; Edit profile
+changes them. Icons are bundled one by one (`icon_assets!` in main.rs): a new
+`IconName` draws nothing until it is listed there. WhatsApp buttons show
+WhatsApp's own mark in its green (`ui::pictures::whatsapp`,
+`assets/whatsapp.svg`). Settings › WhatsApp messages (`SettingsPanel::WhatsApp`,
+`ui/forms/wa_text.rs`): the business's own wording, `ReceiptText.wa` by
+`WaMsg`, stored as `receipt_wa_*` with the receipt wording (every form that
+saves `ReceiptText` must keep `wa`). Cloud sync is a status band and a
+Google Drive card (`ui/screens/sync.rs`); the businesses list shows only
+while none is chosen; "Delete this business" is in Settings › Business.
+Admins see a small ⇄ under the business name on the Overview.
+
 Motion and Customize (2026-11-03, approved and rolled out): the Overview can
 be arranged (blocks shown, hidden, reordered, half or full width; figures
 shown, hidden, reordered), saved as this PC's `overview_layout` setting.
@@ -149,7 +204,11 @@ the same springs. Searching and sorting rules live in `ui::lists`.
 - The user keeps the app open from `target/debug` or `target/release`.
   Windows locks a running exe, so close it, rebuild, and relaunch it after
   UI changes.
-- Receipts (`src/services/receipt.rs`) are US Letter pages. `PAYMENT_PAGE_ROWS`
+- Receipts (`src/services/receipt.rs`) are US Letter pages, except a payment
+  receipt on a receipt printer's roll (`Settings::receipt_paper`, this PC's:
+  58, 80 or 112 mm), which is always the short "next payment" receipt
+  (`render_next`, also the business's `receipt_format` choice, synced as
+  `receiptFormat`); the web's twin is `src/receipts/receipt.ts`. `PAYMENT_PAGE_ROWS`
   and `LOAN_PAGE_ROWS` were measured by printing sample receipts to PDF with
   headless Edge (`msedge --headless=new --no-pdf-header-footer
   --print-to-pdf=<out.pdf> file:///<receipt.html>`) from a scratch database.

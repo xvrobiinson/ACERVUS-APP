@@ -18,10 +18,17 @@ pub enum Block {
     Money,
     Attention,
     Recent,
+    /// Today's WhatsApp reminders (2026-11-09).
+    Reminders,
+    /// The clean look (2026-11-09): up to three things to deal with today.
+    Today,
+    /// The clean look: the loans in each state, as a bar and a list.
+    Status,
 }
 
 impl Block {
-    pub const ALL: [Block; 5] = [Block::Figures, Block::Growth, Block::Money, Block::Attention, Block::Recent];
+    pub const ALL: [Block; 8] =
+        [Block::Figures, Block::Growth, Block::Today, Block::Status, Block::Recent, Block::Attention, Block::Money, Block::Reminders];
 
     pub fn key(self) -> &'static str {
         match self {
@@ -30,6 +37,9 @@ impl Block {
             Block::Money => "money",
             Block::Attention => "attention",
             Block::Recent => "recent",
+            Block::Reminders => "reminders",
+            Block::Today => "today",
+            Block::Status => "status",
         }
     }
 
@@ -38,8 +48,11 @@ impl Block {
             Block::Figures => t("Key figures", "Cifras clave"),
             Block::Growth => t("Portfolio growth", "Crecimiento de la cartera"),
             Block::Money => t("Where your money is", "Dónde está tu dinero"),
-            Block::Attention => t("Needs attention", "Requieren atención"),
+            Block::Attention => t("Late and due soon", "Atrasados y por vencer"),
             Block::Recent => t("Recent payments", "Pagos recientes"),
+            Block::Reminders => t("WhatsApp reminders", "Recordatorios por WhatsApp"),
+            Block::Today => t("Needs attention today", "Requiere atención hoy"),
+            Block::Status => t("Loans by status", "Préstamos por estado"),
         }
     }
 
@@ -108,7 +121,7 @@ impl Default for OverviewLayout {
         Self {
             blocks: Block::ALL.to_vec(),
             hidden: Vec::new(),
-            half: vec![Block::Growth, Block::Money, Block::Attention, Block::Recent],
+            half: vec![Block::Growth, Block::Today, Block::Status, Block::Recent, Block::Attention, Block::Money],
             figures: Figure::ALL.to_vec(),
             hidden_figures: Vec::new(),
         }
@@ -274,55 +287,56 @@ fn place<T: Copy + PartialEq>(all: &mut Vec<T>, moved: T, onto: T) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use Block::*;
 
-    const ALL: [Block; 5] = Block::ALL;
+    const ALL: [Block; 8] = Block::ALL;
 
     #[test]
     fn default_rows_match_the_shipped_overview() {
         let l = OverviewLayout::default();
-        assert_eq!(l.rows(&ALL), vec![vec![Block::Figures], vec![Block::Growth, Block::Money], vec![Block::Attention, Block::Recent]]);
-        // A collector has no chart or money card: the lists still pair up.
-        let collector = [Block::Figures, Block::Attention, Block::Recent];
-        assert_eq!(l.rows(&collector), vec![vec![Block::Figures], vec![Block::Attention, Block::Recent]]);
+        assert_eq!(l.rows(&ALL), vec![vec![Figures], vec![Growth, Today], vec![Status, Recent], vec![Attention, Money], vec![Reminders]]);
+        // A collector has no chart or money card: the rest still pair up.
+        let collector = [Figures, Today, Status, Attention, Recent];
+        assert_eq!(l.rows(&collector), vec![vec![Figures], vec![Today, Status], vec![Recent, Attention]]);
     }
 
     #[test]
     fn round_trips_and_survives_odd_lines() {
         let mut l = OverviewLayout::default();
-        l.set_shown(Block::Money, false);
-        l.set_half(Block::Growth, false);
-        l.drop_onto(Block::Recent, Block::Figures);
+        l.set_shown(Money, false);
+        l.set_half(Growth, false);
+        l.drop_onto(Recent, Figures);
         l.set_figure_shown(Figure::Overdue, false);
         l.nudge_figure(Figure::LentOut, -1, &Figure::ALL);
         assert_eq!(OverviewLayout::from_key(&l.key()), l);
         assert_eq!(OverviewLayout::from_key(""), OverviewLayout::default());
         // Unknown and repeated names are dropped; missing ones come back.
         let odd = OverviewLayout::from_key("blocks=recent,nope,recent;half=figures,money");
-        assert_eq!(odd.blocks, vec![Block::Recent, Block::Figures, Block::Growth, Block::Money, Block::Attention]);
-        assert_eq!(odd.half, vec![Block::Money]);
+        assert_eq!(odd.blocks, vec![Recent, Figures, Growth, Today, Status, Attention, Money, Reminders]);
+        assert_eq!(odd.half, vec![Money]);
     }
 
     #[test]
     fn a_lone_half_block_fills_its_row() {
         let mut l = OverviewLayout::default();
-        l.set_shown(Block::Recent, false);
-        assert_eq!(l.rows(&ALL), vec![vec![Block::Figures], vec![Block::Growth, Block::Money], vec![Block::Attention]]);
+        l.set_shown(Recent, false);
+        assert_eq!(l.rows(&ALL), vec![vec![Figures], vec![Growth, Today], vec![Status, Attention], vec![Money], vec![Reminders]]);
         // Halves pair with the next half, whatever they are.
         let mut l = OverviewLayout::default();
-        l.set_shown(Block::Money, false);
-        assert_eq!(l.rows(&ALL), vec![vec![Block::Figures], vec![Block::Growth, Block::Attention], vec![Block::Recent]]);
+        l.set_shown(Money, false);
+        assert_eq!(l.rows(&ALL), vec![vec![Figures], vec![Growth, Today], vec![Status, Recent], vec![Attention], vec![Reminders]]);
     }
 
     #[test]
     fn moving_skips_hidden_blocks_and_drops_land_in_place() {
         let mut l = OverviewLayout::default();
-        l.set_shown(Block::Money, false);
-        l.nudge(Block::Attention, -1, &ALL);
-        assert_eq!(l.blocks, vec![Block::Figures, Block::Attention, Block::Money, Block::Growth, Block::Recent]);
+        l.set_shown(Recent, false);
+        l.nudge(Attention, -1, &ALL);
+        assert_eq!(l.blocks, vec![Figures, Growth, Today, Attention, Recent, Status, Money, Reminders]);
         let mut l = OverviewLayout::default();
-        l.drop_onto(Block::Figures, Block::Money);
-        assert_eq!(l.blocks, vec![Block::Growth, Block::Money, Block::Figures, Block::Attention, Block::Recent]);
-        l.drop_onto(Block::Recent, Block::Growth);
-        assert_eq!(l.blocks, vec![Block::Recent, Block::Growth, Block::Money, Block::Figures, Block::Attention]);
+        l.drop_onto(Figures, Money);
+        assert_eq!(l.blocks, vec![Growth, Today, Status, Recent, Attention, Money, Figures, Reminders]);
+        l.drop_onto(Recent, Growth);
+        assert_eq!(l.blocks, vec![Recent, Growth, Today, Status, Attention, Money, Figures, Reminders]);
     }
 }

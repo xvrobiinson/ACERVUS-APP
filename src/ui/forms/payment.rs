@@ -63,6 +63,9 @@ pub struct PaymentForm {
     target_seq: Option<u32>,
     /// Option 2 with amounts chosen per installment.
     manual: bool,
+    /// The ways to apply it are showing (a payment applied another way, or
+    /// asked for with "Apply it another way"); otherwise oldest first.
+    other_way: bool,
     spread: Vec<(u32, Entity<InputState>)>,
     custom_principal: Entity<InputState>,
     custom_interest: Entity<InputState>,
@@ -71,6 +74,33 @@ pub struct PaymentForm {
     show_errors: bool,
     _subs: Vec<Subscription>,
     _per_loan: Vec<Subscription>,
+}
+
+/// What a payment pays, in plain words: "Pays installment 2 in full and
+/// RD$300.00 of installment 3." (the web's `covers`).
+fn covers_line(applied: &[Applied], before: &PlanState, money: &MoneyFormat) -> Option<String> {
+    let parts: Vec<String> = applied
+        .iter()
+        .map(|a| {
+            let paid = a.total();
+            let (k, full) = (a.seq, before.installments.iter().find(|x| x.seq == a.seq).is_none_or(|x| paid >= x.remaining()));
+            if full {
+                tr!("installment {k} in full", "la cuota {k} completa")
+            } else {
+                let paid = money.format(paid);
+                tr!("{paid} of installment {k}", "{paid} de la cuota {k}")
+            }
+        })
+        .collect();
+    let list = match parts.as_slice() {
+        [] => return None,
+        [one] => one.clone(),
+        [rest @ .., last] => {
+            let (rest, and) = (rest.join(", "), t("and", "y"));
+            format!("{rest} {and} {last}")
+        }
+    };
+    Some(tr!("Pays {list}.", "Paga {list}."))
 }
 
 /// Widths of the split preview's installment and status columns; the
@@ -154,10 +184,11 @@ impl PaymentForm {
         let custom_fee = money_input(custom.map(|x| x.fee), window, cx);
         let target = cx.new(|cx| SelectState::new(Vec::<Choice>::new(), None, window, cx));
         let option = match existing.as_ref().map(|x| x.mode) {
-            Some(AllocationMode::Auto) | Some(AllocationMode::Spread) => PayOption::Spread,
+            None | Some(AllocationMode::Auto) | Some(AllocationMode::Spread) => PayOption::Spread,
             Some(AllocationMode::Custom) => PayOption::Custom,
             _ => PayOption::Installment,
         };
+        let other_way = existing.as_ref().is_some_and(|x| x.mode != AllocationMode::Auto);
         let mut subs = vec![
             cx.subscribe_in(&loan, window, |this, _, ev: &SelectEvent<Vec<Choice>>, window, cx| {
                 let SelectEvent::Confirm(v) = ev;
@@ -197,6 +228,7 @@ impl PaymentForm {
             target,
             target_seq: existing.as_ref().and_then(|x| x.target_seq),
             manual: existing.as_ref().is_some_and(|x| x.mode == AllocationMode::Spread),
+            other_way,
             spread: Vec::new(),
             custom_principal,
             custom_interest,
@@ -441,7 +473,24 @@ impl PaymentForm {
                     } else {
                         tr!("Payment of {paid} recorded", "Pago de {paid} registrado")
                     };
-                    app.notify_success(msg, window, cx);
+                    // Undo, by the change as sent to the cloud (its operation id).
+                    match app.last_op() {
+                        Some(op) => {
+                            let me = cx.entity().downgrade();
+                            let local = (!collector).then_some(payment_id);
+                            app.notify_with_action(
+                                msg,
+                                t("Undo", "Deshacer"),
+                                move |window, cx| {
+                                    let op = op.clone();
+                                    let _ = me.update(cx, |app, cx| app.undo_payment(op, local, window, cx));
+                                },
+                                window,
+                                cx,
+                            );
+                        }
+                        None => app.notify_success(msg, window, cx),
+                    }
                     app.show_saved_check(cx);
                     app.mark_fresh(crate::app::motion::Fresh::Payment(payment_id));
                     if print {
@@ -560,8 +609,13 @@ impl PaymentForm {
 
         let open: Vec<_> =
             before.as_ref().map(|s| s.installments.iter().filter(|x| x.remaining() > 0).cloned().collect()).unwrap_or_default();
+        let covers = match (&preview, &before) {
+            (Some(Ok((applied, _))), Some(before)) => covers_line(applied, before, &money),
+            _ => None,
+        };
         let amount_input = |this: &Self, label: &str| {
             field(p, label, Input::new(&this.amount).prefix(div().text_color(p.muted).child(money.symbol.clone())), None, None)
+                .children(covers.clone().map(|c| div().typeset(text::CAPTION).text_color(p.muted).child(c)))
         };
         let quick = |id: &'static str, label: String, cents: Cents, cx: &mut Context<Self>| {
             Button::new(id).small().label(label).on_click(cx.listener(move |this, _, w, cx| this.set_amount(cents, w, cx)))
@@ -644,7 +698,7 @@ impl PaymentForm {
                         )
                         .into_any_element()
                 };
-                v_flex().gap(px(space::M)).child(mode).child(body).into_any_element()
+                v_flex().gap(px(space::M)).when(self.other_way, |d| d.child(mode)).child(body).into_any_element()
             }
             PayOption::Custom => {
                 let owed = |f: fn(&crate::domain::installments::InstallmentState) -> Cents| open.iter().map(f).sum::<Cents>();
@@ -765,7 +819,7 @@ impl PaymentForm {
             .gap(px(space::L))
             .children(error_banner(p, &self.error))
             .child(field(p, t("Loan", "Préstamo"), self.loan_control(p), None, None).children(summary))
-            .child(field(p, t("How to apply it", "Cómo aplicarlo"), options, None, None))
+            .when(self.other_way, |d| d.child(field(p, t("How to apply it", "Cómo aplicarlo"), options, None, None)))
             .child({
                 let date = div().w(px(DATE_WIDTH)).flex_none().child(field(
                     p,
@@ -781,6 +835,27 @@ impl PaymentForm {
                     field_row().child(grow_field(controls)).child(date).into_any_element()
                 }
             })
+            .child(
+                div()
+                    .id("other-way")
+                    .typeset(text::LABEL)
+                    .text_color(p.accent_text)
+                    .cursor_pointer()
+                    .child(if self.other_way {
+                        t("Back to oldest first", "Volver a lo más antiguo primero")
+                    } else {
+                        t("Apply it another way", "Aplicarlo de otra forma")
+                    })
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.other_way = !this.other_way;
+                        if !this.other_way {
+                            this.option = PayOption::Spread;
+                            this.manual = false;
+                        }
+                        this.error = None;
+                        cx.notify();
+                    })),
+            )
             .child(field(p, t("Paid with", "Forma de pago"), self.paid_with_control(cx), None, None))
             .child(field(p, t("Note", "Nota"), Input::new(&self.notes), None, None))
             .child(panel(p).child(preview_el))
@@ -951,10 +1026,14 @@ impl Render for PaymentForm {
             .child(if self.show_fee {
                 field(
                     &p,
-                    t("Fee included in this payment", "Cargo incluido en este pago"),
+                    t("Late or extra charge", "Mora u otro cargo"),
                     Input::new(&self.fee).prefix(div().text_color(p.muted).child(money.symbol.clone())),
                     Some(
-                        t("Late or service fee, applied before interest", "Mora o cargo por servicio, se aplica antes del interés").into(),
+                        t(
+                            "A charge added to this payment, such as a late fee. It is paid before interest.",
+                            "Un cargo sumado a este pago, como la mora. Se paga antes del interés.",
+                        )
+                        .into(),
                     ),
                     if let Err(e) = &fee { Some(e.clone()) } else { None },
                 )
@@ -965,7 +1044,7 @@ impl Render for PaymentForm {
                     .typeset(text::LABEL)
                     .text_color(p.accent_text)
                     .cursor_pointer()
-                    .child(t("+ Include a fee", "+ Incluir un cargo"))
+                    .child(t("+ Add a charge", "+ Agregar un cargo"))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.show_fee = true;
                         cx.notify();

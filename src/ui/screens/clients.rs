@@ -378,6 +378,7 @@ impl VzApp {
                         d.child(div().typeset(text::CAPTION).text_color(p.muted).child(t("Collector", "Cobrador")))
                             .child(self.collector_menu("client-collector", id, cx))
                     })
+                    .children(self.whatsapp_button(id, None, cx))
                     .children(self.client_actions(id, archived, &st, w, cx)),
             );
 

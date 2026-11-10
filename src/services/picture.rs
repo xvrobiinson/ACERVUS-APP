@@ -64,6 +64,19 @@ pub fn logo_png(bytes: &[u8]) -> Result<Vec<u8>, PictureError> {
     Ok(out.into_inner())
 }
 
+/// A profile photo: the middle square of the picture, at most 400px, as a
+/// JPEG (the web's src/ui/profile.tsx does the same).
+pub fn profile_jpeg(bytes: &[u8]) -> Result<Vec<u8>, PictureError> {
+    let img = decode(bytes)?;
+    let side = img.width().min(img.height());
+    let square = img.crop_imm((img.width() - side) / 2, (img.height() - side) / 2, side, side);
+    let square = if side > 400 { square.resize_exact(400, 400, FilterType::Lanczos3) } else { square };
+    let rgb = square.to_rgb8();
+    let mut out = Vec::new();
+    JpegEncoder::new_with_quality(&mut out, 88).encode_image(&rgb).map_err(|_| PictureError::Unreadable)?;
+    Ok(out)
+}
+
 /// A client photo ready to store: a JPEG no larger than `PHOTO_SIDE` on its
 /// longest side, with transparent areas made white. Its bytes never appear
 /// in debug output or logs.
@@ -113,6 +126,16 @@ pub(crate) mod tests {
         let mut out = Cursor::new(Vec::new());
         img.write_to(&mut out, ImageFormat::Png).unwrap();
         out.into_inner()
+    }
+
+    #[test]
+    fn a_profile_photo_is_the_middle_square_at_most_400px() {
+        let out = profile_jpeg(&png(1200, 800)).unwrap();
+        let img = image::load_from_memory(&out).unwrap();
+        assert_eq!((img.width(), img.height()), (400, 400));
+        let small = image::load_from_memory(&profile_jpeg(&png(90, 60)).unwrap()).unwrap();
+        assert_eq!((small.width(), small.height()), (60, 60));
+        assert_eq!(profile_jpeg(b"not a picture"), Err(PictureError::Unreadable));
     }
 
     #[test]

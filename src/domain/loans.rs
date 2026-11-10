@@ -141,6 +141,24 @@ impl Method {
             Method::InterestOnly => t("Interest only", "Solo interés"),
         }
     }
+    /// Who the type suits, in one line (the web's `methodSuits`).
+    pub fn suits(self) -> &'static str {
+        match self {
+            Method::Declining => t(
+                "Suits most loans: payments get smaller as the capital comes down.",
+                "Sirve para la mayoría: las cuotas bajan a medida que baja el capital.",
+            ),
+            Method::Flat => t(
+                "The same payment every time, easy for the client to remember.",
+                "La misma cuota siempre, fácil de recordar para el cliente.",
+            ),
+            Method::InterestOnly => t(
+                "For open-ended loans: the client pays interest and repays the capital when they can.",
+                "Para préstamos sin plazo: el cliente paga interés y devuelve el capital cuando pueda.",
+            ),
+        }
+    }
+
     /// One sentence on how interest is worked out.
     pub fn explanation(self) -> &'static str {
         match self {

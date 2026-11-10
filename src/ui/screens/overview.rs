@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -26,7 +27,8 @@ use crate::sync::wire::Need;
 use crate::tr;
 use crate::ui::components::{avatar, empty_state, icon, kbd, kv, sel};
 use crate::ui::kit::{
-    Button, ButtonSize, Card, Dropdown, DropdownItem, Fab, FabItem, FigureTone, GlassFigure, Glide, ListRow, Segmented, Stat, StatCards,
+    Button, ButtonSize, Card, CountUp, Dropdown, DropdownItem, Fab, FabItem, FigureTone, GlassFigure, Glide, ListRow, Segmented, Stat,
+    StatCards,
 };
 use crate::ui::theme::{Palette, Typeset as _, Width, palette, space, tabular, text};
 use crate::utils::dates::short_month_year;
@@ -98,6 +100,9 @@ impl VzApp {
                 Block::Money => this.allocation_card(&p, &s, beside, cx),
                 Block::Attention => this.attention_list(&p, cx),
                 Block::Recent => this.recent_payments_list(&p, cx),
+                Block::Reminders => this.reminders_list(&p, cx),
+                Block::Today => this.today_card(&p, cx),
+                Block::Status => this.status_card(&p, cx),
             };
             if editing { this.block_frame(&p, b, el, cx) } else { el }
         };
@@ -107,7 +112,8 @@ impl VzApp {
         let cell = |b: Block, partner: Block, el: AnyElement| -> AnyElement {
             let d = div().flex().flex_col().flex_basis(px(0.)).min_w_0();
             match b {
-                Block::Growth if partner == Block::Money => d.flex_grow(2.),
+                Block::Growth if matches!(partner, Block::Money | Block::Today) => d.flex_grow(2.),
+                Block::Today => d.flex_grow(1.).min_w(px(340.)),
                 Block::Money => d.flex_grow(1.).min_w(px(360.)).max_w(px(540.)),
                 _ => d.flex_grow(1.),
             }
@@ -121,7 +127,8 @@ impl VzApp {
             match row.as_slice() {
                 [a, b] if side_by_side => {
                     // Two cards stretch to one height; lists keep their own.
-                    let cards = row.iter().all(|x| matches!(x, Block::Growth | Block::Money | Block::Figures));
+                    let cards =
+                        row.iter().all(|x| matches!(x, Block::Growth | Block::Money | Block::Figures | Block::Today | Block::Status));
                     let (ea, eb) = (block(self, *a, true, cx), block(self, *b, true, cx));
                     body.push(
                         h_flex()
@@ -365,60 +372,101 @@ impl VzApp {
         let h = p.figure();
         let s = self.summary_now();
         let money = self.settings().money();
+        // Under the launch splash the amounts wait at zero, then count up
+        // once it opens (a new id starts the count).
+        let covering = self.motion.covering;
         let viewport = f32::from(window.viewport_size().width);
         let wide = viewport >= 1100.;
         let gap = 12.;
         let per_row = if wide { 6. } else { 3. };
         // The figures' row is the panel's width (content plus its padding).
-        let row_w = self.content_width(window) + 44.;
-        let inner = ((row_w - gap * (per_row - 1.)) / per_row - 30.).max(80.);
+        let row_w = self.content_width(window);
+        let inner = ((row_w - gap * (per_row - 1.)) / per_row - 38.).max(80.);
         // Inter's figures are about 0.6em wide: the size that fits the card.
-        let fit = |text: &str| (inner / (text.chars().count().max(1) as f32 * 0.6)).clamp(14., 21.);
+        let fit = |text: &str| (inner / (text.chars().count().max(1) as f32 * 0.62)).clamp(14., 22.);
         let toned = |v: Cents| match v.signum() {
             1 => p.positive,
             -1 => p.negative,
             _ => h.mute,
         };
-        // A card: icon and label, the amount, then up to two caption lines.
+        // A card (the clean look): the label with its icon at the top right,
+        // the amount, then up to two caption lines.
         let card = |id: &str,
                     glyph: IconName,
                     chip: (Hsla, Hsla),
                     label: &str,
-                    value: String,
+                    value: Cents,
                     value_color: Hsla,
                     lines: Vec<(String, Hsla)>,
                     action: Option<AnyElement>| {
-            let size = fit(&value);
+            let size = fit(&money.format(value));
             GlassFigure::new(SharedString::from(format!("hero-six-{id}"))).compact().body(
                 v_flex()
-                    .h(px(88.))
+                    .h(px(104.))
                     .justify_between()
                     .child(
                         h_flex()
-                            .gap(px(8.))
-                            .h(px(20.))
+                            .gap(px(6.))
+                            .h(px(28.))
+                            .child(
+                                div()
+                                    .flex_shrink(1.)
+                                    .min_w_0()
+                                    .truncate()
+                                    .typeset(text::CAPTION)
+                                    .text_color(h.mute)
+                                    .child(label.to_string()),
+                            )
+                            .child({
+                                let hint = six_hint(id);
+                                div()
+                                    .id(SharedString::from(format!("six-info-{id}")))
+                                    .flex_none()
+                                    .size(px(15.))
+                                    .rounded_full()
+                                    .border_1()
+                                    .border_color(h.mute)
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_size(px(9.5))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(h.mute)
+                                    .cursor_default()
+                                    .child("i")
+                                    .tooltip(move |w, cx| Tooltip::new(hint).build(w, cx))
+                            })
+                            .child(div().flex_1())
+                            .children(action)
                             .child(
                                 div()
                                     .flex_none()
-                                    .size(px(20.))
-                                    .rounded(px(6.))
+                                    .size(px(28.))
+                                    .rounded(px(9.))
                                     .bg(chip.1)
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .child(icon(glyph, chip.0, 12.)),
-                            )
-                            .child(div().flex_1().min_w_0().truncate().typeset(text::LABEL).text_color(h.ink).child(label.to_string()))
-                            .children(action),
+                                    .child(icon(glyph, chip.0, 15.)),
+                            ),
                     )
                     .child(
                         div()
                             .typeset(text::FIGURE)
+                            .font_weight(FontWeight::SEMIBOLD)
                             .text_size(px(size))
                             .font_features(tabular())
                             .whitespace_nowrap()
                             .text_color(value_color)
-                            .child(sel(value)),
+                            .child({
+                                let money = money.clone();
+                                CountUp::new(
+                                    SharedString::from(format!("hero-six-n-{id}-{covering}")),
+                                    if covering { 0 } else { value },
+                                    move |c| money.format(c),
+                                )
+                                .color(value_color)
+                            }),
                     )
                     .child(
                         v_flex()
@@ -494,7 +542,7 @@ impl VzApp {
                 IconName::Wallet,
                 (p.accent_text, p.accent_tint),
                 t("Total portfolio value", "Valor total de la cartera"),
-                money.format(pv),
+                pv,
                 h.ink,
                 portfolio_lines,
                 None,
@@ -504,7 +552,7 @@ impl VzApp {
                 IconName::Landmark,
                 (p.accent_text, p.accent_tint),
                 t("Available capital", "Capital disponible"),
-                money.format(s.available_capital),
+                s.available_capital,
                 h.ink,
                 vec![(cash_line, mute)],
                 None,
@@ -514,7 +562,7 @@ impl VzApp {
                 IconName::HandCoins,
                 (p.info, p.info_tint),
                 t("Capital lent out", "Capital prestado"),
-                money.format(s.outstanding_principal),
+                s.outstanding_principal,
                 h.ink,
                 vec![(lent_line, mute)],
                 None,
@@ -524,7 +572,7 @@ impl VzApp {
                 IconName::Coins,
                 (p.positive, p.positive_tint),
                 t("Available interest", "Interés disponible"),
-                money.format(s.available_interest),
+                s.available_interest,
                 h.ink,
                 vec![(interest_line, mute)],
                 None,
@@ -534,7 +582,7 @@ impl VzApp {
                 IconName::TrendingUp,
                 (p.positive, p.positive_tint),
                 t("Interest earned", "Interés cobrado"),
-                money.format(earned),
+                earned,
                 h.ink,
                 earned_lines,
                 Some(self.period_pick(cx).into_any_element()),
@@ -544,7 +592,7 @@ impl VzApp {
                 IconName::CircleAlert,
                 if late { (p.negative, p.negative_tint) } else { (p.muted, p.neutral_tint) },
                 t("Overdue amount", "Monto atrasado"),
-                money.format(s.overdue_amount),
+                s.overdue_amount,
                 if late { h.bad } else { h.ink },
                 vec![(overdue_line, if late { h.bad } else { mute })],
                 None,
@@ -694,7 +742,7 @@ impl VzApp {
                 3,
                 false,
                 t("Create the first loan", "Crea el primer préstamo"),
-                t("See the interest per period before you confirm.", "Mira el interés por período antes de confirmar."),
+                t("See what the client pays, and when, before you confirm.", "Mira qué paga el cliente, y cuándo, antes de confirmar."),
                 Button::new("setup-loan")
                     .small()
                     .primary()
@@ -1172,11 +1220,14 @@ impl VzApp {
             (t("Available capital", "Capital disponible"), s.available_capital.max(0), cash_c),
             (t("Available interest", "Interés disponible"), s.available_interest.max(0), interest_c),
         ];
-        let bar = h_flex().h(px(10.)).w_full().rounded(px(3.)).overflow_hidden().gap(px(2.)).bg(p.neutral_tint).children(
-            parts
-                .iter()
-                .filter(|(_, v, _)| *v > 0 && total > 0)
-                .map(|(_, v, c)| div().h_full().flex_basis(px(0.)).flex_grow(*v as f32 / total as f32).bg(*c)),
+        let bar = crate::ui::kit::motion::fill_in(
+            h_flex().h(px(10.)).rounded(px(3.)).overflow_hidden().gap(px(2.)).bg(p.neutral_tint).children(
+                parts
+                    .iter()
+                    .filter(|(_, v, _)| *v > 0 && total > 0)
+                    .map(|(_, v, c)| div().h_full().flex_basis(px(0.)).flex_grow(*v as f32 / total as f32).bg(*c)),
+            ),
+            "money-fill",
         );
         // Label left; share and amount right-aligned in their own columns
         // so figures line up down the list.
@@ -1261,6 +1312,8 @@ impl VzApp {
         let rows = recent.iter().enumerate().map(|(i, pay)| {
             let loan = self.snap.loan(pay.loan_id);
             let client_id = loan.map(|l| l.client_id).unwrap_or(0);
+            // The receipt on WhatsApp, when the client has a number it can go to.
+            let wa = self.wa_receipt_button(pay.id, cx);
             let name = self.snap.client_name(client_id).to_string();
             let loan_id = pay.loan_id;
             let split = if pay.fee > 0 {
@@ -1293,6 +1346,7 @@ impl VzApp {
                         )
                         .child(div().typeset(text::CAPTION).font_features(tabular()).text_color(p.muted).child(sel(split))),
                 )
+                .when_some(wa, |r, b| r.trailing(b))
                 .on_click(cx.listener(move |this, _, w, cx| this.open_row(Route::Loan(loan_id), w, cx)))
         });
         let body = if recent.is_empty() {
@@ -1319,6 +1373,101 @@ impl VzApp {
             body,
         )
         .into_any_element()
+    }
+
+    /// Today's WhatsApp reminders: clients whose installment is due
+    /// tomorrow or today, or who are late, each with a button that opens
+    /// WhatsApp with the message written. Sent ones say so until tomorrow.
+    fn reminders_list(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        use crate::services::whatsapp::Due;
+        let money = self.settings().money();
+        let all = self.wa_reminders();
+        let left = all.iter().filter(|r| !self.wa_sent(r)).count();
+        let rows = all.iter().enumerate().map(|(i, r)| {
+            let id = r.loan_id;
+            let when = match r.due {
+                Due::Tomorrow => tr!("Loan #{id} · due tomorrow", "Préstamo #{id} · vence mañana"),
+                Due::Today => tr!("Loan #{id} · due today", "Préstamo #{id} · vence hoy"),
+                Due::Late(1) => tr!("Loan #{id} · 1 day late", "Préstamo #{id} · 1 día de atraso"),
+                Due::Late(n) => tr!("Loan #{id} · {n} days late", "Préstamo #{id} · {n} días de atraso"),
+            };
+            let late = matches!(r.due, Due::Late(_));
+            let sent = self.wa_sent(r);
+            let action: AnyElement =
+                match (&r.phone, sent) {
+                    (None, _) => div()
+                        .flex_none()
+                        .min_w(px(96.))
+                        .text_right()
+                        .typeset(text::CAPTION)
+                        .text_color(p.faint)
+                        .child(t("No phone", "Sin teléfono"))
+                        .into_any_element(),
+                    (Some(_), done) => {
+                        let r = r.clone();
+                        Button::new(("wa-send", id as u64))
+                            .ghost()
+                            .small()
+                            .map(|b| {
+                                if done {
+                                    b.icon(IconName::CheckCheck)
+                                } else {
+                                    b.prefix(img(crate::ui::pictures::whatsapp()).size(px(15.)))
+                                }
+                            })
+                            .label(if done { t("Sent", "Enviado") } else { t("WhatsApp", "WhatsApp") })
+                            .when(done, |b| b.rest_ink(p.positive))
+                            .tooltip(if done {
+                                t("Send it again", "Enviarlo de nuevo")
+                            } else {
+                                t("Open WhatsApp with the reminder written", "Abrir WhatsApp con el recordatorio escrito")
+                            })
+                            .on_click(cx.listener(move |this, _, w, cx| {
+                                cx.stop_propagation();
+                                this.send_reminder(&r, w, cx)
+                            }))
+                            .into_any_element()
+                    }
+                };
+            ListRow::new(("wa", id as u64))
+                .boxed(true)
+                .rise(i)
+                .muted(sent)
+                .leading(avatar(p, &r.client, r.client_id, 32.))
+                .title(r.client.clone())
+                .subtitle(when)
+                .trailing(
+                    div()
+                        .flex_none()
+                        .min_w(px(88.))
+                        .text_right()
+                        .whitespace_nowrap()
+                        .typeset(text::BODY_STRONG)
+                        .font_features(tabular())
+                        .text_color(if late { p.negative } else { p.text })
+                        .child(sel(money.format(r.amount))),
+                )
+                .trailing(action)
+                .on_click(cx.listener(move |this, _, w, cx| this.open_row(Route::Loan(id), w, cx)))
+        });
+        let body = if all.is_empty() {
+            Card::new()
+                .child(empty_state(
+                    p,
+                    IconName::MessageCircle,
+                    t("No reminders today", "Sin recordatorios hoy"),
+                    t(
+                        "Clients with an installment due tomorrow or today, or who are late, appear here to remind on WhatsApp.",
+                        "Aquí aparecen los clientes con una cuota que vence mañana u hoy, o atrasados, para recordarles por WhatsApp.",
+                    ),
+                    None,
+                ))
+                .into_any_element()
+        } else {
+            v_flex().gap(px(space::S)).children(rows).into_any_element()
+        };
+        section(p, t("WhatsApp reminders", "Recordatorios por WhatsApp"), (left > 0).then(|| left.to_string()), div(), body)
+            .into_any_element()
     }
 
     /// Loans that are late or due soon, each row its own small card under
@@ -1422,5 +1571,31 @@ impl VzApp {
                 .child(kbd(p, "Ctrl P")),
         )
         .into_any_element()
+    }
+}
+
+/// What each of the six cards means, in one sentence (the "i" beside its
+/// name; the web's `hint` in six-figures.tsx).
+fn six_hint(id: &str) -> &'static str {
+    match id {
+        "portfolio" => t(
+            "Everything the business has: money on hand plus what borrowers still owe you in capital and interest due.",
+            "Todo lo que tiene el negocio: el dinero en mano más lo que los clientes aún deben en capital e interés vencido.",
+        ),
+        "capital" => t(
+            "Money you can lend now: the capital you put in, less what is lent out, plus capital paid back.",
+            "Dinero que puedes prestar ahora: el capital que pusiste, menos lo prestado, más el capital devuelto.",
+        ),
+        "lent" => t("Capital your borrowers still owe on open loans.", "Capital que tus clientes aún deben en préstamos abiertos."),
+        "interest" => t(
+            "Interest and fees collected that you have not spent or moved to capital.",
+            "Interés y cargos cobrados que no has gastado ni pasado a capital.",
+        ),
+        "earned" => t("Interest and fees collected in the period you pick.", "Interés y cargos cobrados en el período que elijas."),
+        "overdue" => t(
+            "What is past its due date and still unpaid, on all loans.",
+            "Lo que pasó su fecha de pago y sigue sin pagar, en todos los préstamos.",
+        ),
+        _ => "",
     }
 }

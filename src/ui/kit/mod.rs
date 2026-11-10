@@ -29,6 +29,7 @@ mod stat_cards;
 mod status_avatar;
 mod theme_pill;
 mod toast;
+mod tour;
 
 pub use badge::{Badge, BadgeTone};
 pub use button::{Button, ButtonKind, ButtonSize};
@@ -50,7 +51,8 @@ pub use stat::Stat;
 pub use stat_cards::StatCards;
 pub use status_avatar::StatusAvatar;
 pub use theme_pill::ThemePill;
-pub use toast::Toast;
+pub use toast::{Callback, Toast, ToastAction};
+pub use tour::{Tour, TourStep, TourTargets, tour_mark};
 
 use std::rc::Rc;
 

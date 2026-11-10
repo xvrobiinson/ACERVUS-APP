@@ -69,7 +69,16 @@ impl VzApp {
     /// are for admins).
     pub(crate) fn overview_blocks(&self) -> Vec<Block> {
         let manage = self.can(Need::Manage);
-        Block::ALL.into_iter().filter(|b| manage || !matches!(b, Block::Growth | Block::Money)).collect()
+        let record = self.can(Need::Record);
+        Block::ALL
+            .into_iter()
+            .filter(|b| match b {
+                Block::Growth | Block::Money => manage,
+                // Sending needs the client's details: admins and collectors.
+                Block::Reminders => record,
+                _ => true,
+            })
+            .collect()
     }
 
     /// The figures this person's Overview can show.

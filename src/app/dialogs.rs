@@ -137,7 +137,8 @@ submit_impl!(
     crate::ui::forms::business::DeleteBusinessForm,
     crate::ui::forms::move_books::MoveBooksForm,
     crate::ui::forms::restore::RestoreForm,
-    crate::ui::forms::update::UpdateForm
+    crate::ui::forms::update::UpdateForm,
+    crate::ui::forms::wa_text::WaTextForm
 );
 
 impl VzApp {
@@ -262,6 +263,35 @@ impl VzApp {
 
     pub fn open_capital_form(&mut self, kind: CapitalKind, window: &mut Window, cx: &mut Context<Self>) {
         self.capital_dialog(kind, None, window, cx)
+    }
+
+    /// The capital form over the loan form, starting with what the loan is
+    /// short of on its date (2026-11-10, usability item 3).
+    pub fn open_capital_for(
+        &mut self,
+        amount: crate::domain::money::Cents,
+        on: chrono::NaiveDate,
+        on_saved: crate::ui::kit::Callback,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let app = cx.entity().downgrade();
+        let snap = self.snap.clone();
+        let form = cx
+            .new(|cx| CapitalForm::new(app, snap, CapitalKind::Contribution, None, window, cx).prefilled(amount, on, on_saved, window, cx));
+        let first = Cell::new(true);
+        let changed = Changed::default();
+        window.open_dialog(cx, move |dialog, window, cx| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
+            let handle = form.read(cx).amount.focus_handle(cx);
+            focus_once(&first, &handle, window, cx);
+            dialog
+                .title(t("Add capital", "Agregar capital"))
+                .w(px(520.))
+                .child(changed.watch(form.clone()))
+                .on_ok(confirm(&form))
+                .on_cancel(changed.ask())
+        });
     }
 
     pub fn edit_capital(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) {
@@ -623,6 +653,27 @@ impl VzApp {
                 self.notify_error(tr!("Export failed: {e:#}", "La exportación falló: {e:#}"), window, cx)
             }
         }
+    }
+
+    /// Settings › WhatsApp messages: the business's own wording.
+    pub fn open_wa_text_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let app = cx.entity().downgrade();
+        let settings = self.settings().clone();
+        let (business, today) = (self.business_name(), self.today);
+        let form = cx.new(|cx| crate::ui::forms::wa_text::WaTextForm::new(app, &settings, &business, today, window, cx));
+        let first = Cell::new(true);
+        let changed = Changed::default();
+        window.open_dialog(cx, move |dialog, window, cx| {
+            let dialog = dialog.entrance(DialogEntrance::FadeSlide);
+            let handle = form.read(cx).first().focus_handle(cx);
+            focus_once(&first, &handle, window, cx);
+            dialog
+                .title(t("WhatsApp messages", "Mensajes de WhatsApp"))
+                .w(px(720.))
+                .child(changed.watch(form.clone()))
+                .on_ok(confirm(&form))
+                .on_cancel(changed.ask())
+        });
     }
 
     /// Edits the wording printed on receipts.

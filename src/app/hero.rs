@@ -1,11 +1,10 @@
-//! The hero look (the web's, approved 2026-11-05/06, on every screen since
-//! 2026-11-06): no sidebar; a header over the owner's fog picture (light) or
-//! black with light streaks (dark) holds the section nav, search, the bell
-//! and the account, then today's date, a greeting and the business (its name
-//! or logo opens the switcher). It stays put while the page scrolls under
-//! it: the Overview's figures on glass cards, then a rounded panel with the
-//! screen. The picture is one image drawn twice, in the header and behind
-//! the page, at the same size so it lines up.
+//! The clean look (the owner's pick from a drawing, 2026-11-09; the web's
+//! src/clean.css): a plain grey page (near-black in dark) with no picture.
+//! A bar on top holds the mark and the name, the sections as pills (the open
+//! one black, white in dark), search in the middle, the bell and the
+//! account; it stays put while the page scrolls. The page starts with a
+//! greeting, the business (it opens the switcher) and the date, then the
+//! Overview's figures, then the screen's cards straight on the page.
 
 use std::time::Duration;
 
@@ -15,30 +14,26 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
-use super::{FocusSearch, Route, VzApp};
+use super::{Route, VzApp};
 use crate::i18n::t;
 use crate::sync::wire::Need;
-use crate::ui::components::{icon, sel};
-use crate::ui::kit::{Badge, BadgeTone};
-use crate::ui::theme::{self, Elevation, Typeset as _, palette, text};
+use crate::ui::components::sel;
+use crate::ui::kit::{Badge, BadgeTone, Logo, tour_mark};
+use crate::ui::theme::{self, Typeset as _, palette, text};
 
-/// The header's height: the nav row and the date, greeting and business.
-const HEADER: f32 = 190.;
-/// The picture's height; it fades into the page at its bottom.
-const BACKDROP: f32 = 640.;
+/// The top bar's height.
+const BAR: f32 = 72.;
 /// The widest the content gets; wider windows center it.
 const MAX: f32 = 1440.;
-/// The panel's inner padding.
-const PANEL_PAD: f32 = 22.;
 
-/// The space at each side of the header and the panel.
+/// The space at each side of the bar and the page.
 fn side_pad(viewport: f32) -> f32 {
     theme::Width::gutter(viewport).max((viewport - MAX) / 2.)
 }
 
-/// The width a screen's content gets inside the panel.
+/// The width a screen's content gets.
 pub(crate) fn content_width(viewport: f32) -> f32 {
-    viewport - 2. * side_pad(viewport) - 2. * PANEL_PAD
+    viewport - 2. * side_pad(viewport)
 }
 
 /// The section nav: Settings is in the account menu; Portfolio is for admins.
@@ -48,6 +43,7 @@ fn hero_nav(admin: bool) -> Vec<(Route, IconName, &'static str, &'static str)> {
         (Route::Clients, IconName::Users, t("Clients", "Clientes"), "Ctrl+2"),
         (Route::Loans, IconName::HandCoins, t("Loans", "Préstamos"), "Ctrl+3"),
         (Route::Payments, IconName::ArrowLeftRight, t("Payments", "Pagos"), "Ctrl+4"),
+        (Route::Calendar, IconName::CalendarDays, t("Calendar", "Calendario"), ""),
         (Route::Analytics, IconName::ChartLine, t("Portfolio", "Portafolio"), "Ctrl+5"),
     ]
     .into_iter()
@@ -103,9 +99,9 @@ pub(crate) fn greeting() -> &'static str {
 }
 
 impl VzApp {
-    /// A screen in the hero look: `figures` (the Overview's) on the picture,
-    /// `content` on the panel below, `banner` (data that failed to load) at
-    /// the panel's top.
+    /// A screen in the clean look: the bar on top, then on the page the
+    /// greeting, `figures` (the Overview's) and `content`, with `banner`
+    /// (data that failed to load) above the content.
     pub(crate) fn render_hero(
         &mut self,
         figures: Option<AnyElement>,
@@ -120,163 +116,153 @@ impl VzApp {
             use crate::app::SyncStatus;
             self.note_sync(matches!(status, SyncStatus::Sending(_)), status == SyncStatus::Synced, cx);
         }
-        let picture = crate::ui::pictures::hero(p.dark);
         let pad = side_pad(f32::from(window.viewport_size().width));
-        let backdrop =
-            |top: f32| img(picture.clone()).absolute().top(px(top)).left_0().w_full().h(px(BACKDROP)).object_fit(ObjectFit::Cover);
-        let mut clear = p.ground;
-        clear.a = 0.;
-        let fade = |top: f32| {
-            div().absolute().left_0().w_full().top(px(top)).h(px(BACKDROP)).bg(linear_gradient(
-                180.,
-                linear_color_stop(clear, 0.82),
-                linear_color_stop(p.ground, 1.),
-            ))
-        };
 
-        // The nav row: Loans counts the loans overdue (a red badge that hops
+        // The sections: Loans counts the loans overdue (a red badge that hops
         // when the count rises), Payments the collector payments to confirm.
         let section = self.route.section();
         let overdue = self.summary_now().overdue_loans;
         let overdue_rises = self.motion.overdue.see(overdue);
         let waiting = self.waiting_to_confirm();
-        // One tab: an icon and a word; the open one is underlined.
-        let tab = |id: SharedString, glyph: IconName, label: &'static str, tip: SharedString, on: bool, badge: Option<(Badge, u32)>| {
-            let color = if on { h.ink } else { h.mute };
+        // One pill: its word, and its count after it. The open one is filled.
+        let tab = |id: SharedString, label: &'static str, tip: SharedString, on: bool, badge: Option<(Badge, u32)>| {
             h_flex()
                 .id(id)
-                .relative()
-                .h(px(60.))
-                .px(px(10.))
-                .gap(px(7.))
+                .flex_none()
+                .h(px(32.))
+                .px(px(14.))
+                .gap(px(6.))
+                .rounded_full()
                 .cursor_pointer()
                 .typeset(text::LABEL)
-                .text_color(color)
-                .hover(|d| d.text_color(h.ink))
+                .map(|d| if on { d.bg(h.ink).text_color(h.mark_ink).font_weight(FontWeight::SEMIBOLD) } else { d.text_color(h.mute) })
+                .when(!on, |d| d.hover(|d| d.bg(h.glass_hover).text_color(h.ink)))
+                .child(label)
                 .map(|d| match badge {
-                    // The badge on the icon's top right corner; it hops when
-                    // its count rises.
-                    Some((b, rises)) => {
-                        let hop = div().child(b).with_animation(
-                            SharedString::from(format!("badge-hop-{label}-{rises}")),
-                            Animation::new(Duration::from_millis(420)),
-                            |d, t| d.mt(px(-3. * crate::ui::kit::motion::pop(t))),
-                        );
-                        d.child(
-                            div()
-                                .relative()
-                                .mr(px(5.))
-                                .child(icon(glyph, color, 15.))
-                                .child(div().absolute().top(px(-9.)).left(px(9.)).child(hop)),
-                        )
-                        .child(label)
-                    }
-                    None => d.child(icon(glyph, color, 15.)).child(label),
+                    Some((b, rises)) => d.child(div().child(b).with_animation(
+                        SharedString::from(format!("badge-hop-{label}-{rises}")),
+                        Animation::new(Duration::from_millis(420)),
+                        |d, t| d.mt(px(-3. * crate::ui::kit::motion::pop(t))),
+                    )),
+                    None => d,
                 })
-                .when(on, |d| d.child(div().absolute().left(px(10.)).right(px(10.)).bottom(px(14.)).h(px(1.5)).rounded(px(1.)).bg(h.ink)))
                 .tooltip(move |w, cx| Tooltip::new(tip.clone()).build(w, cx))
         };
-        // A thin line before Portfolio and Reports, which go together.
-        let divider = || div().flex_none().mx(px(6.)).w(px(1.)).h(px(18.)).bg(h.rule).into_any_element();
         let mut nav: Vec<AnyElement> = Vec::new();
-        for (route, icon_name, label, keys) in hero_nav(self.can(Need::Manage)) {
-            if route == Route::Analytics {
-                nav.push(divider());
-            }
+        for (route, _, label, keys) in hero_nav(self.can(Need::Manage)) {
             let badge = match route {
                 Route::Loans if overdue > 0 => Some((Badge::new(overdue, BadgeTone::Alert), overdue_rises)),
                 Route::Payments if waiting > 0 => Some((Badge::new(waiting, BadgeTone::Waiting), 0)),
                 _ => None,
             };
             let tip = SharedString::from(format!("{label}  {keys}"));
+            let mark = match route {
+                Route::Clients => Some("nav-clients"),
+                Route::Payments => Some("nav-payments"),
+                Route::Analytics => Some("nav-portfolio"),
+                _ => None,
+            };
             nav.push(
-                tab(SharedString::from(format!("hero-nav-{route:?}")), icon_name, label, tip, section == route, badge)
+                tab(SharedString::from(format!("hero-nav-{route:?}")), label, tip, section == route, badge)
                     .on_click(cx.listener(move |this, _, w, cx| this.navigate(route, w, cx)))
+                    .when_some(mark, |d, k| d.relative().child(tour_mark(k, &self.tour_targets)))
                     .into_any_element(),
             );
         }
         // Reports (admins and viewers): its window, not a screen.
         if self.can_report() {
-            if !self.can(Need::Manage) {
-                nav.push(divider());
-            }
             let label = t("Reports", "Reportes");
             nav.push(
-                tab("hero-nav-reports".into(), IconName::ReceiptText, label, label.into(), false, None)
+                tab("hero-nav-reports".into(), label, label.into(), false, None)
                     .on_click(cx.listener(|this, _, w, cx| this.open_reports(w, cx)))
                     .into_any_element(),
             );
         }
-        let search = h_flex()
-            .id("hero-search")
-            .h(px(36.))
-            .w(px(260.))
-            .pl(px(15.))
-            .pr(px(4.))
-            .gap(px(8.))
-            .rounded_full()
-            .bg(h.glass)
-            .border_1()
-            .border_color(h.glass_edge)
+        let pills =
+            h_flex().flex_none().p(px(4.)).gap(px(2.)).rounded_full().bg(h.glass).border_1().border_color(h.glass_edge).children(nav);
+        let brand = h_flex()
+            .id("hero-brand")
+            .flex_none()
+            .gap(px(10.))
             .cursor_pointer()
-            .hover(|d| d.bg(h.glass_hover))
-            .typeset(text::CAPTION)
-            .text_color(h.mute)
-            .child(div().flex_1().min_w_0().truncate().child(t("Search clients & loans…", "Buscar clientes y préstamos…")))
-            .child(div().size(px(28.)).rounded_full().flex().items_center().justify_center().bg(h.glass).child(icon(
-                IconName::Search,
-                h.ink,
-                14.,
-            )))
-            .on_click(|_, w, cx| w.dispatch_action(Box::new(FocusSearch), cx));
+            .child(if p.dark { Logo::new(30.).edge(h.glass_edge) } else { Logo::new(30.) })
+            .child(
+                h_flex()
+                    .text_size(px(20.))
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(h.ink)
+                    .child("Acervus")
+                    .child(div().text_color(p.faint).child(".")),
+            )
+            .on_click(cx.listener(|this, _, w, cx| this.navigate(Route::Overview, w, cx)));
+        let search = self.hero_search(window, cx);
         let cluster = self.account_cluster(window, cx);
         let bar = h_flex()
-            .h(px(60.))
-            .gap(px(4.))
-            .border_b_1()
-            .border_color(h.rule)
-            .children(nav)
-            .child(div().flex_1())
-            .child(h_flex().gap(px(10.)).child(search).child(cluster));
+            .flex_none()
+            .h(px(BAR))
+            .px(px(pad))
+            .gap(px(14.))
+            .bg(p.ground)
+            .child(brand)
+            .child(pills)
+            .child(div().flex_1().min_w(px(4.)))
+            .child(h_flex().flex_none().relative().gap(px(8.)).child(search).child(cluster).child(tour_mark("right", &self.tour_targets)));
 
-        // The date, a greeting and the business.
+        // The greeting, the business and the date.
         let (title, switchable, menu) = self.brand_switcher(&p, cx);
         let letters: String = title.split_whitespace().take(2).filter_map(|w| w.chars().next()).flat_map(char::to_uppercase).collect();
         let mark = match &self.logo {
             Some(logo) => div()
                 .flex_none()
-                .size(px(42.))
-                .rounded(px(12.))
+                .size(px(20.))
+                .rounded(px(6.))
                 .overflow_hidden()
                 .child(img(logo.clone()).size_full().object_fit(ObjectFit::Contain)),
             None => div()
                 .flex_none()
-                .size(px(42.))
-                .rounded(px(12.))
+                .size(px(20.))
+                .rounded(px(6.))
                 .bg(h.mark)
                 .text_color(h.mark_ink)
                 .flex()
                 .items_center()
                 .justify_center()
-                .typeset(text::LABEL)
+                .text_size(px(9.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(letters),
         };
         let business = h_flex()
             .id("hero-biz")
             .relative()
-            .gap(px(12.))
-            .mx(px(-8.))
-            .px(px(8.))
-            .py(px(4.))
-            .rounded(px(14.))
+            .gap(px(8.))
+            .mx(px(-6.))
+            .px(px(6.))
+            .py(px(2.))
+            .rounded(px(8.))
+            .typeset(text::LABEL)
             .text_color(h.ink)
             .child(mark)
-            .child(div().typeset(text::HERO_NAME).whitespace_nowrap().child(sel(title)))
+            .child(
+                div()
+                    .relative()
+                    .whitespace_nowrap()
+                    .child(sel(title))
+                    // Admins on the Overview: a small ⇄ under the name says
+                    // it switches (2026-11-10, the owner's pick).
+                    .when(switchable && self.route == Route::Overview && self.can(crate::sync::wire::Need::Manage), |d| {
+                        d.child(
+                            h_flex().absolute().top(relative(1.)).left_0().right_0().justify_center().child(crate::ui::components::icon(
+                                IconName::ArrowLeftRight,
+                                h.mute,
+                                12.,
+                            )),
+                        )
+                    }),
+            )
             .when(switchable, |d| {
                 d.cursor_pointer()
-                    .hover(|d| d.bg(h.glass))
-                    .when(self.brand_open, |d| d.bg(h.glass))
+                    .hover(|d| d.bg(h.glass_hover))
+                    .when(self.brand_open, |d| d.bg(h.glass_hover))
                     .tooltip(|w, cx| Tooltip::new(t("Switch business", "Cambiar de negocio")).build(w, cx))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.brand_open = !this.brand_open;
@@ -284,51 +270,49 @@ impl VzApp {
                     }))
             })
             .children(menu);
-        // Arrange, on the Overview: the hero's top right, over the figures.
-        let arrange = (self.route == Route::Overview && !self.customizing).then(|| self.arrange_button(h.mute, cx));
-        let identity = v_flex()
-            .pt(px(16.))
-            .gap(px(3.))
-            .child(div().typeset(text::CAPTION).text_color(h.mute).child(today_line()))
-            .child(div().typeset(text::BODY).text_color(h.mute).child(greeting()))
-            .child(h_flex().mt(px(6.)).items_center().child(business).child(div().flex_1()).children(arrange));
-
-        let header = div()
-            .relative()
-            .flex_none()
-            .w_full()
-            .h(px(HEADER))
-            .overflow_hidden()
-            .child(backdrop(0.))
-            .child(v_flex().relative().px(px(pad)).child(bar).child(identity));
+        // Arrange, on the Overview: at the right of the greeting.
+        let arrange = (self.route == Route::Overview && !self.customizing).then(|| self.arrange_button(h.ink, cx));
+        let identity = h_flex()
+            .px(px(pad))
+            .pt(px(10.))
+            .pb(px(18.))
+            .items_end()
+            .gap(px(14.))
+            .child(
+                v_flex()
+                    .min_w_0()
+                    .gap(px(4.))
+                    .child(div().typeset(text::HERO_NAME).font_weight(FontWeight::SEMIBOLD).text_color(h.ink).child(greeting()))
+                    .child(
+                        h_flex()
+                            .gap(px(6.))
+                            .typeset(text::LABEL)
+                            .child(business)
+                            .child(div().text_color(h.mute).child("·"))
+                            .child(div().font_weight(FontWeight::NORMAL).text_color(h.mute).child(today_line())),
+                    ),
+            )
+            .child(div().flex_1())
+            .children(arrange);
 
         // A new screen fades in while rising into place (at launch, once the
         // splash starts to open).
         let covering = self.motion.covering;
         let screen = crate::ui::kit::motion::rise(content, SharedString::from(format!("screen-{:?}", self.route)), Duration::ZERO);
-        let panel = v_flex()
-            .relative()
-            .mx(px(pad))
-            .mt(px(-40.))
-            .min_h(px(320.))
-            .p(px(PANEL_PAD))
+        let body = v_flex()
+            .px(px(pad))
             .gap(px(14.))
-            .rounded(px(20.))
-            .bg(p.surface)
-            .when(p.dark, |d| d.border_1().border_color(p.border))
-            .shadow(theme::elevation(&p, Elevation::Floating))
             .children(banner.map(|b| div().rounded(px(12.)).overflow_hidden().child(b)))
             .when(!covering, |d| d.child(screen));
         let page = div().id(SharedString::from(format!("scroll-{section:?}"))).flex_1().min_h_0().overflow_y_scroll().child(
-            div()
-                .relative()
+            v_flex()
                 .w_full()
                 .pb(px(48.))
-                .child(backdrop(-HEADER))
-                .child(fade(-HEADER))
-                .children(figures.map(|f| div().relative().px(px(pad)).pt(px(2.)).child(f)))
-                .child(div().h(px(56.)))
-                .child(panel),
+                .child(identity)
+                .children(figures.map(|f| {
+                    div().px(px(pad)).pb(px(14.)).child(div().relative().child(f).child(tour_mark("figures", &self.tour_targets)))
+                }))
+                .child(body),
         );
 
         v_flex()
@@ -337,11 +321,12 @@ impl VzApp {
             .min_w_0()
             .h_full()
             .bg(p.ground)
-            .child(header)
+            .child(bar)
             .child(page)
             // The "+" button, on the Overview (approved 2026-11-05).
             .when(self.route == Route::Overview, |d| {
-                d.children(self.add_button(cx).map(|f| div().absolute().right(px(28.)).bottom(px(28.)).child(f)))
+                let mark = tour_mark("add", &self.tour_targets);
+                d.children(self.add_button(cx).map(|f| div().absolute().right(px(28.)).bottom(px(28.)).child(f).child(mark)))
             })
             .into_any_element()
     }

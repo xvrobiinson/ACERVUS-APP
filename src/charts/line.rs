@@ -296,6 +296,49 @@ impl LineChart {
             }
         });
 
+        // The newest point of the main line: a dot with a ring that keeps
+        // spreading and fading (2026-11-10, the web's `.pulse-core`).
+        let pulse =
+            (self.animated && hover.is_none()).then(|| series.first().filter(|s| !s.values.is_empty()).cloned()).flatten().map(|s| {
+                let last = *s.values.last().unwrap_or(&0);
+                let color = s.color;
+                div().absolute().inset_0().with_animation(
+                    scoped_id(&id, "pulse"),
+                    Animation::new(std::time::Duration::from_millis(2200)).repeat(),
+                    move |d, t| {
+                        d.child(
+                            canvas(
+                                |_, _, _| {},
+                                move |bounds, _, window, _| {
+                                    let c = point(
+                                        bounds.origin.x + bounds.size.width,
+                                        bounds.origin.y + bounds.size.height * (1.0 - (last - lo) as f32 / span),
+                                    );
+                                    let ease = 1.0 - (1.0 - t).powi(3);
+                                    for (r, a) in [(4.5 + 13.0 * ease, 0.45 * (1.0 - t)), (7.0, 0.16)] {
+                                        let r = px(r);
+                                        let mut glow = color;
+                                        glow.a = a;
+                                        window.paint_quad(
+                                            fill(Bounds::new(point(c.x - r, c.y - r), size(r * 2., r * 2.)), glow).corner_radii(r),
+                                        );
+                                    }
+                                    let breathe = 1.0 + 0.18 * (std::f32::consts::PI * 2.0 * t).sin().max(0.0);
+                                    let r = px(4.5 * breathe);
+                                    window.paint_quad(
+                                        fill(Bounds::new(point(c.x - r, c.y - r), size(r * 2., r * 2.)), color)
+                                            .corner_radii(r)
+                                            .border_widths(px(2.))
+                                            .border_color(surface),
+                                    );
+                                },
+                            )
+                            .size_full(),
+                        )
+                    },
+                )
+            });
+
         // Y tick labels, in their own lane.
         let y_labels = ticks.iter().map(|t| {
             let top = TOP_PAD + plot_h * frac_y(*t) - 8.0;
@@ -397,6 +440,7 @@ impl LineChart {
                     .top(px(TOP_PAD))
                     .h(px(plot_h))
                     .child(line_layer)
+                    .children(pulse)
                     .children(marker)
                     .children(readout)
                     .on_mouse_move(move |e: &MouseMoveEvent, window, cx| {

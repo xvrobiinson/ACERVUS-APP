@@ -1,6 +1,7 @@
 //! Screens render the snapshot held by `VzApp`; they never touch the store.
 
 pub mod analytics;
+pub mod calendar;
 pub mod clients;
 pub mod collect;
 mod customize;
@@ -11,6 +12,7 @@ pub mod payments;
 pub mod settings;
 mod sign_in;
 pub mod team;
+mod today;
 pub(crate) use sync::role_label;
 mod sync;
 mod welcome;

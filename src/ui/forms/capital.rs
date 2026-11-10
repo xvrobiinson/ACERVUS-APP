@@ -8,7 +8,7 @@ use gpui_kit::*;
 use super::date_field::{DateChanged, DateField};
 use super::{DATE_WIDTH, date_field, error_banner, field, field_row, footer, grow_field, invalid_date, picked_date, reason_input, value};
 use crate::app::VzApp;
-use crate::domain::money::{MoneyFormat, parse_money};
+use crate::domain::money::{Cents, MoneyFormat, parse_money};
 use crate::domain::portfolio::{Account, CapitalKind};
 use crate::i18n::t;
 use crate::services::{Record, Snapshot};
@@ -29,6 +29,8 @@ pub struct CapitalForm {
     reason: Entity<InputState>,
     error: Option<String>,
     show_errors: bool,
+    /// Called once it saved (the loan form refreshes what is available).
+    on_saved: Option<crate::ui::kit::Callback>,
     _subs: Vec<Subscription>,
 }
 
@@ -70,7 +72,24 @@ impl CapitalForm {
                 }
             }));
         }
-        Self { app, snap, kind, editing, amount, date, notes, reason, error: None, show_errors: false, _subs: subs }
+        Self { app, snap, kind, editing, amount, date, notes, reason, error: None, show_errors: false, on_saved: None, _subs: subs }
+    }
+
+    /// A new entry that starts with `amount` on `on` (what a loan is short
+    /// of), calling `on_saved` once it saved.
+    pub fn prefilled(
+        mut self,
+        amount: Cents,
+        on: chrono::NaiveDate,
+        on_saved: crate::ui::kit::Callback,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        self.amount.update(cx, |s, cx| s.set_value(MoneyFormat::input_value(amount), window, cx));
+        self.date = date_field(on, window, cx);
+        self._subs.push(cx.subscribe(&self.date, |_, _, _: &DateChanged, cx| cx.notify()));
+        self.on_saved = Some(on_saved);
+        self
     }
 
     /// Validates and saves; closes the dialog only on success. Bound to the
@@ -100,6 +119,9 @@ impl CapitalForm {
         match result {
             Ok(Ok(())) => {
                 window.close_dialog(cx);
+                if let Some(f) = self.on_saved.clone() {
+                    f(window, cx);
+                }
                 let _ = self.app.update(cx, |app, cx| {
                     let m = app.settings().money().format(amount);
                     let msg = match (editing, kind) {

@@ -122,6 +122,77 @@ pub fn client_choices(snap: &Snapshot, keep: Option<i64>) -> Vec<Choice> {
         .collect()
 }
 
+/// The loan in one plain sentence (2026-11-10, the web's `loanSentence`):
+/// "Marta pays RD$1,400.00 every week for 8 weeks, RD$11,200.00 in all, the
+/// first on Nov 17, 2026." From the schedule shown; nothing new is worked out.
+fn loan_sentence(
+    client: Option<&str>,
+    terms: &LoanTerms,
+    schedule: &[Installment],
+    money: &MoneyFormat,
+    ds: crate::utils::dates::DateStyle,
+) -> Option<String> {
+    let who =
+        client.and_then(|c| c.split_whitespace().next()).map(str::to_string).unwrap_or_else(|| t("The client", "El cliente").to_string());
+    let often = match terms.frequency {
+        Frequency::Daily => t("every day", "cada día"),
+        Frequency::Weekly => t("every week", "cada semana"),
+        Frequency::Biweekly => t("every 15 days", "cada 15 días"),
+        Frequency::Monthly => t("every month", "cada mes"),
+    };
+    if !terms.method.has_installments() {
+        let interest = terms.interest_per_period();
+        if interest <= 0 {
+            return None;
+        }
+        let (i, first) = (money.format(interest), ds.format(terms.first_due()));
+        return Some(tr!(
+            "{who} pays {i} of interest {often}, the first on {first}, and repays the capital whenever they can. Paying more than the interest lowers the next interest.",
+            "{who} paga {i} de interés {often}, el primero el {first}, y devuelve el capital cuando pueda. Pagar más que el interés baja el próximo interés."
+        ));
+    }
+    let first = schedule.first()?;
+    if schedule.iter().any(|x| x.principal < 0 || x.interest < 0) {
+        return None;
+    }
+    let n = schedule.len();
+    let all = money.format(schedule.iter().map(Installment::total).sum());
+    let when = ds.format(first.due);
+    let (a, b) = (first.total(), schedule[n - 1].total());
+    let (min, max) = schedule.iter().fold((i64::MAX, i64::MIN), |(lo, hi), x| (lo.min(x.total()), hi.max(x.total())));
+    // Equal, or apart only by the cents of rounding (a flat loan's last one).
+    let rounding = max - min <= n as i64;
+    if rounding {
+        let each = money.format(a);
+        let span = match (terms.frequency, n) {
+            (Frequency::Daily, 1) => t("1 day", "1 día").to_string(),
+            (Frequency::Daily, n) => tr!("{n} days", "{n} días"),
+            (Frequency::Weekly, 1) => t("1 week", "1 semana").to_string(),
+            (Frequency::Weekly, n) => tr!("{n} weeks", "{n} semanas"),
+            (Frequency::Biweekly, 1) => t("15 days", "15 días").to_string(),
+            (Frequency::Biweekly, n) => tr!("{n} payments of 15 days", "{n} pagos de 15 días"),
+            (Frequency::Monthly, 1) => t("1 month", "1 mes").to_string(),
+            (Frequency::Monthly, n) => tr!("{n} months", "{n} meses"),
+        };
+        return Some(if min == max {
+            tr!(
+                "{who} pays {each} {often} for {span}, {all} in all, the first on {when}.",
+                "{who} paga {each} {often} durante {span}, {all} en total, el primero el {when}."
+            )
+        } else {
+            tr!(
+                "{who} pays about {each} {often} for {span}, {all} in all, the first on {when}.",
+                "{who} paga unos {each} {often} durante {span}, {all} en total, el primero el {when}."
+            )
+        });
+    }
+    let (a, b) = (money.format(a), money.format(b));
+    Some(tr!(
+        "{who} pays {n} installments {often}, from {a} to {b}, {all} in all, the first on {when}.",
+        "{who} paga {n} cuotas {often}, de {a} a {b}, {all} en total, la primera el {when}."
+    ))
+}
+
 fn proposed(terms: &LoanTerms) -> Vec<Installment> {
     installments::proposed_schedule(&facts_for(terms), terms.method, terms.installments.unwrap_or(1))
 }
@@ -234,6 +305,21 @@ impl LoanForm {
 
     pub fn client_id(&self) -> Option<i64> {
         self.client_id
+    }
+
+    /// Opens the capital form with what this loan is short of; once it saved,
+    /// the form sees the new capital.
+    fn add_capital(&mut self, short: Cents, on: chrono::NaiveDate, window: &mut Window, cx: &mut Context<Self>) {
+        let form = cx.entity().downgrade();
+        let app = self.app.clone();
+        let on_saved: crate::ui::kit::Callback = Rc::new(move |_, cx| {
+            let Some(snap) = app.upgrade().map(|a| a.read(cx).snap.clone()) else { return };
+            let _ = form.update(cx, |f, cx| {
+                f.snap = snap;
+                cx.notify();
+            });
+        });
+        let _ = self.app.update(cx, |app, cx| app.open_capital_for(short, on, on_saved, window, cx));
     }
 
     /// Opens the client form on top of this one and returns it. Everything
@@ -588,7 +674,9 @@ impl LoanForm {
                     }
                 })))
             });
-        card.child(
+        let who = self.client_id().map(|c| self.snap.client_name(c).to_string());
+        card.children(loan_sentence(who.as_deref(), terms, &shown, &money, ds).map(|s| div().typeset(text::BODY_STRONG).text_color(p.text).child(s)))
+            .child(
             h_flex()
                 .flex_wrap()
                 .items_end()
@@ -683,7 +771,11 @@ impl LoanForm {
                 .child(div().mt(px(7.)).size(px(5.)).rounded_full().bg(p.accent).flex_none())
                 .child(div().flex_1().min_w_0().typeset(text::BODY).text_color(p.text).child(text))
         };
+        let who = self.client_id().map(|c| self.snap.client_name(c).to_string());
         card.h_full()
+            .children(
+                loan_sentence(who.as_deref(), terms, &[], &money, ds).map(|s| div().typeset(text::BODY_STRONG).text_color(p.text).child(s)),
+            )
             .child(Stat::new(tr!("Interest {every}", "Interés {every}"), i.clone()).caption(match rate.conversion_note() {
                 Some(note) => note,
                 None => tr!("{quoted} of {principal}", "{quoted} de {principal}"),
@@ -731,6 +823,7 @@ impl Render for LoanForm {
         let available = book.available_from(on, None);
         let principal_now = parse_money(&value(&self.principal, cx)).ok();
         let over_cash = principal_now.is_some_and(|a| a > available);
+        let short = principal_now.filter(|_| over_cash).map(|a| a - available.max(0));
         let avail = money.format(available.max(0));
         // Loans take capital first, then interest.
         let from_capital = book.balances_on(on).get(Account::Capital).max(0);
@@ -812,18 +905,34 @@ impl Render for LoanForm {
                 None,
                 client_err,
             ))
-            .child(field(
-                &p,
-                t("Amount lent", "Monto prestado"),
-                Input::new(&self.principal).prefix(div().text_color(p.muted).child(money.symbol.clone())),
-                principal_hint,
-                principal_err,
-            ))
+            .child(
+                field(
+                    &p,
+                    t("Amount lent", "Monto prestado"),
+                    Input::new(&self.principal).prefix(div().text_color(p.muted).child(money.symbol.clone())),
+                    principal_hint,
+                    principal_err,
+                )
+                .when_some(short, |d, short| {
+                    d.child(
+                        div()
+                            .id("add-capital")
+                            .typeset(text::LABEL)
+                            .text_color(p.accent_text)
+                            .cursor_pointer()
+                            .child({
+                                let s = money.format(short);
+                                tr!("Add {s} of capital", "Agregar {s} de capital")
+                            })
+                            .on_click(cx.listener(move |this, _, w, cx| this.add_capital(short, on, w, cx))),
+                    )
+                }),
+            )
             .child(field(
                 &p,
                 t("Loan type", "Tipo de préstamo"),
                 h_flex().gap(px(space::S)).items_stretch().children(Method::ALL.map(|m| self.method_tile(&p, m, cx).into_any_element())),
-                None,
+                Some(self.method.suits().to_string()),
                 None,
             ))
             .child(field(&p, &rate_label, rate_control, None, rate_err))

@@ -76,7 +76,16 @@ gpui_kit::assets::icon_assets!(
         ArrowUp,
         ArrowDown,
         ArrowRight,
-        RefreshCw
+        RefreshCw,
+        // WhatsApp reminders and receipts.
+        MessageCircle,
+        CheckCheck,
+        // The Calendar, the welcome tour, a collector's badge and Sign out
+        // (they drew nothing without these).
+        CalendarDays,
+        Compass,
+        BriefcaseBusiness,
+        LogOut
     ]
 );
 

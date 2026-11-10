@@ -1,6 +1,7 @@
 //! Application services: every write goes through here, validated against
 //! the accounting rules and committed atomically in one SQLite transaction.
 
+pub mod calendar;
 pub mod export;
 pub mod hero_layout;
 mod lending;
@@ -11,6 +12,7 @@ pub mod receipt_text;
 mod records;
 pub mod reports;
 pub mod settings;
+pub mod whatsapp;
 pub mod xlsx;
 
 use std::path::{Path, PathBuf};
@@ -423,6 +425,10 @@ impl Store {
 
     pub fn outbox_discard(&mut self, op_id: &str) -> Result<()> {
         outbox::discard(&self.conn, op_id)
+    }
+
+    pub fn outbox_drop_unsent(&mut self, op_id: &str) -> Result<bool> {
+        outbox::drop_unsent(&self.conn, op_id)
     }
 
     /// The cloud business this database follows, if it is linked.

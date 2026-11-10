@@ -154,6 +154,9 @@ pub struct Settings {
     /// Optional parts of payment receipts by cloud key; missing ones are shown.
     #[serde(default)]
     pub receipt_show: BTreeMap<String, bool>,
+    /// "full" or "next"; unset is the full schedule.
+    #[serde(default)]
+    pub receipt_format: Option<String>,
     pub receipt_text: BTreeMap<String, String>,
     pub currency_code: String,
     pub number_style: String,

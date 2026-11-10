@@ -165,6 +165,10 @@ pub(crate) struct Cloud {
     pub(crate) accepting: Option<String>,
     /// Moving this PC's own books to the cloud was offered this sign-in.
     move_offered: bool,
+    /// Payments the cloud took lately: the change's operation id and the
+    /// payment's cloud id (a collector's: the waiting one's), for Undo
+    /// (newest last).
+    answered: Vec<(String, String)>,
     _events: Task<()>,
 }
 
@@ -225,6 +229,7 @@ impl VzApp {
             invites: None,
             accepting: None,
             move_offered: false,
+            answered: Vec::new(),
             _events: events,
         });
         if let Some(id) = linked {
@@ -817,6 +822,99 @@ impl VzApp {
         Ok(saved)
     }
 
+    /// The operation id of the change saved last, when it went to the cloud.
+    pub(crate) fn last_op(&self) -> Option<String> {
+        self.cloud.as_ref().and_then(|c| c.last_op.clone())
+    }
+
+    /// Undo for a payment just saved (2026-11-10; the web does the same),
+    /// found by the change's operation id, never by this PC's number for it
+    /// (the cloud's copy can renumber payments). Not sent yet, it leaves this
+    /// PC. Sent, an admin's is deleted by its cloud id; a collector's is taken
+    /// back while it waits, within 10 minutes (`payments:withdraw`).
+    pub(crate) fn undo_payment(&mut self, op: String, local: Option<i64>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(c) = &self.cloud else { return };
+        let (sending, business, has_copy) = (c.sending, c.linked.clone(), c.last.is_some());
+        let answer = c.answered.iter().rev().find(|(o, _)| *o == op).map(|(_, id)| id.clone());
+        let reason = t("Undone right after recording it", "Deshecho justo después de registrarlo").to_string();
+        // Not on its way right now, so it can't reach the cloud after this.
+        if answer.is_none() && !sending {
+            match self.store.outbox_drop_unsent(&op) {
+                Ok(true) => {
+                    if let Some(c) = &mut self.cloud {
+                        c.waiting.retain(|w| w.op != op);
+                    }
+                    if has_copy {
+                        // The cloud's copy, without the change.
+                        self.apply_last(window, cx);
+                    } else if let Some(id) = local
+                        && let Err(e) = self.store.delete_payment(id, &reason, self.today)
+                    {
+                        log::warn!("undo: payment not removed here: {e:#}");
+                    }
+                    self.reload(cx);
+                    self.notify_success(t("Payment undone", "Pago deshecho"), window, cx);
+                    return;
+                }
+                Ok(false) => {}
+                Err(e) => log::warn!("undo: outbox not read: {e:#}"),
+            }
+            if self.store.outbox_refused().is_ok_and(|r| r.iter().any(|x| x.op_id == op)) {
+                self.notify_error(
+                    t(
+                        "The cloud didn't accept this payment, so there is nothing to undo. Review it from your account menu.",
+                        "La nube no aceptó este pago, así que no hay nada que deshacer. Revísalo desde el menú de tu cuenta.",
+                    ),
+                    window,
+                    cx,
+                );
+                return;
+            }
+        }
+        let (Some(remote), Some(business)) = (answer, business) else {
+            self.notify_error(
+                t(
+                    "It's on its way to the cloud. Try Undo again in a moment.",
+                    "Va camino a la nube. Prueba Deshacer de nuevo en un momento.",
+                ),
+                window,
+                cx,
+            );
+            return;
+        };
+        if self.role() != Some(Role::Collector) {
+            let Some(id) = self.store.cloud_local_id(Record::Payment, &remote).ok().flatten() else {
+                self.notify_error(t("This payment isn't on this PC any more.", "Este pago ya no está en esta PC."), window, cx);
+                return;
+            };
+            match self.save(Change::DeletePayment { id, reason }, window, cx) {
+                Ok(_) => {
+                    self.reload(cx);
+                    self.notify_success(t("Payment undone", "Pago deshecho"), window, cx);
+                }
+                Err(e) => {
+                    let m = self.error_message(&e);
+                    self.notify_error(m, window, cx);
+                }
+            }
+            return;
+        }
+        let Some(answer) = self.cloud_call("payments:withdraw", serde_json::json!({ "businessId": business, "pendingId": remote })) else {
+            return;
+        };
+        cx.spawn_in(window, async move |this, cx| {
+            let outcome = answer.await.unwrap_or(Outcome::NotSent);
+            let _ = this.update_in(cx, |app, window, cx| match outcome {
+                Outcome::Accepted(_) => app.notify_success(t("Payment undone", "Pago deshecho"), window, cx),
+                other => {
+                    let why = app.call_failed(&other);
+                    app.notify_error(why, window, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
     /// Opens a new payment's receipt: at once on this PC's own books, or once
     /// the cloud has the payment and its number.
     pub(crate) fn payment_receipt_after_save(&mut self, payment_id: i64, window: &mut Window, cx: &mut Context<Self>) {
@@ -898,6 +996,7 @@ impl VzApp {
                     self.maybe_drive_backup(window, cx);
                     self.maybe_check_update(cx);
                     self.load_prefs(window, cx);
+                    self.load_profile(window, cx);
                 }
             }
             Event::UpdateRequired { min_version } => c.update_required = Some(min_version),
@@ -1051,6 +1150,11 @@ impl VzApp {
                         if let Some(c) = &mut app.cloud {
                             for w in c.waiting.iter_mut().filter(|w| w.op == q.op_id) {
                                 w.remote = remote.clone();
+                            }
+                            if let Some(id) = result["paymentId"].as_str().or(result["pendingId"].as_str()) {
+                                c.answered.push((q.op_id.clone(), id.to_string()));
+                                let extra = c.answered.len().saturating_sub(20);
+                                c.answered.drain(..extra);
                             }
                         }
                     }

@@ -5,6 +5,7 @@
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::app::{SyncStatus, VzApp};
@@ -12,6 +13,7 @@ use crate::i18n::t;
 use crate::sync::wire::Role;
 use crate::tr;
 use crate::ui::kit::{Button, ListRow};
+use crate::ui::screens::icon;
 use crate::ui::theme::{Palette, Typeset as _, space, text};
 
 pub(crate) fn role_label(r: Role) -> &'static str {
@@ -66,60 +68,75 @@ impl VzApp {
         })
     }
 
-    /// The body of the "Cloud sync" card in Settings.
+    /// The body of the "Cloud sync" page in Settings (option B, 2026-11-10,
+    /// the owner's pick): a band that says how sync stands and who is signed
+    /// in, the changes to review, then Businesses and Google Drive backups as
+    /// two small cards side by side, and "Delete my account" at the foot.
     pub(crate) fn sync_settings(&mut self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let body = v_flex().gap(px(space::L));
         let Some(cloud) = &self.cloud else { return self.sign_in_form(p, cx) };
         let email = cloud.email.clone();
-        let signed_in = h_flex()
-            .justify_between()
+        let (glyph, words, _) = self.sync_look().unwrap_or((IconName::Cloud, String::new(), false));
+        let status = self.sync_status();
+        let (ink, tint) = match status {
+            Some(SyncStatus::Synced) => (p.positive, p.positive_tint),
+            Some(SyncStatus::NeedsReview(_)) | Some(SyncStatus::UpdateRequired) => (p.negative, p.negative_tint),
+            _ => (p.warning, p.warning_tint),
+        };
+        let band = h_flex()
+            .flex_wrap()
             .gap(px(space::M))
-            .child(div().text_color(p.muted).child(tr!("Signed in as {email}", "Sesión iniciada como {email}")))
+            .px(px(space::M))
+            .py(px(10.))
+            .rounded(px(12.))
+            .bg(tint)
+            .child(icon(glyph, ink, 16.))
             .child(
-                Button::new("sync-delete-account")
-                    .danger_ghost()
-                    .label(t("Delete my account", "Borrar mi cuenta"))
-                    .on_click(cx.listener(|this, _, w, cx| this.open_delete_account(w, cx))),
+                h_flex()
+                    .flex_1()
+                    .min_w(px(180.))
+                    .gap(px(6.))
+                    .child(div().typeset(text::BODY_STRONG).text_color(p.text).child(words))
+                    .child(div().text_color(p.muted).child("·"))
+                    .child(div().min_w_0().truncate().text_color(p.muted).child(email)),
             )
             .child(
                 Button::new("sync-sign-out")
                     .ghost()
+                    .small()
                     .label(t("Sign out", "Cerrar sesión"))
                     .on_click(cx.listener(|this, _, w, cx| this.sign_out(w, cx))),
             );
+        // What the band's words don't say: what to do about it.
+        let detail = match status {
+            Some(SyncStatus::Offline(0)) => Some(t("You can keep working; new clients, payments, expenses and income are sent when the connection is back.", "Puedes seguir trabajando; los clientes nuevos, pagos, gastos e ingresos se envían cuando vuelva la conexión.").to_string()),
+            Some(SyncStatus::Offline(n)) => Some(tr!("{n} changes wait and are sent when the connection is back.", "{n} cambios esperan y se envían cuando vuelva la conexión.")),
+            Some(SyncStatus::NeedsReview(n)) => Some(tr!("{n} changes weren't accepted by the cloud. Review them below.", "La nube no aceptó {n} cambios. Revísalos abajo.")),
+            Some(SyncStatus::NotLinked) => Some(t(
+                "Choose the business to show on this PC. Its books come from the cloud and stay in step with the phone app.",
+                "Elige el negocio que se verá en esta PC. Sus registros vienen de la nube y se mantienen al día con la app del teléfono.",
+            ).to_string()),
+            _ => None,
+        };
+        let delete_account = h_flex().justify_end().child(
+            Button::new("sync-delete-account")
+                .danger_ghost()
+                .small()
+                .label(t("Delete my account…", "Borrar mi cuenta…"))
+                .on_click(cx.listener(|this, _, w, cx| this.open_delete_account(w, cx))),
+        );
+        let body =
+            v_flex().gap(px(space::M)).child(band).children(detail.map(|d| div().typeset(text::CAPTION).text_color(p.muted).child(d)));
 
         if let Some(min) = &cloud.update_required {
             return body
-                .child(signed_in)
                 .child(div().text_color(p.text).child(tr!(
                     "This version of the app can't sync anymore. Install version {min} or newer; nothing is sent until then.",
                     "Esta versión de la app ya no puede sincronizar. Instala la versión {min} o una más nueva; no se envía nada hasta entonces."
                 )))
+                .child(delete_account)
                 .into_any_element();
         }
 
-        let Some(linked) = cloud.linked.clone() else {
-            return body
-                .child(signed_in)
-                .child(div().text_color(p.text).child(t(
-                    "Choose the business to show on this PC. Its books come from the cloud and stay in step with the phone app; the books already on this PC are kept as they are.",
-                    "Elige el negocio que se verá en esta PC. Sus registros vienen de la nube y se mantienen al día con la app del teléfono; los registros que ya hay en esta PC se guardan tal cual.",
-                )))
-                .child(self.business_list(p, cx))
-                .child(self.drive_settings(p, cx))
-                .into_any_element();
-        };
-
-        let name =
-            cloud.businesses.as_ref().and_then(|l| l.iter().find(|b| b.business_id == linked)).map(|b| b.name.clone()).unwrap_or_default();
-        let status = match self.sync_status() {
-            Some(SyncStatus::Synced) => t("Everything is synced.", "Todo está sincronizado.").to_string(),
-            Some(SyncStatus::Sending(n)) => tr!("Sending {n} changes…", "Enviando {n} cambios…"),
-            Some(SyncStatus::Offline(0)) => t("Offline. You can keep working; new clients, payments, expenses and income are sent when the connection is back.", "Sin conexión. Puedes seguir trabajando; los clientes nuevos, pagos, gastos e ingresos se envían cuando vuelva la conexión.").to_string(),
-            Some(SyncStatus::Offline(n)) => tr!("Offline. {n} changes wait and are sent when the connection is back.", "Sin conexión. {n} cambios esperan y se envían cuando vuelva la conexión."),
-            Some(SyncStatus::NeedsReview(n)) => tr!("{n} changes weren't accepted by the cloud. Review them below.", "La nube no aceptó {n} cambios. Revísalos abajo."),
-            _ => String::new(),
-        };
         let refused = self.store.outbox_refused().unwrap_or_default();
         let review: Vec<AnyElement> = refused
             .into_iter()
@@ -143,26 +160,30 @@ impl VzApp {
                     .into_any_element()
             })
             .collect();
-        body.child(signed_in)
-            .child(
-                div()
-                    .typeset(text::BODY_STRONG)
-                    .text_color(p.text)
-                    .child(tr!("This PC shows {name} from the cloud", "Esta PC muestra {name} desde la nube")),
-            )
-            .child(div().text_color(p.muted).child(status))
-            .children((!review.is_empty()).then(|| v_flex().mx(px(-space::XL)).children(review)))
-            .child(self.business_list(p, cx))
-            .child(self.drive_settings(p, cx))
+        let choosing = cloud.linked.is_none();
+        let cards = h_flex()
+            .flex_wrap()
+            .items_start()
+            .gap(px(space::M))
+            .when(choosing, |d| d.child(self.business_list(p, cx)))
+            .child(self.drive_settings(p, cx));
+        body.children((!review.is_empty()).then(|| v_flex().mx(px(-space::XL)).children(review)))
+            .child(cards)
+            .child(delete_account)
             .into_any_element()
     }
 
-    /// Every business the person belongs to: show one on this PC, start a
-    /// new one, or (admins) delete one for everyone.
+    /// One of the page's two small cards.
+    fn sync_card(p: &Palette) -> Div {
+        v_flex().flex_1().min_w(px(240.)).gap(px(space::S)).p(px(space::M)).rounded(px(12.)).border_1().border_color(p.border)
+    }
+
+    /// Every business the person belongs to, one short line each: the one
+    /// this PC shows is marked; others open with Open; admins can delete.
     fn business_list(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let Some(cloud) = &self.cloud else { return div().into_any_element() };
         let online = cloud.online;
-        let note = |s: &'static str| div().text_color(p.muted).child(s).into_any_element();
+        let note = |s: &'static str| div().typeset(text::CAPTION).text_color(p.muted).child(s).into_any_element();
         let rows: Vec<AnyElement> = match &cloud.businesses {
             None => vec![note(t("Getting your businesses…", "Buscando tus negocios…"))],
             Some(list) if list.is_empty() => vec![note(t(
@@ -174,36 +195,53 @@ impl VzApp {
                 .map(|b| {
                     let (id, name) = (b.business_id.clone(), b.name.clone());
                     let shown = cloud.linked.as_deref() == Some(id.as_str());
-                    let row =
-                        ListRow::new(SharedString::from(format!("sync-business-{id}"))).title(name.clone()).subtitle(role_label(b.role));
-                    let row = if shown {
-                        row.trailing(div().text_color(p.muted).child(t("Showing now", "Abierto ahora")))
-                    } else {
-                        let id = id.clone();
-                        row.trailing(
-                            Button::new(SharedString::from(format!("sync-open-{id}")))
-                                .label(t("Open", "Abrir"))
-                                .on_click(cx.listener(move |this, _, w, cx| this.link_business(&id, w, cx))),
+                    let open_id = id.clone();
+                    h_flex()
+                        .gap(px(space::S))
+                        .min_h(px(30.))
+                        .child(div().flex_none().size(px(8.)).rounded_full().bg(if shown { p.positive } else { p.border }))
+                        .child(
+                            h_flex()
+                                .flex_1()
+                                .min_w_0()
+                                .gap(px(6.))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .truncate()
+                                        .text_color(p.text)
+                                        .when(shown, |d| d.font_weight(FontWeight::SEMIBOLD))
+                                        .child(name.clone()),
+                                )
+                                .child(div().flex_none().typeset(text::CAPTION).text_color(p.faint).child(role_label(b.role))),
                         )
-                    };
-                    let row = if b.role == Role::Admin {
-                        row.trailing(
-                            Button::new(SharedString::from(format!("sync-delete-{id}")))
-                                .danger_ghost()
-                                .icon(IconName::Trash)
-                                .tooltip(t("Delete business", "Eliminar negocio"))
-                                .disabled(!online)
-                                .on_click(cx.listener(move |this, _, w, cx| this.open_delete_business(id.clone(), name.clone(), w, cx))),
-                        )
-                    } else {
-                        row
-                    };
-                    row.into_any_element()
+                        .when(!shown, |r| {
+                            r.child(
+                                Button::new(SharedString::from(format!("sync-open-{id}")))
+                                    .small()
+                                    .label(t("Open", "Abrir"))
+                                    .on_click(cx.listener(move |this, _, w, cx| this.link_business(&open_id, w, cx))),
+                            )
+                        })
+                        .when(b.role == Role::Admin, |r| {
+                            let (id, name) = (id.clone(), name.clone());
+                            r.child(
+                                Button::new(SharedString::from(format!("sync-delete-{id}")))
+                                    .danger_ghost()
+                                    .small()
+                                    .icon(IconName::Trash)
+                                    .tooltip(t("Delete business", "Eliminar negocio"))
+                                    .disabled(!online)
+                                    .on_click(
+                                        cx.listener(move |this, _, w, cx| this.open_delete_business(id.clone(), name.clone(), w, cx)),
+                                    ),
+                            )
+                        })
+                        .into_any_element()
                 })
                 .collect(),
         };
-        v_flex()
-            .gap(px(space::S))
+        Self::sync_card(p)
             .child(
                 h_flex()
                     .justify_between()
@@ -211,51 +249,57 @@ impl VzApp {
                     .child(div().typeset(text::BODY_STRONG).text_color(p.text).child(t("Businesses", "Negocios")))
                     .child(
                         Button::new("sync-new-business")
+                            .small()
                             .icon(IconName::Plus)
-                            .label(t("New business", "Nuevo negocio"))
+                            .label(t("New", "Nuevo"))
                             .disabled(!online)
-                            .tooltip(t("Needs a connection", "Necesita conexión"))
+                            .tooltip(t("New business. Needs a connection.", "Negocio nuevo. Necesita conexión."))
                             .on_click(cx.listener(|this, _, w, cx| this.open_new_business(w, cx))),
                     ),
             )
-            .child(v_flex().mx(px(-space::XL)).children(rows))
+            .children(rows)
             .into_any_element()
     }
 
     /// Backups to Google Drive: off with a "Turn on" button, waiting for the
-    /// browser, or on with the last upload and "Back up now".
+    /// browser, or on with the last upload and "Back up now". The long
+    /// explanation shows only while Drive isn't connected.
     fn drive_settings(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let Some(c) = &self.cloud else { return div().into_any_element() };
         let d = &c.drive;
-        let title = div().typeset(text::BODY_STRONG).text_color(p.text).child(t("Backups to Google Drive", "Copias en Google Drive"));
-        let error = d.error.clone().map(|e| div().text_color(p.negative).child(e));
-        let body = if d.linking.is_some() {
-            v_flex()
-                .gap(px(space::S))
-                .child(div().text_color(p.muted).child(t(
+        let title = div().typeset(text::BODY_STRONG).text_color(p.text).child(t("Google Drive backups", "Copias en Google Drive"));
+        let error = d.error.clone().map(|e| div().typeset(text::CAPTION).text_color(p.negative).child(e));
+        let small = |s: String| div().typeset(text::CAPTION).text_color(p.muted).child(s);
+        let card = Self::sync_card(p).child(title);
+        let card = if d.linking.is_some() {
+            card.child(small(
+                t(
                     "Finish in your browser: choose your Google account and allow access to the files this app creates.",
                     "Termina en el navegador: elige tu cuenta de Google y permite el acceso a los archivos que crea esta app.",
-                )))
-                .child(
-                    h_flex()
-                        .gap(px(space::S))
-                        .child(Button::new("drive-waiting").label(t("Waiting for your browser…", "Esperando el navegador…")).loading(true))
-                        .child(
-                            Button::new("drive-cancel")
-                                .ghost()
-                                .label(t("Cancel", "Cancelar"))
-                                .on_click(cx.listener(|this, _, _, cx| this.cancel_drive_link(cx))),
-                        ),
                 )
+                .to_string(),
+            ))
+            .child(
+                h_flex()
+                    .gap(px(space::S))
+                    .child(
+                        Button::new("drive-waiting").small().label(t("Waiting for your browser…", "Esperando el navegador…")).loading(true),
+                    )
+                    .child(
+                        Button::new("drive-cancel")
+                            .ghost()
+                            .small()
+                            .label(t("Cancel", "Cancelar"))
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_drive_link(cx))),
+                    ),
+            )
         } else if !self.drive_on() {
-            // Connected but turned off for these books, or not connected yet
-            // (an emailed-code account, or the permission was unticked).
             let connected = d.connected == Some(true);
             let (words, label) = if connected {
                 (
                     t(
-                        "Off for these books. Turn it on to keep a copy in your Google Drive every day and whenever you back up.",
-                        "Desactivadas para estos registros. Actívalas para guardar una copia en tu Google Drive cada día y cada vez que hagas una copia.",
+                        "Off for these books. Turn it on to keep a copy in your Google Drive every day.",
+                        "Desactivadas para estos registros. Actívalas para guardar una copia en tu Google Drive cada día.",
                     ),
                     t("Turn on", "Activar"),
                 )
@@ -268,9 +312,10 @@ impl VzApp {
                     t("Connect Google Drive", "Conectar Google Drive"),
                 )
             };
-            v_flex().gap(px(space::S)).child(div().text_color(p.muted).child(words)).children(error).child(
+            card.child(small(words.to_string())).children(error).child(
                 h_flex().child(
                     Button::new("drive-on")
+                        .small()
                         .icon(IconName::CloudUpload)
                         .label(label)
                         .disabled(!c.online)
@@ -281,30 +326,33 @@ impl VzApp {
             let last = match self.drive_last() {
                 Some(when) => {
                     let when = when.format("%Y-%m-%d %H:%M").to_string();
-                    tr!("On. Last backup in Drive: {when}.", "Activadas. Última copia en Drive: {when}.")
+                    tr!("On · last {when}", "Activadas · última {when}")
                 }
-                None => t("On. No backup in Drive yet.", "Activadas. Aún no hay copias en Drive.").to_string(),
+                None => t("On · no backup yet", "Activadas · aún sin copias").to_string(),
             };
-            v_flex().gap(px(space::S)).child(div().text_color(p.muted).child(last)).children(error).child(
+            card.child(small(last)).children(error).child(
                 h_flex()
+                    .flex_wrap()
                     .gap(px(space::S))
                     .child(
                         Button::new("drive-now")
+                            .small()
                             .icon(IconName::CloudUpload)
-                            .label(t("Back up to Drive now", "Copiar a Drive ahora"))
+                            .label(t("Back up now", "Copiar ahora"))
                             .loading(d.uploading)
                             .on_click(cx.listener(|this, _, w, cx| this.drive_backup(false, w, cx))),
                     )
                     .child(
                         Button::new("drive-off")
                             .ghost()
+                            .small()
                             .label(t("Turn off", "Desactivar"))
                             .tooltip(t("Backups already in Drive stay there.", "Las copias que ya están en Drive se quedan ahí."))
                             .on_click(cx.listener(|this, _, _, cx| this.turn_off_drive(cx))),
                     ),
             )
         };
-        v_flex().gap(px(space::S)).pt(px(space::M)).border_t_1().border_color(p.rule).child(title).child(body).into_any_element()
+        card.into_any_element()
     }
 
     /// Signed out: what signing in does, and the button that opens the

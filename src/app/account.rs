@@ -120,14 +120,8 @@ impl VzApp {
     }
 
     fn initials(&self) -> String {
-        let email = self.cloud.as_ref().map(|c| c.email.as_str()).unwrap_or("?");
-        email
-            .split(['@', '.', ' '])
-            .filter(|w| !w.is_empty())
-            .take(2)
-            .filter_map(|w| w.chars().next())
-            .flat_map(char::to_uppercase)
-            .collect()
+        let (name, email) = self.who();
+        super::initials_of(&name, if email.is_empty() { "?" } else { &email })
     }
 
     fn role_badge(role: Option<Role>) -> IconName {
@@ -200,6 +194,7 @@ impl VzApp {
         };
         let who = role.map(role_label).unwrap_or_default();
         let avatar = StatusAvatar::new("account", self.initials(), Self::ring_color(&p, sev), Self::role_badge(role))
+            .photo(self.own_photo())
             .tooltip(format!("{who} · {why}"))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.account_open = !this.account_open;
@@ -226,7 +221,7 @@ impl VzApp {
     fn account_panel(&self, p: &Palette, sev: Severity, reasons: Vec<Reason>, cx: &mut Context<Self>) -> Overlay {
         let ring = Self::ring_color(p, sev);
         let role = self.role();
-        let email = self.cloud.as_ref().map(|c| c.email.clone()).unwrap_or_default();
+        let (name, email) = self.who();
         let item = |id: &'static str, glyph: IconName, title: &str, sub: Option<String>, f: MenuAction, cx: &mut Context<Self>| {
             h_flex()
                 .id(id)
@@ -359,8 +354,38 @@ impl VzApp {
             h_flex()
                 .gap(px(space::M))
                 .p(px(space::M))
-                .child(StatusAvatar::new("account-big", self.initials(), ring, Self::role_badge(role)))
-                .child(div().flex_1().min_w_0().typeset(text::BODY_STRONG).text_color(p.text).truncate().child(email))
+                .child(StatusAvatar::new("account-big", self.initials(), ring, Self::role_badge(role)).photo(self.own_photo()))
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .gap(px(2.))
+                        // The name, with the email under it; without a name, the email alone.
+                        .child(div().typeset(text::BODY_STRONG).text_color(p.text).truncate().child(if name.is_empty() {
+                            email.clone()
+                        } else {
+                            name.clone()
+                        }))
+                        .when(!name.is_empty(), |d| {
+                            d.child(div().typeset(text::CAPTION).text_color(p.muted).truncate().child(email.clone()))
+                        })
+                        .child(
+                            div()
+                                .id("acct-edit-profile")
+                                .mt(px(4.))
+                                .typeset(text::CAPTION)
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(p.text)
+                                .cursor_pointer()
+                                .hover(|d| d.underline())
+                                .child(t("Edit profile", "Editar perfil"))
+                                .on_click(cx.listener(|this, _, w, cx| {
+                                    this.account_open = false;
+                                    this.open_profile(w, cx);
+                                    cx.notify();
+                                })),
+                        ),
+                )
                 .children(role.map(|r| pill(p, role_label(r), Tone::Accent))),
         )
         .child(
@@ -382,6 +407,25 @@ impl VzApp {
                 .children(status_rows),
         )
         .child(section(Some(t("Business", "Negocio"))).children(businesses))
+        .child(
+            section(None)
+                .child(item(
+                    "acct-help",
+                    IconName::BookOpen,
+                    t("Help", "Ayuda"),
+                    Some(t("How Acervus works, in plain words", "Cómo funciona Acervus, en palabras sencillas").to_string()),
+                    Box::new(|this, w, cx| this.open_help(w, cx)),
+                    cx,
+                ))
+                .child(item(
+                    "acct-tour",
+                    IconName::Compass,
+                    t("Take the tour", "Hacer el recorrido"),
+                    Some(t("A one-minute look at the essentials", "Un vistazo de un minuto a lo esencial").to_string()),
+                    Box::new(|this, w, cx| this.start_tour(w, cx)),
+                    cx,
+                )),
+        )
         .child(
             section(None).child(
                 h_flex()

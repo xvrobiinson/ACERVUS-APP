@@ -79,7 +79,10 @@ pub fn describe(e: &Value, s: &Settings) -> String {
             let m = e["message"].as_str().unwrap_or_default();
             return tr!("The cloud couldn't save this: {m}", "La nube no pudo guardar esto: {m}");
         }
-        _ => t("Something went wrong. Try again.", "Algo salió mal. Inténtalo de nuevo."),
+        _ => t(
+            "The cloud refused this for a reason this version doesn't know, so nothing changed. Try again; if it keeps happening, update the app.",
+            "La nube rechazó esto por un motivo que esta versión no conoce, así que nada cambió. Inténtalo de nuevo; si sigue pasando, actualiza la app.",
+        ),
     };
     text.to_string()
 }

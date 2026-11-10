@@ -216,8 +216,7 @@ fn opt(s: &str) -> Option<&str> {
 }
 
 /// Receipt wording keys, which the cloud keeps as written here.
-const WORDING: &str =
-    "key GLOB 'receipt_rules_*' OR key IN ('receipt_client_sign', 'receipt_lender_sign', 'receipt_payment_footer', 'receipt_loan_footer')";
+const WORDING: &str = "key GLOB 'receipt_rules_*' OR key GLOB 'receipt_wa_*' OR key IN ('receipt_client_sign', 'receipt_lender_sign', 'receipt_payment_footer', 'receipt_loan_footer')";
 
 /// Replaces the books in `conn` with `snap`. All or nothing: if any record
 /// doesn't fit, the previous copy stays as it was. A database linked to a
@@ -432,6 +431,7 @@ pub fn apply(conn: &mut Connection, snap: &Snapshot) -> Result<()> {
             ("late_fee_rate", &s.late_fee_rate.to_string()),
             ("receipt_after_payment", b(s.receipt_after_payment)),
             ("receipt_after_loan", b(s.receipt_after_loan)),
+            ("receipt_format", s.receipt_format.as_deref().unwrap_or("full")),
         ];
         for (k, v) in pairs {
             crate::database::repositories::settings::set(&tx, k, v)?;

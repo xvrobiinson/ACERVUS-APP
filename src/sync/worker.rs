@@ -253,9 +253,12 @@ async fn upload(
     let url_from = match mutation {
         "clients:setPhoto" => "clients:photoUploadUrl",
         "settings:setLogo" => "settings:logoUploadUrl",
+        "account:setPhoto" => "account:photoUploadUrl",
         _ => return Err(Outcome::Refused(serde_json::json!({ "code": "invalid" }))),
     };
-    let url = match call(client, url_from, serde_json::json!({ "businessId": business })).await {
+    // The person's own photo belongs to no business.
+    let url_args = if url_from == "account:photoUploadUrl" { serde_json::json!({}) } else { serde_json::json!({ "businessId": business }) };
+    let url = match call(client, url_from, url_args).await {
         Outcome::Accepted(serde_json::Value::String(url)) => url,
         Outcome::Refused(e) => return Err(Outcome::Refused(e)),
         _ => return Err(Outcome::NotSent),

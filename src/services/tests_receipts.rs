@@ -444,3 +444,99 @@ fn receipts_say_how_the_payment_was_made() {
     s.set_payment_paid_with(pid, None).unwrap();
     assert_eq!(receipt(&s, pid).0.paid_with, None);
 }
+
+/// The business's short receipt (2026-11-09): what was paid and what to pay
+/// next, with the late part spelled out; no schedule and no history.
+#[test]
+fn the_next_payment_receipt_says_what_to_pay_next() {
+    let (mut s, _, lid) = scheduled_loan();
+    s.refresh(d(2026, 3, 10)).unwrap();
+    let pid = pay_installments(&mut s, lid, 50_000, d(2026, 3, 10), Instruction::Installment(1));
+    let mut st = s.snapshot().unwrap().settings.clone();
+    st.receipt_format = settings::ReceiptFormat::Next;
+    s.save_settings(&st).unwrap();
+    let (r, html) = receipt(&s, pid);
+    let next = r.next.expect("a next payment");
+    assert_eq!(next.on, Some(d(2026, 4, 1)));
+    assert_eq!(next.late, r.overdue_after);
+    assert_eq!(Some(next.amount), r.next_due.map(|n| n.1));
+    assert!(!next.interest);
+    for part in ["Your next payment", "By Apr 1, 2026", "that is already late", "Still owed in total", "Amount paid", ">Interest<"] {
+        assert!(html.contains(part), "{part} missing");
+    }
+    for gone in ["Payment history", "Balance after this payment", "paid in full</span>"] {
+        assert!(!html.contains(gone), "{gone} still printed");
+    }
+    // The split follows its switch, as on the full receipt.
+    st.receipt_show = st.receipt_show.with(5, false);
+    s.save_settings(&st).unwrap();
+    assert!(!receipt(&s, pid).1.contains(">Interest<"));
+}
+
+#[test]
+fn interest_only_loans_get_their_next_interest_payment() {
+    let (mut s, _, lid) = open_loan();
+    let pid = pay_open(&mut s, lid, 10_000, d(2026, 2, 1));
+    let mut st = s.snapshot().unwrap().settings.clone();
+    st.receipt_format = settings::ReceiptFormat::Next;
+    s.save_settings(&st).unwrap();
+    let (r, html) = receipt(&s, pid);
+    let next = r.next.expect("a next interest payment");
+    assert!(next.interest);
+    assert_eq!(next.on, Some(d(2026, 3, 1)));
+    assert_eq!((next.amount, next.late), (10_000, 0));
+    assert!(html.contains("Your next interest payment"));
+    // The full receipt of the same payment keeps its own layout.
+    st.receipt_format = settings::ReceiptFormat::Full;
+    s.save_settings(&st).unwrap();
+    assert!(!receipt(&s, pid).1.contains("Your next interest payment"));
+}
+
+/// Receipt printers' rolls always print the short receipt, one column at
+/// the head's width; loan receipts stay on Letter.
+#[test]
+fn rolls_print_the_short_receipt_and_loan_receipts_stay_on_letter() {
+    let (mut s, _, lid) = scheduled_loan();
+    let pid = pay_installments(&mut s, lid, 300_000, d(2026, 2, 1), Instruction::Installment(1));
+    for (paper, width) in [(settings::Paper::Roll58, "58mm"), (settings::Paper::Roll80, "80mm"), (settings::Paper::Roll112, "112mm")] {
+        let mut st = s.snapshot().unwrap().settings.clone();
+        st.receipt_paper = paper;
+        s.save_settings(&st).unwrap();
+        let (_, html) = receipt(&s, pid);
+        assert!(html.contains("Your next payment") && !html.contains("Payment history"), "{width}");
+        assert!(html.contains(&format!("width:{}mm", width.trim_end_matches("mm"))) && !html.contains("size: letter"), "{width}");
+        let snap = s.snapshot().unwrap();
+        let loan_html = receipt::render_loan(&receipt::loan_data(&snap, lid).unwrap(), &snap);
+        assert!(loan_html.contains("size: letter"));
+    }
+    // The paper is this PC's and survives saving.
+    assert_eq!(s.snapshot().unwrap().settings.receipt_paper, settings::Paper::Roll112);
+}
+
+#[test]
+fn the_last_payment_says_the_loan_is_paid() {
+    let (mut s, _, lid) = open_loan();
+    let pid = pay_open(&mut s, lid, 110_000, d(2026, 2, 1));
+    let mut st = s.snapshot().unwrap().settings.clone();
+    st.receipt_format = settings::ReceiptFormat::Next;
+    s.save_settings(&st).unwrap();
+    let (r, html) = receipt(&s, pid);
+    assert_eq!(r.next, None);
+    assert!(html.contains("This loan is fully paid") && !html.contains("Your next"));
+}
+
+/// The WhatsApp receipt follows the business's format.
+#[test]
+fn whatsapp_receipts_add_the_next_payment_when_chosen() {
+    let (mut s, _, lid) = scheduled_loan();
+    s.refresh(d(2026, 3, 10)).unwrap();
+    let pid = pay_installments(&mut s, lid, 50_000, d(2026, 3, 10), Instruction::Installment(1));
+    let text = super::whatsapp::receipt_text(&s.snapshot().unwrap(), pid).unwrap();
+    assert!(!text.contains("Next payment"));
+    let mut st = s.snapshot().unwrap().settings.clone();
+    st.receipt_format = settings::ReceiptFormat::Next;
+    s.save_settings(&st).unwrap();
+    let text = super::whatsapp::receipt_text(&s.snapshot().unwrap(), pid).unwrap();
+    assert!(text.contains("Next payment: ") && text.contains(" by Apr 1, 2026"), "{text}");
+    assert!(text.contains("already late)"), "{text}");
+}

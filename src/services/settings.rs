@@ -59,6 +59,80 @@ impl ThemePref {
     }
 }
 
+/// A payment receipt: the full schedule and history, or what was paid and
+/// the next payment (2026-11-09, each business picks; synced as
+/// `receiptFormat`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ReceiptFormat {
+    #[default]
+    Full,
+    Next,
+}
+
+impl ReceiptFormat {
+    pub const ALL: [ReceiptFormat; 2] = [ReceiptFormat::Full, ReceiptFormat::Next];
+    pub fn key(self) -> &'static str {
+        match self {
+            ReceiptFormat::Full => "full",
+            ReceiptFormat::Next => "next",
+        }
+    }
+    pub fn from_key(k: &str) -> Self {
+        Self::ALL.into_iter().find(|f| f.key() == k).unwrap_or_default()
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            ReceiptFormat::Full => t("Full schedule", "Calendario completo"),
+            ReceiptFormat::Next => t("Next payment", "Próximo pago"),
+        }
+    }
+}
+
+/// The paper this PC prints receipts on: Letter, or a thermal roll (the
+/// 2¼", 3⅛" and 4" rolls of counter and Bluetooth printers). This PC's
+/// own; rolls always print the short receipt. The web app's twin is
+/// `Paper` in src/receipts/receipt.ts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Paper {
+    #[default]
+    Letter,
+    Roll80,
+    Roll58,
+    Roll112,
+}
+
+impl Paper {
+    pub const ALL: [Paper; 4] = [Paper::Letter, Paper::Roll80, Paper::Roll58, Paper::Roll112];
+    pub fn key(self) -> &'static str {
+        match self {
+            Paper::Letter => "letter",
+            Paper::Roll58 => "58mm",
+            Paper::Roll80 => "80mm",
+            Paper::Roll112 => "112mm",
+        }
+    }
+    pub fn from_key(k: &str) -> Self {
+        Self::ALL.into_iter().find(|p| p.key() == k).unwrap_or_default()
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Paper::Letter => t("Letter", "Carta"),
+            Paper::Roll58 => "58 mm",
+            Paper::Roll80 => "80 mm",
+            Paper::Roll112 => "112 mm",
+        }
+    }
+    /// A roll's width and the width its head prints, in millimetres.
+    pub fn roll(self) -> Option<(f32, f32)> {
+        match self {
+            Paper::Letter => None,
+            Paper::Roll58 => Some((58., 48.)),
+            Paper::Roll80 => Some((80., 72.)),
+            Paper::Roll112 => Some((112., 104.)),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ChartRange {
     OneMonth,
@@ -261,6 +335,10 @@ pub struct Settings {
     pub receipt_client: ReceiptClientFields,
     /// Optional parts of payment receipts.
     pub receipt_show: ReceiptShow,
+    /// Payment receipts: the full schedule or the next payment (the business's).
+    pub receipt_format: ReceiptFormat,
+    /// The paper this PC prints receipts on (this PC's own).
+    pub receipt_paper: Paper,
     pub theme: ThemePref,
     pub chart_range: ChartRange,
     pub show_interest_line: bool,
@@ -272,6 +350,12 @@ pub struct Settings {
     /// The hero's four figures as the person chose them, the JSON saved to
     /// their account (`services::hero_layout`); empty for the defaults.
     pub hero_figures: String,
+    /// The WhatsApp reminders sent from this PC today
+    /// (`whatsapp::Reminder::key`); older days are dropped.
+    pub wa_sent: Vec<String>,
+    /// The welcome tour finished or skipped, and its version ("done:1"),
+    /// this PC's copy of the account's; empty when neither.
+    pub tour: String,
     /// Written by the backup command, never by `save_settings`.
     pub last_backup_at: Option<String>,
 }
@@ -295,12 +379,16 @@ impl Default for Settings {
             receipt_after_loan: true,
             receipt_client: ReceiptClientFields::default(),
             receipt_show: ReceiptShow::default(),
+            receipt_format: ReceiptFormat::Full,
+            receipt_paper: Paper::Letter,
             theme: ThemePref::Light,
             chart_range: ChartRange::SixMonths,
             show_interest_line: true,
             overview_layout: OverviewLayout::default(),
             interest_period: crate::domain::periods::Period::Month,
             hero_figures: String::new(),
+            wa_sent: Vec::new(),
+            tour: String::new(),
             last_backup_at: None,
         }
     }
@@ -346,15 +434,19 @@ impl Settings {
                 address: flag("receipt_client_address", d.receipt_client.address),
             },
             receipt_show: ReceiptShow::from_values(ReceiptShow::KEYS.map(|(key, _)| flag(key, true))),
+            receipt_format: get("receipt_format").map(ReceiptFormat::from_key).unwrap_or_default(),
+            receipt_paper: get("receipt_paper").map(Paper::from_key).unwrap_or_default(),
             theme: match get("theme") {
                 Some("dark") => ThemePref::Dark,
                 _ => ThemePref::Light,
             },
             chart_range: get("chart_range").map(ChartRange::from_key).unwrap_or(d.chart_range),
             show_interest_line: flag("show_interest_line", d.show_interest_line),
-            overview_layout: get("overview_layout").map(OverviewLayout::from_key).unwrap_or_default(),
+            overview_layout: get("overview_layout2").map(OverviewLayout::from_key).unwrap_or_default(),
             interest_period: get("interest_period").map(crate::domain::periods::Period::from_key).unwrap_or_default(),
             hero_figures: get("hero_figures").unwrap_or_default().to_string(),
+            wa_sent: get("wa_sent").map(|v| v.split(',').filter(|x| !x.is_empty()).map(str::to_string).collect()).unwrap_or_default(),
+            tour: get("tour").unwrap_or_default().to_string(),
             last_backup_at: get("last_backup_at").map(str::to_string),
         }
     }
@@ -381,12 +473,17 @@ impl Settings {
             ("receipt_client_id_number", b(self.receipt_client.id_number)),
             ("receipt_client_phone", b(self.receipt_client.phone)),
             ("receipt_client_address", b(self.receipt_client.address)),
+            ("receipt_format", self.receipt_format.key().into()),
+            ("receipt_paper", self.receipt_paper.key().into()),
             ("theme", self.theme.key().into()),
             ("chart_range", self.chart_range.key().into()),
             ("show_interest_line", b(self.show_interest_line)),
-            ("overview_layout", self.overview_layout.key()),
+            // "2": the clean look's blocks (2026-11-09) start everyone on its arrangement.
+            ("overview_layout2", self.overview_layout.key()),
             ("interest_period", self.interest_period.key().into()),
             ("hero_figures", self.hero_figures.clone()),
+            ("wa_sent", self.wa_sent.join(",")),
+            ("tour", self.tour.clone()),
         ];
         pairs.extend(ReceiptShow::KEYS.iter().zip(self.receipt_show.values()).map(|((key, _), on)| (*key, b(on))));
         pairs.extend(self.receipt_text.to_pairs());

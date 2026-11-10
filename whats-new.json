@@ -1,25 +1,29 @@
 {
-  "version": "0.13",
+  "version": "0.14",
   "en": [
-    "You now sign in to use the app, with an emailed code or your Google account. New here? Create an account right from the sign-in screen.",
-    "The app always shows your business from the cloud, the same as the phone app. In more than one business? Switch at the top of the sidebar.",
-    "Backups: with Google, a copy goes to your Google Drive every day by itself; other accounts can connect Drive in Settings. A copy is also kept on this PC every day.",
-    "Restoring a backup now puts the business's books back for every phone and PC, after a clear warning.",
-    "Messages show at the bottom of the window and never get in the way of a button.",
-    "Record how each payment was made (cash, transfer, card, check) and see it on the receipt.",
-    "A new start-up animation, smoother motion everywhere, and an Overview you can arrange your way.",
-    "The change history in plain words.",
-    "The app now tells you when a new version is out, like this one."
+    "A new, cleaner look: no sidebar. The sections sit at the top, with search, messages and your account, and the Overview starts with what needs your attention today.",
+    "Admins see six cards with the business's totals. Each has a small \"i\" that says what it means, and a Reports tab gives a monthly statement, collections and overdue loans as a PDF or an Excel file.",
+    "A Calendar shows what falls due each day or week, what was received and what is late. Pick a day to record a payment or send a reminder.",
+    "Send payment reminders and receipts by WhatsApp from your own number, with the words you choose (Settings › WhatsApp messages).",
+    "Recording a payment is simpler: it pays the oldest installment first and says in plain words what the amount covers. Made a mistake? Press Undo right after saving.",
+    "The loan form says the loan in one sentence and who each loan type suits. Short of capital? Add it from the loan form without losing what you typed.",
+    "Receipts: choose the full schedule or just the next payment, and print on Letter paper or a 58, 80 or 112 mm receipt printer.",
+    "Search clients and loans from any screen (Ctrl+F).",
+    "New here? A short welcome tour shows the essentials, and Help explains how Acervus works in plain words. Both are in your account menu.",
+    "Your profile: add your name and a photo.",
+    "Clearer messages when something goes wrong, saying what happened and what to do."
   ],
   "es": [
-    "Ahora inicias sesión para usar la app, con un código por correo o tu cuenta de Google. ¿Eres nuevo? Crea tu cuenta desde la misma pantalla.",
-    "La app siempre muestra tu negocio desde la nube, igual que la app del teléfono. ¿Estás en más de un negocio? Cambia arriba en el menú lateral.",
-    "Copias de seguridad: con Google, cada día se guarda sola una copia en tu Google Drive; las demás cuentas pueden conectar Drive en Configuración. También se guarda una copia en esta PC cada día.",
-    "Restaurar una copia ahora devuelve los registros del negocio en cada teléfono y PC, después de un aviso claro.",
-    "Los mensajes aparecen abajo en la ventana y nunca tapan un botón.",
-    "Anota cómo se hizo cada pago (efectivo, transferencia, tarjeta, cheque) y velo en el recibo.",
-    "Una animación nueva al abrir, movimientos más suaves en toda la app y un Resumen que puedes ordenar a tu manera.",
-    "El historial de cambios en palabras sencillas.",
-    "La app ahora te avisa cuando sale una versión nueva, como esta."
+    "Un diseño nuevo y más limpio, sin menú lateral. Las secciones están arriba, con la búsqueda, los mensajes y tu cuenta, y el Resumen empieza con lo que necesita tu atención hoy.",
+    "Los administradores ven seis tarjetas con los totales del negocio. Cada una tiene una pequeña \"i\" que explica qué significa, y la pestaña Reportes da el estado mensual, los cobros y los préstamos atrasados en PDF o Excel.",
+    "Un Calendario muestra lo que vence cada día o semana, lo cobrado y lo atrasado. Elige un día para registrar un pago o enviar un recordatorio.",
+    "Envía recordatorios de pago y recibos por WhatsApp desde tu propio número, con las palabras que elijas (Configuración › Mensajes de WhatsApp).",
+    "Registrar un pago es más sencillo: paga primero la cuota más antigua y dice en palabras sencillas qué cubre el monto. ¿Te equivocaste? Pulsa Deshacer justo después de guardar.",
+    "El formulario de préstamo dice el préstamo en una frase y para quién es cada tipo. ¿Falta capital? Agrégalo desde el mismo formulario sin perder lo que escribiste.",
+    "Recibos: elige el calendario completo o solo el próximo pago, e imprime en papel Carta o en una impresora de recibos de 58, 80 o 112 mm.",
+    "Busca clientes y préstamos desde cualquier pantalla (Ctrl+F).",
+    "¿Eres nuevo? Un recorrido corto muestra lo esencial, y Ayuda explica cómo funciona Acervus en palabras sencillas. Ambos están en el menú de tu cuenta.",
+    "Tu perfil: agrega tu nombre y una foto.",
+    "Mensajes más claros cuando algo sale mal: qué pasó y qué hacer."
   ]
 }

@@ -527,6 +527,7 @@ pub fn business_differs(a: &Settings, b: &Settings) -> bool {
         || a.receipt_company != b.receipt_company
         || a.receipt_client != b.receipt_client
         || a.receipt_show != b.receipt_show
+        || a.receipt_format != b.receipt_format
         || a.receipt_text != b.receipt_text
         || a.currency_code != b.currency_code
         || a.number_style != b.number_style
@@ -555,6 +556,7 @@ fn settings(conn: &Connection, s: &Settings) -> Result<Value> {
         "receiptClient": { "name": s.receipt_client.name, "idNumber": s.receipt_client.id_number, "phone": s.receipt_client.phone,
                            "address": s.receipt_client.address },
         "receiptShow": show,
+        "receiptFormat": s.receipt_format.key(),
         "receiptText": wording,
         "currencyCode": s.currency_code,
         "numberStyle": s.number_style.key(),

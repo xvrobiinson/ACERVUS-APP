@@ -17,11 +17,11 @@ use chrono::NaiveDate;
 
 use super::Snapshot;
 use super::receipt_text::{self, RuleSet, Tags};
-use super::settings::{CompanyLines, ReceiptClientFields, ReceiptShow};
+use super::settings::{CompanyLines, Paper, ReceiptClientFields, ReceiptFormat, ReceiptShow};
 use crate::database::repositories::clients::Client;
 use crate::database::repositories::payments::Payment;
 use crate::domain::installments::{self, Applied, Installment, InstallmentStatus, Instruction, PlanPayment, PlanState};
-use crate::domain::ledger::owed_at_payment;
+use crate::domain::ledger::{ContractStatus, LoanFacts, delinquency, owed_at_payment};
 use crate::domain::loans::{Frequency, Method};
 use crate::domain::money::{Cents, MoneyFormat, Rate, percent_label};
 use crate::i18n::{self, t};
@@ -139,6 +139,19 @@ pub struct HistoryLine {
     pub capital_left: Cents,
 }
 
+/// What to pay next right after a payment (the short receipt and its
+/// WhatsApp text; the web's `nextAfterPayment`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NextPayment {
+    /// None when everything left is already late.
+    pub on: Option<NaiveDate>,
+    /// All to pay by then to be up to date, the late part included.
+    pub amount: Cents,
+    pub late: Cents,
+    /// An interest-only loan's next interest payment.
+    pub interest: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReceiptData {
     pub payment_id: i64,
@@ -167,6 +180,8 @@ pub struct ReceiptData {
     /// Installment loans: the next scheduled due date still unpaid, and
     /// what is owed by then. Open loans have none.
     pub next_due: Option<(NaiveDate, Cents)>,
+    /// What to pay next; none once the loan is paid off.
+    pub next: Option<NextPayment>,
     pub notes: String,
     /// How it was paid; none on older payments.
     pub paid_with: Option<crate::database::repositories::payments::PaidWith>,
@@ -255,6 +270,7 @@ pub fn data(snap: &Snapshot, payment_id: i64) -> Option<ReceiptData> {
         fees_after: 0,
         overdue_after: 0,
         next_due: None,
+        next: None,
         notes: payment.notes.clone(),
         paid_with: payment.paid_with,
         reversed: payment.reversal_reason.clone().filter(|_| payment.is_reversed()),
@@ -328,7 +344,17 @@ pub fn data(snap: &Snapshot, payment_id: i64) -> Option<ReceiptData> {
         let paid = state.installments.iter().filter(|x| x.remaining() <= 0).count();
         d.installments_paid = Some((paid, state.installments.len()));
         d.left_to_pay = Some(state.installments.iter().map(|x| x.remaining()).sum());
+        // The next installment with what is still owed by the payment day;
+        // only what fell due before that day is called late (one due that
+        // very day isn't late yet).
+        let late: Cents = state.installments.iter().filter(|x| x.due < on).map(|x| x.owed()).sum();
         d.next_due = state.installments.iter().find(|x| x.due > on && x.remaining() > 0).map(|x| (x.due, x.remaining() + d.overdue_after));
+        d.next = match d.next_due {
+            _ if d.left_to_pay.unwrap_or(0) <= 0 => None,
+            Some((on, amount)) => Some(NextPayment { on: Some(on), amount, late, interest: false }),
+            None if d.overdue_after > 0 => Some(NextPayment { on: None, amount: d.overdue_after, late, interest: false }),
+            None => None,
+        };
     } else {
         let mut facts = Vec::with_capacity(live.len());
         let mut after = None;
@@ -346,6 +372,12 @@ pub fn data(snap: &Snapshot, payment_id: i64) -> Option<ReceiptData> {
             after = Some(pos);
         }
         let after = after?;
+        if after.payoff() > 0 {
+            // The next interest payment as of this payment.
+            let open = LoanFacts { status: ContractStatus::Active, ..book.facts.clone() };
+            let q = delinquency(&open, &facts, payment.paid_on);
+            d.next = q.next_due.map(|on| NextPayment { on: Some(on), amount: q.next_due_amount, late: q.overdue_amount, interest: true });
+        }
         d.principal_before = after.principal_outstanding + payment.principal;
         d.interest_before = after.interest_outstanding + payment.interest;
         d.principal_after = after.principal_outstanding;
@@ -499,6 +531,12 @@ fn page(title: &str, css: &str, body: &str) -> String {
 
 /// `page` with an extra class on the sheet, for a receipt's own layout.
 fn page_with(title: &str, class: &str, css: &str, body: &str) -> String {
+    page_on(title, class, css, body, Paper::Letter)
+}
+
+/// A page on `paper`: Letter pages carry the name and page numbers; a
+/// thermal roll is one column at its head's width, black only.
+fn page_on(title: &str, class: &str, css: &str, body: &str, paper: Paper) -> String {
     let lang = i18n::get().key();
     let print = esc(t("Print", "Imprimir"));
     let (page_word, of) = (t("Page", "Página"), t("of", "de"));
@@ -512,14 +550,11 @@ fn page_with(title: &str, class: &str, css: &str, body: &str) -> String {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 <style>
-  @page {{ size: letter; margin: 0.5in;
-    @bottom-left {{ content: "{footer}"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5f6570; }}
-    @bottom-right {{ content: "{page_word} " counter(page) " {of} " counter(pages); font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5f6570; }}
-  }}
-{BASE_CSS}{css}</style>
+  {page_rule}
+{BASE_CSS}{css}{roll_css}</style>
 </head>
 <body>
-<div class="sheet {class}">
+<div class="sheet {class}{roll_class}">
 {body}
 </div>
 <div class="actions"><button onclick="window.print()">{print}</button></div>
@@ -528,8 +563,74 @@ fn page_with(title: &str, class: &str, css: &str, body: &str) -> String {
 </html>
 "#,
         title = esc(title),
+        page_rule = match paper.roll() {
+            Some(_) => "@page { margin: 0; }".to_string(),
+            None => format!(
+                r#"@page {{ size: letter; margin: 0.5in;
+    @bottom-left {{ content: "{footer}"; font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5f6570; }}
+    @bottom-right {{ content: "{page_word} " counter(page) " {of} " counter(pages); font: 7.5pt "Segoe UI", Arial, sans-serif; color: #5f6570; }}
+  }}"#
+            ),
+        },
+        roll_css = paper.roll().map(|(w, p)| roll_css(w, p)).unwrap_or_default(),
+        roll_class = if paper.roll().is_some() { " roll" } else { "" },
     )
 }
+
+/// A thermal roll: one column at the head's printing width, black only
+/// (thermal heads print no colors or fills), as long as the receipt. On
+/// screen it shows as a strip of paper. The web's `rollCssFor`.
+fn roll_css(paper_mm: f32, print_mm: f32) -> String {
+    let small = print_mm < 60.;
+    let side = (paper_mm - print_mm) / 2.;
+    let (body, h1, paid, next) = if small { (7.5, 11., 13., 12.) } else { (8.5, 12.5, 15., 13.5) };
+    let stack = if small { ".roll .next-row { flex-direction:column; align-items:flex-start; gap:1pt; }" } else { "" };
+    format!(
+        r#"
+  :root {{ --ink:#000; --muted:#000; --rule:#000; --soft:#fff; --accent:#000; --pos:#000; --pos-bg:#fff; --warn:#000; --warn-bg:#fff; --neg:#000; --neg-bg:#fff; }}
+  body {{ font-size:{body}pt; line-height:1.3; }}
+  .sheet.roll {{ width:{paper_mm}mm; min-height:0; padding:4mm {side}mm 6mm; }}
+  .roll .top {{ flex-direction:column; align-items:center; text-align:center; gap:3pt; border-bottom-width:1pt; }}
+  .roll .brand {{ flex-direction:column; gap:4pt; }}
+  .roll .doc {{ text-align:center; }}
+  .roll h1 {{ font-size:{h1}pt; }}
+  .roll .cols {{ grid-template-columns:1fr; }}
+  .roll .block {{ padding-top:6pt; }}
+  .roll table.kv.left td:first-child {{ width:auto; }}
+  .roll .paid-big .amt {{ font-size:{paid}pt; }}
+  .roll .next {{ border-width:1pt; border-radius:3pt; padding:6pt; }}
+  .roll .next .amt {{ font-size:{next}pt; }}
+  .roll .next .when {{ font-size:inherit; }}
+  {stack}
+  .roll .late {{ font-weight:700; }}
+  .roll .note {{ background:none; border:1pt solid #000; }}
+  .roll .facts {{ flex-direction:column; gap:1pt; }}
+  .roll .facts span {{ display:flex; justify-content:space-between; gap:8pt; }}
+  .roll .end {{ flex-direction:column; align-items:center; text-align:center; gap:2pt; }}
+  .roll .stamp {{ display:block; text-align:center; }}
+  .roll .signs {{ grid-template-columns:1fr; gap:26pt; margin-top:26pt; }}
+  .roll .void {{ font-size:11pt; }}
+  @media print {{ .sheet.roll {{ width:{paper_mm}mm; padding:2mm {side}mm 8mm; }} }}
+"#
+    )
+}
+
+/// The short receipt's own layout (the web's `NEXT_CSS`).
+const NEXT_CSS: &str = r#"
+  .sheet.short { min-height: 0; }
+  .paid-big { display:flex; justify-content:space-between; align-items:baseline; gap:12pt; padding:4pt 0 5pt; border-bottom:1pt solid var(--rule); margin-bottom:3pt; }
+  .paid-big .amt { font-size:18pt; font-weight:700; white-space:nowrap; }
+  .next { margin-top:12pt; border:1.2pt solid var(--ink); border-radius:6pt; padding:9pt 11pt; display:grid; gap:3pt; }
+  .next .label { margin:0; }
+  .next-row { display:flex; justify-content:space-between; align-items:baseline; gap:12pt; flex-wrap:wrap; }
+  .next .when { font-size:11.5pt; font-weight:600; }
+  .next .amt { font-size:15pt; font-weight:700; white-space:nowrap; }
+  .late { margin:0; color:var(--neg); }
+  .facts { display:flex; flex-wrap:wrap; gap:3pt 16pt; margin-top:9pt; font-size:8.5pt; color:var(--muted); }
+  .facts b { color:var(--ink); font-weight:600; white-space:nowrap; }
+  .void { border:2pt solid var(--neg); color:var(--neg); border-radius:6pt; text-align:center; font-weight:700; font-size:14pt; padding:4pt; margin-bottom:8pt; }
+  .void span { display:block; font-size:8.5pt; font-weight:400; }
+"#;
 
 fn row(label: &str, value: String, class: &str) -> String {
     format!("<tr class=\"{class}\"><td>{}</td><td class=\"num\">{value}</td></tr>", esc(label))
@@ -720,6 +821,10 @@ pub fn render(d: &ReceiptData, snap: &Snapshot) -> String {
     let installment_loan = d.method.has_installments();
     // The optional parts the business chose to print (Settings › Receipts).
     let show = snap.settings.receipt_show;
+    let paper = snap.settings.receipt_paper;
+    if snap.settings.receipt_format == ReceiptFormat::Next || paper.roll().is_some() {
+        return render_next(d, snap, paper);
+    }
 
     let mut paid = vec![row(t("Amount paid", "Monto pagado"), m(d.amount), "total")];
     if let Some(w) = d.paid_with {
@@ -848,6 +953,147 @@ pub fn render(d: &ReceiptData, snap: &Snapshot) -> String {
         },
     );
     page(&title, css, &body)
+}
+
+/// The short payment receipt: what was paid and what to pay next, always
+/// one short page; the receipt on thermal rolls. The same figures as the
+/// full one (the web's `nextPaymentReceipt`).
+fn render_next(d: &ReceiptData, snap: &Snapshot, paper: Paper) -> String {
+    let money = snap.settings.money();
+    let ds = snap.settings.date_style;
+    let m = |c: Cents| esc(&money.format(c));
+    let number = format!("{:06}", d.payment_id);
+    let installment_loan = d.method.has_installments();
+    let show = snap.settings.receipt_show;
+
+    let mut split = Vec::new();
+    if let Some(w) = d.paid_with {
+        split.push(row(t("Paid with", "Forma de pago"), esc(w.label()), "sub"));
+    }
+    if d.fee > 0 && show.late_fees {
+        split.push(row(if installment_loan { t("Late fees", "Cargos por mora") } else { t("Fee", "Cargo") }, m(d.fee), "sub"));
+    }
+    if show.split {
+        split.push(row(t("Interest", "Interés"), m(d.interest), "sub"));
+        split.push(row(t("Capital", "Abono a capital"), m(d.principal), "sub"));
+    }
+    let loan_rows = [
+        show.loan_number.then(|| row(t("Loan", "Préstamo"), format!("#{}", d.loan_id), "")),
+        Some(row(t("Loan date", "Fecha del préstamo"), esc(&ds.format(d.start_date)), "")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<String>();
+
+    let next = if d.balance_after() <= 0 {
+        format!(
+            "<p class=\"note done\">{CHECK} {}</p>",
+            esc(t("This loan is fully paid. Thank you!", "Este préstamo quedó saldado. ¡Gracias!"))
+        )
+    } else if let Some(n) = d.next {
+        let label = if n.interest {
+            t("Your next interest payment", "Su próximo pago de interés")
+        } else {
+            t("Your next payment", "Su próximo pago")
+        };
+        let when = match n.on {
+            Some(on) => {
+                let on = ds.format(on);
+                tr!("By {on}", "A más tardar el {on}")
+            }
+            None => t("Due now", "Vence ahora").to_string(),
+        };
+        let late = match (n.late, n.on) {
+            (0, _) => String::new(),
+            (late, Some(_)) => {
+                let late = money.format(late);
+                format!(
+                    "<p class=\"late\">{}</p>",
+                    esc(&tr!(
+                        "Includes {late} that is already late. Please pay it as soon as you can.",
+                        "Incluye {late} que ya está atrasado. Por favor páguelo lo antes posible."
+                    ))
+                )
+            }
+            (_, None) => format!(
+                "<p class=\"late\">{}</p>",
+                esc(t(
+                    "All of it is already late. Please pay it as soon as you can.",
+                    "Todo ya está atrasado. Por favor páguelo lo antes posible."
+                ))
+            ),
+        };
+        format!(
+            "<div class=\"next\"><p class=\"label\">{}</p><div class=\"next-row\"><span class=\"when\">{}</span><span class=\"amt\">{}</span></div>{late}</div>",
+            esc(label),
+            esc(&when),
+            m(n.amount)
+        )
+    } else {
+        String::new()
+    };
+
+    let facts = if show.balance && d.balance_after() > 0 {
+        let mut f = vec![(t("Still owed in total", "Total pendiente").to_string(), money.format(d.balance_after()))];
+        if let Some((paid, total)) = d.installments_paid {
+            f.push((
+                t("Installments paid in full", "Cuotas pagadas por completo").to_string(),
+                tr!("{paid} of {total}", "{paid} de {total}"),
+            ));
+        }
+        let repaid = percent_label(d.original_principal - d.principal_after, d.original_principal).unwrap_or_else(|| "0.0%".into());
+        f.push((t("Capital repaid", "Capital pagado").to_string(), repaid));
+        format!(
+            "<div class=\"facts\">{}</div>",
+            f.iter().map(|(l, v)| format!("<span>{} <b>{}</b></span>", esc(l), esc(v))).collect::<String>()
+        )
+    } else {
+        String::new()
+    };
+
+    let void = d
+        .reversed
+        .as_ref()
+        .map(|r| format!("<div class=\"void\">{}<span>{}</span></div>", esc(t("VOID", "ANULADO")), esc(r)))
+        .unwrap_or_default();
+    let notes = if d.notes.trim().is_empty() {
+        String::new()
+    } else {
+        format!("<p class=\"muted\">{} {}</p>", esc(t("Note:", "Nota:")), esc(&d.notes))
+    };
+    let title = tr!("Receipt {number}", "Recibo {number}");
+    let body = format!(
+        r#"{void}
+{header}
+<div class="cols">{client}<div class="block"><p class="label">{loan_l}</p><table class="kv">{loan_rows}</table></div></div>
+<div class="block"><p class="label">{paid_l}</p>
+<div class="paid-big"><span>{amount_l}</span><span class="amt">{amount}</span></div>
+{split}</div>
+{next}
+{facts}
+{notes}
+<div class="end"><span>{thanks}</span><span>{reference}</span></div>"#,
+        header = header(
+            snap,
+            &d.company,
+            t("Payment receipt", "Recibo de pago"),
+            &number,
+            t("Date paid", "Fecha de pago"),
+            &ds.format(d.paid_on)
+        ),
+        client = client_block(&d.client),
+        loan_l = esc(t("Loan", "Préstamo")),
+        paid_l = esc(t("This payment", "Este pago")),
+        amount_l = esc(t("Amount paid", "Monto pagado")),
+        amount = m(d.amount),
+        split = if split.is_empty() { String::new() } else { format!("<table class=\"kv\">{}</table>", split.join("")) },
+        thanks = esc(&company_tags(d.business.clone(), &d.company).fill(&snap.settings.receipt_text.payment_footer())),
+        reference = {
+            let receipt = format!("{} {number}", esc(t("Receipt", "Recibo")));
+            if show.loan_number { format!("{} #{} · {receipt}", esc(t("Loan", "Préstamo")), d.loan_id) } else { receipt }
+        },
+    );
+    page_on(&title, "short", NEXT_CSS, &body, paper)
 }
 
 /// The loan receipt: the terms the client agreed to, the schedule of an
@@ -1182,7 +1428,7 @@ pub fn render_pending(p: &PendingLines, snap: &Snapshot) -> Option<String> {
             if show.loan_number { format!("{} #{} · {receipt}", esc(t("Loan", "Préstamo")), loan.id) } else { receipt }
         },
     );
-    Some(page(&title, css, &body))
+    Some(page_on(&title, "", css, &body, snap.settings.receipt_paper))
 }
 
 /// Writes the receipt for a payment waiting for confirmation.

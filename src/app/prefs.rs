@@ -27,7 +27,13 @@ impl VzApp {
     /// PC's goes up.
     fn take_prefs(&mut self, v: &Value, cx: &mut Context<Self>) {
         let mut s = self.snap.settings.clone();
-        let (mut hero_up, mut period_up) = (None, None);
+        let (mut hero_up, mut period_up, mut tour_up) = (None, None, None);
+        match v.get("tour").and_then(Value::as_str) {
+            Some(t) => s.tour = t.to_string(),
+            None if !s.tour.is_empty() => tour_up = Some(s.tour.clone()),
+            None => {}
+        }
+        self.prefs_known = true;
         match v.get("hero").and_then(Value::as_str) {
             Some(h) => s.hero_figures = h.to_string(),
             None if !s.hero_figures.is_empty() => hero_up = Some(s.hero_figures.clone()),
@@ -37,8 +43,8 @@ impl VzApp {
             Some(p) => s.interest_period = Period::from_key(p),
             None => period_up = Some(s.interest_period),
         }
-        if hero_up.is_some() || period_up.is_some() {
-            self.send_prefs(hero_up, period_up);
+        if hero_up.is_some() || period_up.is_some() || tour_up.is_some() {
+            self.send_prefs(hero_up, period_up, tour_up);
         }
         if s != self.snap.settings {
             // This PC's own settings: kept here, never sent as the business's.
@@ -52,13 +58,16 @@ impl VzApp {
 
     /// Sends a change to the account. Offline it isn't sent; this PC keeps
     /// it and the next change online carries it up.
-    fn send_prefs(&self, hero: Option<String>, period: Option<Period>) {
+    pub(crate) fn send_prefs(&self, hero: Option<String>, period: Option<Period>, tour: Option<String>) {
         let mut args = serde_json::Map::new();
         if let Some(h) = hero {
             args.insert("hero".into(), h.into());
         }
         if let Some(p) = period {
             args.insert("interestPeriod".into(), p.key().into());
+        }
+        if let Some(t) = tour {
+            args.insert("tour".into(), t.into());
         }
         // The answer isn't needed: a refusal leaves this PC's copy as it is.
         drop(self.cloud_call("prefs:save", Value::Object(args)));
@@ -73,11 +82,11 @@ impl VzApp {
     pub(crate) fn set_hero_layout(&mut self, layout: Layout, window: &mut Window, cx: &mut Context<Self>) {
         let text = hero_layout::to_text(&layout);
         self.update_settings(|s| s.hero_figures = text.clone(), window, cx);
-        self.send_prefs(Some(text), None);
+        self.send_prefs(Some(text), None, None);
     }
 
     pub(crate) fn set_interest_period(&mut self, period: Period, window: &mut Window, cx: &mut Context<Self>) {
         self.update_settings(|s| s.interest_period = period, window, cx);
-        self.send_prefs(None, Some(period));
+        self.send_prefs(None, Some(period), None);
     }
 }

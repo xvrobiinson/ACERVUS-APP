@@ -72,6 +72,28 @@ impl DisplayStatus {
     }
 }
 
+impl DisplayStatus {
+    /// What the status means, in one sentence (the web's `displayStatusHint`).
+    pub fn hint(self) -> &'static str {
+        match self {
+            DisplayStatus::Active => t("Payments are up to date.", "Los pagos están al día."),
+            DisplayStatus::DueSoon => t("A payment falls due within 5 days.", "Un pago vence dentro de 5 días."),
+            DisplayStatus::Overdue => {
+                t("A due date has passed with something still unpaid.", "Pasó una fecha de pago y queda algo sin pagar.")
+            }
+            DisplayStatus::PaidOff => t("Everything is paid. The loan is closed.", "Todo está pagado. El préstamo está cerrado."),
+            DisplayStatus::Defaulted => t(
+                "Marked as unlikely to be paid back: no more interest is charged. Reinstate it to record payments again.",
+                "Marcado como difícil de cobrar: ya no se cobra interés. Reactívalo para volver a registrar pagos.",
+            ),
+            DisplayStatus::Restructured => t(
+                "Its terms were replaced on its status date: no new interest is charged on it after that.",
+                "Sus condiciones se reemplazaron en la fecha de su estado: desde entonces no se cobra interés nuevo.",
+            ),
+        }
+    }
+}
+
 /// Days before a due date at which a payment is flagged "Due soon".
 pub const DUE_SOON_DAYS: i64 = 5;
 

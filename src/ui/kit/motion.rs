@@ -24,6 +24,18 @@ pub fn ease_out(t: f32) -> f32 {
     1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
 }
 
+/// A bar that fills from the left the first time it appears under `id`
+/// (the Overview's money and status bars, 2026-11-10). Its parts are flex
+/// shares of its width, so they grow together.
+pub fn fill_in(bar: Div, id: impl Into<ElementId>) -> AnyElement {
+    let wait = 0.15;
+    bar.with_animation(id, Animation::new(Duration::from_millis(1250)), move |d, t| {
+        let t = if t <= wait { 0.0 } else { ease_out((t - wait) / (1.0 - wait)) };
+        d.w(relative(t.max(0.002)))
+    })
+    .into_any_element()
+}
+
 /// An element that fades in while rising `ENTER_DISTANCE` into place.
 pub fn rise(el: impl IntoElement, id: impl Into<ElementId>, delay: Duration) -> AnyElement {
     div()

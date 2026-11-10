@@ -21,11 +21,18 @@ pub struct StatusAvatar {
     size: f32,
     tip: Option<SharedString>,
     on_click: Option<ClickHandler>,
+    /// The person's photo, in place of the initials (2026-11-10).
+    photo: Option<std::sync::Arc<Image>>,
 }
 
 impl StatusAvatar {
     pub fn new(id: impl Into<ElementId>, initials: impl Into<SharedString>, ring: Hsla, badge: IconName) -> Self {
-        Self { id: id.into(), initials: initials.into(), ring, badge, size: 40., tip: None, on_click: None }
+        Self { id: id.into(), initials: initials.into(), ring, badge, size: 40., tip: None, on_click: None, photo: None }
+    }
+
+    pub fn photo(mut self, photo: Option<std::sync::Arc<Image>>) -> Self {
+        self.photo = photo;
+        self
     }
 
     pub fn tooltip(mut self, tip: impl Into<SharedString>) -> Self {
@@ -63,7 +70,11 @@ impl RenderOnce for StatusAvatar {
                     .text_color(p.accent_text)
                     .typeset(text::MICRO)
                     .font_weight(FontWeight::BOLD)
-                    .child(self.initials),
+                    .overflow_hidden()
+                    .child(match self.photo {
+                        Some(photo) => img(photo).size(px(size - 10.)).rounded_full().object_fit(ObjectFit::Cover).into_any_element(),
+                        None => div().child(self.initials).into_any_element(),
+                    }),
             )
             .child(
                 h_flex()

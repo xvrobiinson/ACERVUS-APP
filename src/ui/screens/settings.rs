@@ -11,7 +11,7 @@ use crate::app::{CompanyField, VzApp};
 use crate::domain::loans::{Frequency, RATE_PRESETS};
 use crate::domain::money::{NumberStyle, Rate};
 use crate::i18n::{Lang, t};
-use crate::services::settings::{ChartRange, ReceiptShow, ThemePref};
+use crate::services::settings::{ChartRange, Paper, ReceiptFormat, ReceiptShow, ThemePref};
 use crate::sync::wire::Need;
 use crate::tr;
 use crate::ui::components::{icon, kbd, page_header, sel};
@@ -45,6 +45,7 @@ const PANEL_MAX: f32 = 760.0;
 pub(crate) enum SettingsPanel {
     Business,
     Receipts,
+    WhatsApp,
     Team,
     Appearance,
     Formats,
@@ -60,9 +61,10 @@ impl SettingsPanel {
         match self {
             Self::Business => t("Business", "Negocio"),
             Self::Receipts => t("Receipts", "Recibos"),
+            Self::WhatsApp => t("WhatsApp messages", "Mensajes de WhatsApp"),
             Self::Team => t("Team", "Equipo"),
             Self::Appearance => t("Appearance", "Apariencia"),
-            Self::Formats => t("Regional formats", "Formatos regionales"),
+            Self::Formats => t("Language and formats", "Idioma y formatos"),
             Self::Lending => t("Lending defaults", "Valores de préstamos"),
             Self::Data => t("Data and backups", "Datos y copias"),
             Self::Privacy => t("Privacy", "Privacidad"),
@@ -75,9 +77,10 @@ impl SettingsPanel {
         match self {
             Self::Business => t("Company details and logo", "Datos de la empresa y logo"),
             Self::Receipts => t("What prints, when to print, wording", "Qué se imprime, cuándo y con qué texto"),
+            Self::WhatsApp => t("What reminders and receipts say", "Qué dicen los recordatorios y recibos"),
             Self::Team => t("People, roles, invitations, what collectors see", "Personas, roles, invitaciones, qué ven los cobradores"),
             Self::Appearance => t("Light or dark, dashboard chart", "Claro u oscuro, gráfico del panel"),
-            Self::Formats => t("Currency, numbers and dates", "Moneda, números y fechas"),
+            Self::Formats => t("Language, currency, numbers and dates", "Idioma, moneda, números y fechas"),
             Self::Lending => t("Rate, payments and late fees for new loans", "Tasa, pagos y mora para préstamos nuevos"),
             Self::Data => t("Backups, Google Drive, exports, diagnostics", "Copias, Google Drive, exportar, diagnóstico"),
             Self::Privacy => t("How your data is handled", "Cómo se manejan tus datos"),
@@ -90,6 +93,7 @@ impl SettingsPanel {
         match self {
             Self::Business => IconName::Building2,
             Self::Receipts => IconName::ReceiptText,
+            Self::WhatsApp => IconName::MessageCircle,
             Self::Team => IconName::Users,
             Self::Appearance => IconName::Palette,
             Self::Formats => IconName::Globe,
@@ -106,7 +110,7 @@ impl SettingsPanel {
         match self {
             Self::Business | Self::Receipts | Self::Lending => (p.accent_text, p.accent_tint),
             Self::Appearance | Self::Data => (p.info, p.info_tint),
-            Self::Formats | Self::Privacy | Self::Team => (p.positive, p.positive_tint),
+            Self::Formats | Self::Privacy | Self::Team | Self::WhatsApp => (p.positive, p.positive_tint),
             Self::Keyboard | Self::About => (p.muted, p.neutral_tint),
         }
     }
@@ -123,14 +127,19 @@ pub(crate) enum SettingsPage {
 impl SettingsPage {
     fn title(self) -> &'static str {
         match self {
-            Self::ReceiptLook => t("Receipt customization", "Personalizar recibos"),
-            Self::ReceiptParts => t("Payment receipt settings", "Ajustes del recibo de pago"),
+            Self::ReceiptLook => t("Business and client details", "Datos del negocio y del cliente"),
+            Self::ReceiptParts => t("What receipts show", "Qué muestran los recibos"),
         }
     }
     fn summary(self) -> &'static str {
         match self {
-            Self::ReceiptLook => t("Company info, wording and client info", "Datos de la empresa, texto y datos del cliente"),
-            Self::ReceiptParts => t("What payment and loan receipts show", "Qué muestran los recibos de pago y de préstamo"),
+            Self::ReceiptLook => t(
+                "Your name, contact and wording, and the client details printed",
+                "Tu nombre, contacto y texto, y los datos del cliente que se imprimen",
+            ),
+            Self::ReceiptParts => {
+                t("Full schedule or next payment, and the optional parts", "Calendario completo o próximo pago, y las partes opcionales")
+            }
         }
     }
     fn icon(self) -> IconName {
@@ -248,6 +257,25 @@ impl VzApp {
             (t("Payment details", "Datos del pago"), 4..7),
             (t("Balances", "Saldos"), 7..9),
         ];
+        let format = self.settings().receipt_format;
+        let format_opts: Vec<(ReceiptFormat, &str)> = ReceiptFormat::ALL.iter().map(|f| (*f, f.label())).collect();
+        let format_row = row(
+            p,
+            t("Payment receipt", "Recibo de pago"),
+            Some(match format {
+                ReceiptFormat::Full => t(
+                    "Every installment and the whole payment history. Also the receipt sent on WhatsApp.",
+                    "Cada cuota y todo el historial de pagos. También el recibo enviado por WhatsApp.",
+                ),
+                ReceiptFormat::Next => t(
+                    "What was paid and what to pay next, on one short page. Also the receipt sent on WhatsApp.",
+                    "Lo pagado y lo próximo a pagar, en una página corta. También el recibo enviado por WhatsApp.",
+                ),
+            }),
+            Segmented::pick("rcpt-format", format_opts.iter().copied(), format, cx, |app, v, w, cx| {
+                app.update_settings(|s| s.receipt_format = v, w, cx)
+            }),
+        );
         let values = show.values();
         let group = |(title, range): (&str, std::ops::Range<usize>), cx: &mut Context<Self>| {
             v_flex().flex_1().flex_basis(px(0.)).min_w_0().child(subhead(p, title)).children(range.map(|i| {
@@ -270,6 +298,7 @@ impl VzApp {
         let two = w >= Width::Medium;
         v_flex()
             .gap(px(space::S))
+            .child(format_row)
             .child(div().typeset(text::CAPTION).text_color(p.muted).child(t(
                 "These apply to payment and loan receipts. The business name, amounts paid, dates and receipt number always print. A loan receipt is the client's agreement: with the rate or amount off, it no longer shows those terms or the \"How payments work\" lines.",
                 "Se aplican a los recibos de pago y de préstamo. El nombre del negocio, los montos pagados, las fechas y el número de recibo siempre se imprimen. El recibo del préstamo es el acuerdo con el cliente: sin la tasa o el monto, ya no muestra esos términos ni las líneas de \"Cómo funcionan los pagos\".",
@@ -473,6 +502,7 @@ impl VzApp {
         let fee_opts: Vec<(Rate, &str)> = fee_labels.iter().map(|(r, l)| (*r, l.as_str())).collect();
         let range_opts: Vec<(ChartRange, &str)> = ChartRange::ALL.iter().map(|r| (*r, r.label())).collect();
         let theme_opts = [(ThemePref::Light, t("Light", "Claro")), (ThemePref::Dark, t("Dark", "Oscuro"))];
+        let paper_opts: Vec<(Paper, &str)> = Paper::ALL.iter().map(|p| (*p, p.label())).collect();
         let name_changed = self.receipt_name_input.read(cx).value().trim() != s.receipt_name;
         let address_changed = self.company_address_input.read(cx).value().trim() != s.company_address;
         let phone_changed = self.company_phone_input.read(cx).value().trim() != s.company_phone;
@@ -587,7 +617,28 @@ impl VzApp {
                                 .on_click(cx.listener(|this, _, w, cx| this.remove_logo(w, cx))),
                         )
                     }),
-            )));
+            )))
+            // Deleting the business for everyone (it moved here from Cloud
+            // sync's list, 2026-11-10). The same typed-name check.
+            .children(self.cloud.as_ref().and_then(|c| c.linked.clone()).filter(|_| manage).map(|id| {
+                let name = self.business_name();
+                let online = self.cloud.as_ref().is_some_and(|c| c.online);
+                row(
+                    &p,
+                    t("Delete this business", "Eliminar este negocio"),
+                    Some(t(
+                        "For everyone in it, with all its records. You'll type its name to confirm.",
+                        "Para todos en él, con todos sus registros. Escribirás su nombre para confirmar.",
+                    )),
+                    Button::new("delete-this-business")
+                        .danger_ghost()
+                        .icon(IconName::Trash)
+                        .label(t("Delete business…", "Eliminar negocio…"))
+                        .disabled(!online)
+                        .tooltip(t("Needs a connection", "Necesita conexión"))
+                        .on_click(cx.listener(move |this, _, w, cx| this.open_delete_business(id.clone(), name.clone(), w, cx))),
+                )
+            }));
 
         let general = v_flex()
             .gap(px(space::L))
@@ -622,6 +673,39 @@ impl VzApp {
                 ))
             });
 
+        // WhatsApp messages: each as it reads now (sample figures), and Edit.
+        let whatsapp = {
+            use crate::services::receipt_text::{WaMsg, fill_wa};
+            let sample = crate::ui::forms::wa_text::sample_tags(self.settings(), &self.business_name(), self.today);
+            let text = &self.settings().receipt_text;
+            v_flex()
+                .gap(px(space::M))
+                .child(div().typeset(text::CAPTION).text_color(p.muted).child(t(
+                    "What your clients get when you press WhatsApp, with sample figures. One wording for the whole business; every phone and PC sends it.",
+                    "Lo que reciben tus clientes cuando pulsas WhatsApp, con datos de ejemplo. Un mismo texto para todo el negocio; cada teléfono y PC lo envía.",
+                )))
+                .children(WaMsg::ALL.iter().map(|m| {
+                    let shown = fill_wa(&text.wa(*m), &sample);
+                    let custom = text.wa[m.index()].is_some();
+                    v_flex()
+                        .gap(px(2.))
+                        .child(
+                            h_flex()
+                                .gap(px(space::S))
+                                .child(div().typeset(text::BODY_STRONG).text_color(p.text).child(m.label()))
+                                .when(!custom, |d| d.child(div().typeset(text::CAPTION).text_color(p.faint).child(t("built-in", "predeterminado")))),
+                        )
+                        .child(div().typeset(text::CAPTION).text_color(p.muted).child(if shown.trim().is_empty() { t("(nothing)", "(nada)").to_string() } else { shown }))
+                }))
+                .child(
+                    h_flex().child(
+                        Button::new("edit-wa-text")
+                            .icon(IconName::Pencil)
+                            .label(t("Edit messages", "Editar mensajes"))
+                            .on_click(cx.listener(|this, _, w, cx| this.open_wa_text_form(w, cx))),
+                    ),
+                )
+        };
         let lending = v_flex()
             .gap(px(space::L))
             .child(row(
@@ -793,6 +877,17 @@ impl VzApp {
                     })),
                 ))
             })
+            .child(row(
+                &p,
+                t("This PC's paper", "Papel de esta PC"),
+                Some(t(
+                    "Letter, or the roll of a receipt printer. Rolls always print the next payment; loan receipts stay on Letter.",
+                    "Carta, o el rollo de una impresora de recibos. En rollo siempre sale el próximo pago; los recibos de préstamo siguen en carta.",
+                )),
+                Segmented::pick("rcpt-paper", paper_opts.iter().copied(), s.receipt_paper, cx, |app, v, w, cx| {
+                    app.update_settings(|s| s.receipt_paper = v, w, cx)
+                }),
+            ))
             .when_some(receipt_pages, |d, pages| d.child(pages))
             .child(row(
                 &p,
@@ -1055,6 +1150,23 @@ impl VzApp {
                             this.notify_success(t("Email address copied", "Correo copiado"), w, cx);
                         }),
                     ))
+                    .child(
+                        Button::new("about-help")
+                            .small()
+                            .icon(IconName::BookOpen)
+                            .label(t("How Acervus works", "Cómo funciona Acervus"))
+                            .on_click(cx.listener(|this, _, w, cx| this.open_help(w, cx))),
+                    )
+                    .child(
+                        Button::new("about-tour")
+                            .small()
+                            .icon(IconName::Compass)
+                            .label(t("Replay the tour", "Repetir el recorrido"))
+                            .on_click(cx.listener(|this, _, w, cx| {
+                                this.settings_panel = None;
+                                this.start_tour(w, cx);
+                            })),
+                    )
                     .child(link("about-terms", t("Terms of Service", "Términos de servicio"), crate::TERMS_URL))
                     .child(link("about-privacy", t("Privacy Policy", "Política de privacidad"), crate::PRIVACY_URL)),
             )
@@ -1110,6 +1222,7 @@ impl VzApp {
         let panels: Vec<SettingsPanel> = [
             SettingsPanel::Business,
             SettingsPanel::Receipts,
+            SettingsPanel::WhatsApp,
             SettingsPanel::Team,
             SettingsPanel::Appearance,
             SettingsPanel::Formats,
@@ -1122,7 +1235,7 @@ impl VzApp {
         .into_iter()
         // Lending defaults are the business's: admins only. Everyone keeps
         // Regional formats for this PC's language.
-        .filter(|x| manage || *x != SettingsPanel::Lending)
+        .filter(|x| manage || (*x != SettingsPanel::Lending && *x != SettingsPanel::WhatsApp))
         // The team lives in the cloud: only for a business this PC follows.
         .filter(|x| *x != SettingsPanel::Team || (manage && self.is_linked()))
         .collect();
@@ -1163,6 +1276,7 @@ impl VzApp {
                 SettingsPanel::Appearance => dashboard.into_any_element(),
                 SettingsPanel::Formats => general.into_any_element(),
                 SettingsPanel::Lending => lending.into_any_element(),
+                SettingsPanel::WhatsApp => whatsapp.into_any_element(),
                 SettingsPanel::Data => v_flex()
                     .gap(px(space::L))
                     .child(data)
