@@ -15,6 +15,7 @@ pub mod settings;
 pub mod whatsapp;
 pub mod xlsx;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -86,6 +87,30 @@ pub struct Snapshot {
     pub logo: Option<Arc<[u8]>>,
     pub book: Book,
     pub settings: Settings,
+    /// Each loan's number for its client: 1 for their first loan, 2 for the
+    /// next, oldest first. Shown as "#01" instead of the business's record
+    /// number, which would tell a client how many loans the business has.
+    pub loan_nos: HashMap<i64, u32>,
+}
+
+/// Numbers each client's loans 1, 2, 3… in the order they were made.
+pub fn number_loans(loans: &[Loan]) -> HashMap<i64, u32> {
+    let mut order: Vec<(i64, i64)> = loans.iter().map(|l| (l.client_id, l.id)).collect();
+    order.sort_unstable();
+    let mut out = HashMap::with_capacity(order.len());
+    let mut last = None;
+    let mut n = 0;
+    for (client, id) in order {
+        n = if last == Some(client) { n + 1 } else { 1 };
+        last = Some(client);
+        out.insert(id, n);
+    }
+    out
+}
+
+/// A loan's number as it is shown after "#": two digits at least ("01").
+pub fn loan_no_text(n: u32) -> String {
+    format!("{n:02}")
 }
 
 impl Snapshot {
@@ -106,6 +131,11 @@ impl Snapshot {
     }
     pub fn book_loan(&self, id: i64) -> Option<&LoanBook> {
         self.book.loans.iter().find(|l| l.id == id)
+    }
+    /// The loan's number for its client ("01"), as shown after "#"; "—"
+    /// for a loan that is gone.
+    pub fn loan_no(&self, id: i64) -> String {
+        self.loan_nos.get(&id).map_or_else(|| "—".to_string(), |n| loan_no_text(*n))
     }
     pub fn client_name(&self, id: i64) -> &str {
         self.client(id).map(|c| c.full_name.as_str()).unwrap_or("—")
@@ -323,7 +353,8 @@ impl Store {
         let settings = Settings::from_map(&settings_repo::all(c)?);
         let changes = changes::list(c)?;
         let logo = assets::get(c, assets::LOGO)?.map(Arc::from);
-        Ok(Snapshot { clients, loans, payments, capital, entries, changes, late_fees, logo, book, settings })
+        let loan_nos = number_loans(&loans);
+        Ok(Snapshot { clients, loans, payments, capital, entries, changes, late_fees, logo, book, settings, loan_nos })
     }
 
     /// Records late fees that have fallen due since the last check, keeping

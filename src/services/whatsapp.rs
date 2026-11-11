@@ -172,7 +172,7 @@ pub fn reminder_text(r: &Reminder, snap: &Snapshot, business: &str) -> String {
         ("client", first_name(&r.client).to_string()),
         ("amount", money.format(r.amount)),
         ("date", snap.settings.date_style.format(r.on)),
-        ("loan", r.loan_id.to_string()),
+        ("loan", snap.loan_no(r.loan_id)),
         ("business", business.to_string()),
     ];
     fill_wa(&snap.settings.receipt_text.wa(which), &tags)
@@ -193,7 +193,7 @@ pub fn receipt_text(snap: &Snapshot, payment_id: i64) -> Option<String> {
         ("client", first_name(&client).to_string()),
         ("amount", m(d.amount)),
         ("date", date.clone()),
-        ("loan", d.loan_id.to_string()),
+        ("loan", d.loan_no.clone()),
         ("business", biz.clone()),
     ];
     let mut lines = Vec::new();
@@ -222,7 +222,7 @@ pub fn receipt_text(snap: &Snapshot, payment_id: i64) -> Option<String> {
         lines.push(split);
     }
     if show.loan_number {
-        let n = d.loan_id;
+        let n = &d.loan_no;
         lines.push(tr!("Loan #{n}", "Préstamo #{n}"));
     }
     // The business's short receipt also tells what to pay next.

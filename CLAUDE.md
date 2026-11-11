@@ -156,6 +156,15 @@ migration 9 and synced (`lateFeeMode`, `reinvest`, the settings'
 tools/engine-oracle in the PWA repo: regenerate its vectors after any engine
 change. MIN_DESKTOP_VERSION is 0.15.0.
 
+Loan numbers and count-up (2026-11-10, the owner's call; for the next
+update, both apps): a loan is named by its number among its client's loans
+(#01, #02…, `Snapshot::loan_no`, `number_loans`; the PWA's `numberLoans`),
+never the record number, which would tell a client how many loans the
+business has. Worked out on the device, nothing stored; the loan id stays
+the key everywhere else (routes, sync, the data export). The figures on the
+client and loan pages, Portfolio, and the Loans and Payments headers count
+up like the Overview's (`Stat::counting_money`, `CountUp`).
+
 Motion and Customize (2026-11-03, approved and rolled out): the Overview can
 be arranged (blocks shown, hidden, reordered, half or full width; figures
 shown, hidden, reordered), saved as this PC's `overview_layout` setting.

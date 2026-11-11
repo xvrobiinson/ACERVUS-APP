@@ -385,20 +385,26 @@ impl VzApp {
         let view = self.view();
         // Four figures: one row when wide, two by two below that.
         let per_row = if side_by_side { 4 } else { 2 };
+        // Each figure counts up when the client's page opens.
+        let n = |key: &str| SharedString::from(format!("client-{id}-{key}"));
         let cells = vec![
             Stat::new(t("Owes", "Debe"), money.format(st.outstanding))
+                .counting_money(n("owes"), st.outstanding, &money)
                 .icon(IconName::HandCoins)
                 .chip(p.info, p.info_tint)
                 .caption(sel(count(st.active_loans, "active loan", "active loans", "préstamo activo", "préstamos activos"))),
             Stat::new(t("Total paid", "Total pagado"), money.format(st.paid))
+                .counting_money(n("paid"), st.paid, &money)
                 .icon(IconName::Wallet)
                 .chip(p.accent_text, p.accent_tint)
                 .caption(sel(t("Capital, interest and fees", "Capital, interés y cargos"))),
             Stat::new(t("Interest paid", "Interés pagado"), money.format(st.interest_paid))
+                .counting_money(n("interest"), st.interest_paid, &money)
                 .icon(IconName::TrendingUp)
                 .chip(p.positive, p.positive_tint)
                 .caption(sel(t("Income from this client", "Ganancia con este cliente"))),
             Stat::new(t("Total borrowed", "Total prestado"), if view.amount_lent { money.format(st.borrowed) } else { "—".to_string() })
+                .when(view.amount_lent, |s| s.counting_money(n("borrowed"), st.borrowed, &money))
                 .icon(IconName::Landmark)
                 .chip(p.accent_text, p.accent_tint)
                 .caption(sel({
@@ -427,7 +433,10 @@ impl VzApp {
                     v_flex()
                         .flex_1()
                         .min_w_0()
-                        .child(div().typeset(text::BODY).truncate().child(sel(tr!("Loan #{lid}", "Préstamo #{lid}"))))
+                        .child(div().typeset(text::BODY).truncate().child(sel({
+                            let lid = self.snap.loan_no(lid);
+                            tr!("Loan #{lid}", "Préstamo #{lid}")
+                        })))
                         .child(div().typeset(text::CAPTION).font_features(tabular()).text_color(p.muted).truncate().child(sel(desc))),
                 )
                 .when(full_loans, |d| {
@@ -491,7 +500,7 @@ impl VzApp {
                 .muted(reversed)
                 .leading(div().flex_none().size(px(space::S)).rounded_full().bg(if reversed { p.control } else { p.positive }))
                 .title({
-                    let (when, lid) = (ds.format(x.paid_on), x.loan_id);
+                    let (when, lid) = (ds.format(x.paid_on), self.snap.loan_no(x.loan_id));
                     tr!("{when} · Loan #{lid}", "{when} · Préstamo #{lid}")
                 })
                 .subtitle(if reversed {

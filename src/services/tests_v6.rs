@@ -264,22 +264,22 @@ fn company_details_print_only_when_ticked_and_filled() {
         shown(&format!("<body>{}", &html[start..end]))
     };
     // Defaults: the name only, exactly as before.
-    assert_eq!(header(&s), "Acervus Finance Loan receipt · No. 000001");
+    assert_eq!(header(&s), "Acervus Finance Loan receipt · No. 01");
     let mut st = s.snapshot().unwrap().settings;
     st.receipt_name = "Préstamos Valdez".into();
     st.company_address = "Calle Duarte 45, Santiago".into();
     st.company_phone = "809-555-0100".into();
     s.save_settings(&st).unwrap();
-    assert_eq!(header(&s), "Préstamos Valdez Calle Duarte 45, Santiago · 809-555-0100 Loan receipt · No. 000001");
+    assert_eq!(header(&s), "Préstamos Valdez Calle Duarte 45, Santiago · 809-555-0100 Loan receipt · No. 01");
     st.receipt_company.address = false;
     s.save_settings(&st).unwrap();
-    assert_eq!(header(&s), "Préstamos Valdez 809-555-0100 Loan receipt · No. 000001");
+    assert_eq!(header(&s), "Préstamos Valdez 809-555-0100 Loan receipt · No. 01");
     st.receipt_company.name = false;
     st.receipt_company.address = true;
     st.company_phone = String::new();
     s.save_settings(&st).unwrap();
     let html = loan_html(&s, lid);
-    assert_eq!(header(&s), "Calle Duarte 45, Santiago Loan receipt · No. 000001");
+    assert_eq!(header(&s), "Calle Duarte 45, Santiago Loan receipt · No. 01");
     assert!(!html.contains("<h1>"), "no empty name heading");
     assert!(shown(&html).contains("For the lender"));
     // Client details stay their own setting.

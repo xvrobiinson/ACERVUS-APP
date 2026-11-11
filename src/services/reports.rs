@@ -105,6 +105,11 @@ impl Ctx<'_> {
     fn money(&self, c: Cents) -> String {
         self.snap.settings.money().format(c)
     }
+    /// The loan's number for its client (1 for their first), never the
+    /// business's record number.
+    fn loan_no(&self, loan_id: i64) -> Cell {
+        self.snap.loan_nos.get(&loan_id).map_or(Cell::Empty, |n| Cell::Int(i64::from(*n)))
+    }
     fn client_of(&self, loan_id: i64) -> String {
         self.snap.loan(loan_id).and_then(|l| self.snap.client(l.client_id)).map_or("—".into(), |c| c.full_name.clone())
     }
@@ -216,7 +221,7 @@ pub fn monthly_statement(c: &Ctx, month: NaiveDate) -> Report {
                     .iter()
                     .map(|(l, pos, status)| {
                         vec![
-                            Cell::Int(l.id),
+                            c.loan_no(l.id),
                             name(l.client_id).into(),
                             Cell::Date(l.facts.start_date),
                             Cell::Money(l.facts.principal),
@@ -252,7 +257,7 @@ pub fn monthly_statement(c: &Ctx, month: NaiveDate) -> Report {
                         vec![
                             Cell::Date(p.paid_on),
                             c.client_of(p.loan_id).into(),
-                            Cell::Int(p.loan_id),
+                            c.loan_no(p.loan_id),
                             Cell::Money(p.principal),
                             Cell::Money(p.interest + p.fee),
                             Cell::Money(p.amount),
@@ -356,7 +361,7 @@ pub fn collections(c: &Ctx, from: NaiveDate, to: NaiveDate, by: By) -> Report {
                         vec![
                             Cell::Date(p.paid_on),
                             c.client_of(p.loan_id).into(),
-                            Cell::Int(p.loan_id),
+                            c.loan_no(p.loan_id),
                             c.collector_of(p.id).into(),
                             p.paid_with.map_or(Cell::Empty, |w| w.label().into()),
                             Cell::Money(p.amount),
@@ -409,7 +414,7 @@ pub fn overdue(c: &Ctx, as_of: NaiveDate, band: Band) -> Report {
                 .map(|(l, d, pos)| {
                     let cl = client(l.client_id);
                     vec![
-                        Cell::Int(l.id),
+                        c.loan_no(l.id),
                         cl.map_or("—".to_string(), |x| x.full_name.clone()).into(),
                         cl.and_then(|x| x.phone.clone()).unwrap_or_default().into(),
                         d.overdue_since.map_or(Cell::Empty, Cell::Date),

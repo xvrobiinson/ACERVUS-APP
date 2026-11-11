@@ -156,3 +156,28 @@ fn reset_removes_photos_too() {
     let left: i64 = s.conn.query_row("SELECT COUNT(*) FROM client_photos", [], |r| r.get(0)).unwrap();
     assert_eq!(left, 0);
 }
+
+#[test]
+fn loans_are_numbered_per_client() {
+    // A client sees their own loans as #01, #02…, never the business's
+    // count of loans; deleting one moves the later ones up.
+    let mut s = Store::in_memory();
+    let today = d(2026, 2, 1);
+    s.add_capital(CapitalKind::Contribution, 5_000_000, d(2026, 1, 1), "", today).unwrap();
+    let (ana, ben) = (
+        s.create_client(&ClientInput { full_name: "Ana Ruiz".into(), ..Default::default() }).unwrap(),
+        s.create_client(&ClientInput { full_name: "Ben Paz".into(), ..Default::default() }).unwrap(),
+    );
+    let terms = LoanTerms::interest_only(100_000, Rate(100_000), Frequency::Monthly, d(2026, 1, 1));
+    let a1 = s.create_loan(ana, &terms, "", today).unwrap();
+    let b1 = s.create_loan(ben, &terms, "", today).unwrap();
+    let a2 = s.create_loan(ana, &terms, "", today).unwrap();
+    let a3 = s.create_loan(ana, &terms, "", today).unwrap();
+    let snap = s.snapshot().unwrap();
+    let nos = |snap: &Snapshot, ids: &[i64]| ids.iter().map(|id| snap.loan_no(*id)).collect::<Vec<_>>();
+    assert_eq!(nos(&snap, &[a1, b1, a2, a3]), ["01", "01", "02", "03"]);
+    s.delete_loan(a2, "typo").unwrap();
+    let snap = s.snapshot().unwrap();
+    assert_eq!(nos(&snap, &[a1, b1, a2, a3]), ["01", "01", "—", "02"]);
+    assert_eq!(loan_no_text(123), "123");
+}

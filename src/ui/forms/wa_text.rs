@@ -59,7 +59,7 @@ pub fn sample_tags(settings: &Settings, business: &str, today: chrono::NaiveDate
         ("client", "Marta".to_string()),
         ("amount", settings.money().format(150_000)),
         ("date", settings.date_style.format(today)),
-        ("loan", "12".to_string()),
+        ("loan", "02".to_string()),
         ("business", business.to_string()),
     ]
 }

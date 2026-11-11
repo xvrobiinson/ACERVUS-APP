@@ -836,10 +836,7 @@ impl VzApp {
     /// to a new amount after a change.
     fn figure_stat(&self, f: Figure, p: &Palette, s: &Summary, cx: &mut Context<Self>) -> Stat {
         let money = self.settings().money();
-        let counted = |st: Stat, value: Cents| {
-            let money = money.clone();
-            st.counting(SharedString::from(format!("ov-count-{}", f.key())), value, move |v| money.format(v))
-        };
+        let counted = |st: Stat, value: Cents| st.counting_money(SharedString::from(format!("ov-count-{}", f.key())), value, &money);
         let counted_n =
             |st: Stat, value: usize| st.counting(SharedString::from(format!("ov-count-{}", f.key())), value as i64, |v| v.to_string());
         match f {
@@ -983,8 +980,7 @@ impl VzApp {
                     .when(!self.customizing, |st| st.accessory(pick))
                     .caption(caption);
                 // A new period counts again from its own amount.
-                let money = money.clone();
-                st.counting(SharedString::from(format!("ov-count-{}-{}", f.key(), period.key())), value, move |v| money.format(v))
+                st.counting_money(SharedString::from(format!("ov-count-{}-{}", f.key(), period.key())), value, &money)
             }
             Figure::AvailableCapital => {
                 let pv = s.portfolio_value;
@@ -1330,7 +1326,7 @@ impl VzApp {
                 .leading(avatar(p, &name, client_id, 32.))
                 .title(name)
                 .subtitle({
-                    let (when, id) = (ds.format_short(pay.paid_on, self.today), pay.loan_id);
+                    let (when, id) = (ds.format_short(pay.paid_on, self.today), self.snap.loan_no(pay.loan_id));
                     tr!("{when} · Loan #{id}", "{when} · Préstamo #{id}")
                 })
                 .trailing(
@@ -1384,12 +1380,15 @@ impl VzApp {
         let all = self.wa_reminders();
         let left = all.iter().filter(|r| !self.wa_sent(r)).count();
         let rows = all.iter().enumerate().map(|(i, r)| {
-            let id = r.loan_id;
-            let when = match r.due {
-                Due::Tomorrow => tr!("Loan #{id} · due tomorrow", "Préstamo #{id} · vence mañana"),
-                Due::Today => tr!("Loan #{id} · due today", "Préstamo #{id} · vence hoy"),
-                Due::Late(1) => tr!("Loan #{id} · 1 day late", "Préstamo #{id} · 1 día de atraso"),
-                Due::Late(n) => tr!("Loan #{id} · {n} days late", "Préstamo #{id} · {n} días de atraso"),
+            let (id, no) = (r.loan_id, self.snap.loan_no(r.loan_id));
+            let when = {
+                let id = &no;
+                match r.due {
+                    Due::Tomorrow => tr!("Loan #{id} · due tomorrow", "Préstamo #{id} · vence mañana"),
+                    Due::Today => tr!("Loan #{id} · due today", "Préstamo #{id} · vence hoy"),
+                    Due::Late(1) => tr!("Loan #{id} · 1 day late", "Préstamo #{id} · 1 día de atraso"),
+                    Due::Late(n) => tr!("Loan #{id} · {n} days late", "Préstamo #{id} · {n} días de atraso"),
+                }
             };
             let late = matches!(r.due, Due::Late(_));
             let sent = self.wa_sent(r);
@@ -1491,7 +1490,7 @@ impl VzApp {
         let rows = items.iter().take(5).enumerate().map(|(i, (l, st, q))| {
             let name = self.snap.client_name(l.client_id).to_string();
             let loan_id = l.id;
-            let id = l.id;
+            let id = self.snap.loan_no(l.id);
             let overdue = *st == DisplayStatus::Overdue;
             // The amount to collect now sits on the right, never truncated;
             // the subtitle only says which loan and since or until when.

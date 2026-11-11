@@ -63,6 +63,12 @@ impl Stat {
         self
     }
 
+    /// [`Self::counting`] for an amount of money in the business's format.
+    pub fn counting_money(self, id: impl Into<ElementId>, value: i64, money: &crate::domain::money::MoneyFormat) -> Self {
+        let money = money.clone();
+        self.counting(id, value, move |v| money.format(v))
+    }
+
     pub fn tone(mut self, color: Hsla) -> Self {
         self.tone = Some(color);
         self

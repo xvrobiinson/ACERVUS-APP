@@ -170,14 +170,15 @@ fn entry_kind(c: &Change, snap: &Snapshot) -> Option<EntryKind> {
         .or_else(|| c.fields.iter().find(|f| f.field == "kind").and_then(|f| EntryKind::from_key(&f.old)))
 }
 
-/// "Loan #3 · María Rodríguez", or "Loan #3" once the loan is gone.
+/// "Loan #02 · María Rodríguez" (the client's second loan), or "Loan"
+/// once the loan is gone and its number with it.
 fn loan_name(id: i64, snap: &Snapshot) -> String {
     match snap.loan(id).and_then(|l| snap.client(l.client_id)) {
         Some(client) => {
-            let name = &client.full_name;
+            let (id, name) = (snap.loan_no(id), &client.full_name);
             tr!("Loan #{id} · {name}", "Préstamo #{id} · {name}")
         }
-        None => tr!("Loan #{id}", "Préstamo #{id}"),
+        None => t("Loan", "Préstamo").to_string(),
     }
 }
 

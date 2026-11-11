@@ -86,17 +86,27 @@ impl VzApp {
             .book
             .loans
             .iter()
-            .filter(|l| number == l.id.to_string() || matches(q, &[self.snap.client_name(l.client_id)]))
+            // A loan's number is its client's (#01), so a number alone finds
+            // each client's loan with it.
+            .filter(|l| {
+                let no = self.snap.loan_nos.get(&l.id).map(u32::to_string);
+                (!number.is_empty() && no.as_deref() == Some(number.trim_start_matches('0')))
+                    || matches(q, &[self.snap.client_name(l.client_id)])
+            })
             .take(EACH)
             .map(|l| {
                 let (id, name) = (l.id, self.snap.client_name(l.client_id).to_string());
+                let no = self.snap.loan_no(id);
                 let owed = match l.plan_state(today) {
                     Some(s) => s.payoff(),
                     None => owed_at_payment(&l.facts, &l.payments, today).payoff(),
                 };
                 Hit {
                     route: Route::Loan(id),
-                    title: tr!("Loan #{id} · {name}", "Préstamo #{id} · {name}"),
+                    title: {
+                        let id = no;
+                        tr!("Loan #{id} · {name}", "Préstamo #{id} · {name}")
+                    },
                     sub: if owed > 0 {
                         let o = money.format(owed);
                         tr!("{o} to pay it off", "{o} para saldarlo")

@@ -159,6 +159,8 @@ pub struct ReceiptData {
     pub company: CompanyLines,
     pub client: ClientLines,
     pub loan_id: i64,
+    /// The loan's number for its client ("01"), as printed.
+    pub loan_no: String,
     pub method: Method,
     /// "10% a month · paid weekly".
     pub rate_line: String,
@@ -254,6 +256,7 @@ pub fn data(snap: &Snapshot, payment_id: i64) -> Option<ReceiptData> {
         company: snap.settings.receipt_company_lines(),
         client: ClientLines::new(client, snap.settings.receipt_client),
         loan_id: loan.id,
+        loan_no: snap.loan_no(loan.id),
         method: loan.terms.method,
         rate_line: loan.terms.rate_line(),
         start_date: loan.terms.start_date,
@@ -395,6 +398,8 @@ pub fn data(snap: &Snapshot, payment_id: i64) -> Option<ReceiptData> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoanReceipt {
     pub loan_id: i64,
+    /// The loan's number for its client ("01"), as printed.
+    pub loan_no: String,
     pub business: String,
     pub company: CompanyLines,
     pub client: ClientLines,
@@ -431,6 +436,7 @@ pub fn loan_data(snap: &Snapshot, loan_id: i64) -> Option<LoanReceipt> {
     let terms = &loan.terms;
     Some(LoanReceipt {
         loan_id,
+        loan_no: snap.loan_no(loan_id),
         business: snap.settings.receipt_title(),
         company: snap.settings.receipt_company_lines(),
         client: ClientLines::new(client, snap.settings.receipt_client),
@@ -678,9 +684,9 @@ fn client_block(c: &ClientLines) -> String {
 
 /// The loan's details; `show` leaves out the parts switched off in
 /// Settings (the loan date is always printed).
-fn loan_block(loan_id: i64, method: Method, rate_line: &str, principal: String, start: String, show: ReceiptShow) -> String {
+fn loan_block(loan_no: &str, method: Method, rate_line: &str, principal: String, start: String, show: ReceiptShow) -> String {
     let rows = [
-        show.loan_number.then(|| row(t("Loan", "Préstamo"), format!("#{loan_id}"), "")),
+        show.loan_number.then(|| row(t("Loan", "Préstamo"), format!("#{loan_no}"), "")),
         show.cycle.then(|| row(t("Type", "Tipo"), esc(method.short_label()), "")),
         show.rate.then(|| row(t("Interest rate", "Tasa de interés"), esc(rate_line), "")),
         show.amount_lent.then(|| row(t("Amount lent", "Monto prestado"), principal, "")),
@@ -928,7 +934,7 @@ pub fn render(d: &ReceiptData, snap: &Snapshot) -> String {
             &ds.format(d.paid_on)
         ),
         client = client_block(&d.client),
-        loan = loan_block(d.loan_id, d.method, &d.rate_line, m(d.original_principal), esc(&ds.format(d.start_date)), show),
+        loan = loan_block(&d.loan_no, d.method, &d.rate_line, m(d.original_principal), esc(&ds.format(d.start_date)), show),
         paid_l = esc(t("This payment", "Este pago")),
         paid = paid.join(""),
         balance = if show.balance {
@@ -952,7 +958,7 @@ pub fn render(d: &ReceiptData, snap: &Snapshot) -> String {
         thanks = esc(&company_tags(d.business.clone(), &d.company).fill(&snap.settings.receipt_text.payment_footer())),
         reference = {
             let receipt = format!("{} {number}", esc(t("Receipt", "Recibo")));
-            if show.loan_number { format!("{} #{} · {receipt}", esc(t("Loan", "Préstamo")), d.loan_id) } else { receipt }
+            if show.loan_number { format!("{} #{} · {receipt}", esc(t("Loan", "Préstamo")), d.loan_no) } else { receipt }
         },
     );
     page(&title, css, &body)
@@ -981,7 +987,7 @@ fn render_next(d: &ReceiptData, snap: &Snapshot, paper: Paper) -> String {
         split.push(row(t("Capital", "Abono a capital"), m(d.principal), "sub"));
     }
     let loan_rows = [
-        show.loan_number.then(|| row(t("Loan", "Préstamo"), format!("#{}", d.loan_id), "")),
+        show.loan_number.then(|| row(t("Loan", "Préstamo"), format!("#{}", d.loan_no), "")),
         Some(row(t("Loan date", "Fecha del préstamo"), esc(&ds.format(d.start_date)), "")),
     ]
     .into_iter()
@@ -1093,7 +1099,7 @@ fn render_next(d: &ReceiptData, snap: &Snapshot, paper: Paper) -> String {
         thanks = esc(&company_tags(d.business.clone(), &d.company).fill(&snap.settings.receipt_text.payment_footer())),
         reference = {
             let receipt = format!("{} {number}", esc(t("Receipt", "Recibo")));
-            if show.loan_number { format!("{} #{} · {receipt}", esc(t("Loan", "Préstamo")), d.loan_id) } else { receipt }
+            if show.loan_number { format!("{} #{} · {receipt}", esc(t("Loan", "Préstamo")), d.loan_no) } else { receipt }
         },
     );
     page_on(&title, "short", NEXT_CSS, &body, paper)
@@ -1105,7 +1111,8 @@ pub fn render_loan(d: &LoanReceipt, snap: &Snapshot) -> String {
     let money: MoneyFormat = snap.settings.money();
     let ds = snap.settings.date_style;
     let m = |c: Cents| esc(&money.format(c));
-    let number = format!("{:06}", d.loan_id);
+    // The client's own loan number, never the business's count of loans.
+    let number = d.loan_no.clone();
     let installment_loan = d.method.has_installments();
 
     // The same switches as payment receipts (Settings › Receipts).
@@ -1301,7 +1308,7 @@ pub fn render_loan(d: &LoanReceipt, snap: &Snapshot) -> String {
         ),
         client = client_block(&d.client),
         terms_l = esc(&{
-            let id = d.loan_id;
+            let id = &d.loan_no;
             if show.loan_number { tr!("Loan #{id}", "Préstamo #{id}") } else { t("Loan", "Préstamo").to_string() }
         }),
         terms = terms.join(""),
@@ -1412,7 +1419,7 @@ pub fn render_pending(p: &PendingLines, snap: &Snapshot) -> Option<String> {
         stamp = esc(t("Pending confirmation", "Pendiente de confirmación")),
         client = client_block(&ClientLines::new(client, snap.settings.receipt_client)),
         loan = loan_block(
-            loan.id,
+            &snap.loan_no(loan.id),
             loan.terms.method,
             &loan.terms.rate_line(),
             esc(&money.format(loan.terms.principal)),
@@ -1429,7 +1436,7 @@ pub fn render_pending(p: &PendingLines, snap: &Snapshot) -> Option<String> {
         lender = esc(&lender),
         reference = {
             let receipt = format!("{} {number}", esc(t("Receipt", "Recibo")));
-            if show.loan_number { format!("{} #{} · {receipt}", esc(t("Loan", "Préstamo")), loan.id) } else { receipt }
+            if show.loan_number { format!("{} #{} · {receipt}", esc(t("Loan", "Préstamo")), snap.loan_no(loan.id)) } else { receipt }
         },
     );
     Some(page_on(&title, "", css, &body, snap.settings.receipt_paper))

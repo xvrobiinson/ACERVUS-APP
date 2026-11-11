@@ -16,7 +16,7 @@ use crate::sync::wire::Need;
 use crate::tr;
 use crate::ui::components::{Tone, avatar, empty_state, filling_bar, icon, kv, page_header, pill, sel, table_header, table_row, th};
 use crate::ui::forms::reason::ReasonKind;
-use crate::ui::kit::{Button, Card, Dropdown, DropdownItem, Segmented, SortHeader, Stat, StatCards};
+use crate::ui::kit::{Button, Card, CountUp, Dropdown, DropdownItem, Segmented, SortHeader, Stat, StatCards};
 use crate::ui::lists::{self, Key};
 use crate::ui::theme::{Palette, Typeset as _, Width, palette, space, tabular, text};
 
@@ -50,7 +50,8 @@ impl VzApp {
         let Some(loan) = self.snap.loan(l.id) else { return false };
         let client = self.snap.client(l.client_id);
         let opt = |v: Option<&Option<String>>| v.and_then(Clone::clone).unwrap_or_default();
-        let (id, hash_id) = (l.id.to_string(), format!("#{}", l.id));
+        let id = self.snap.loan_no(l.id);
+        let hash_id = format!("#{id}");
         let (phone, id_number) = (opt(client.map(|c| &c.phone)), opt(client.map(|c| &c.id_number)));
         let rate = loan.terms.rate_line();
         let lent = lists::amount_fields(money.format(l.facts.principal), l.facts.principal);
@@ -213,18 +214,24 @@ impl VzApp {
 
         let subtitle = {
             let active = count(s.active_loans, "active loan", "active loans", "préstamo activo", "préstamos activos");
-            let out = money.format(s.outstanding_principal);
             // The business's totals are for admins (collectors see their work).
+            // The amount counts up when the page opens.
             if self.can(Need::Manage) {
-                tr!("{active} · {out} of capital lent out", "{active} · {out} de capital prestado")
+                let money = money.clone();
+                CountUp::new("loans-lent-out", s.outstanding_principal, move |v| {
+                    let out = money.format(v);
+                    tr!("{active} · {out} of capital lent out", "{active} · {out} de capital prestado")
+                })
+                .color(p.muted)
+                .into_any_element()
             } else {
-                active
+                sel(active).into_any_element()
             }
         };
         let header = page_header(
             &p,
             t("Loans", "Préstamos"),
-            Some(subtitle.into_any_element()),
+            Some(subtitle),
             self.can(Need::Manage)
                 .then(|| {
                     Button::new("loans-new")
@@ -246,10 +253,12 @@ impl VzApp {
             let q = l.delinquency(today);
             let name = self.snap.client_name(l.client_id).to_string();
             let view = self.view();
+            let no = self.snap.loan_no(lid);
             let desc = match self.snap.loan(lid) {
                 Some(loan) => match loan.terms.installments {
                     Some(n) => {
                         let every = loan.terms.frequency.label().to_lowercase();
+                        let lid = &no;
                         if view.rate {
                             let rate = loan.terms.rate_line();
                             tr!("#{lid} · {rate} · {n} installments, {every}", "#{lid} · {rate} · {n} cuotas, {every}")
@@ -257,10 +266,10 @@ impl VzApp {
                             tr!("#{lid} · {n} installments, {every}", "#{lid} · {n} cuotas, {every}")
                         }
                     }
-                    None if view.rate => format!("#{lid} · {}", loan.terms.rate_line()),
-                    None => format!("#{lid}"),
+                    None if view.rate => format!("#{no} · {}", loan.terms.rate_line()),
+                    None => format!("#{no}"),
                 },
-                None => format!("#{lid}"),
+                None => format!("#{no}"),
             };
             let ratio = if l.facts.principal > 0 { pos.principal_paid as f32 / l.facts.principal as f32 } else { 0.0 };
             let next = match (q.next_due, st) {
@@ -425,7 +434,10 @@ impl VzApp {
                     .child(
                         h_flex()
                             .gap(px(space::M))
-                            .child(div().typeset(text::TITLE).text_color(p.text).child(sel(tr!("Loan #{id}", "Préstamo #{id}"))))
+                            .child(div().typeset(text::TITLE).text_color(p.text).child(sel({
+                                let id = self.snap.loan_no(id);
+                                tr!("Loan #{id}", "Préstamo #{id}")
+                            })))
                             .child(
                                 div()
                                     .id("loan-status")
@@ -457,10 +469,14 @@ impl VzApp {
         let view = self.view();
         let interest_now = book.facts.rate.interest(owed_now.principal_outstanding);
         let installment_loan = plan_state.is_some();
+        // Each figure counts up when the loan's page opens.
+        let n = |key: &str| SharedString::from(format!("loan-{id}-{key}"));
         let third = if installment_loan {
             let fees_due = if view.late_fees { owed_now.fees_outstanding } else { 0 };
-            Stat::new(t("Overdue now", "Atrasado ahora"), money.format(q.overdue_amount)).icon(IconName::CircleAlert).caption(sel(
-                match (q.overdue_since, fees_due) {
+            Stat::new(t("Overdue now", "Atrasado ahora"), money.format(q.overdue_amount))
+                .counting_money(n("overdue"), q.overdue_amount, &money)
+                .icon(IconName::CircleAlert)
+                .caption(sel(match (q.overdue_since, fees_due) {
                     (Some(_), f) if f > 0 => {
                         let f = money.format(f);
                         tr!("includes {f} late fees", "incluye {f} de mora")
@@ -470,17 +486,17 @@ impl VzApp {
                         tr!("since {when}", "desde el {when}")
                     }
                     _ => t("Up to date", "Al día").to_string(),
-                },
-            ))
+                }))
         } else {
-            Stat::new(t("Interest due", "Interés por pagar"), money.format(owed_now.interest_outstanding)).icon(IconName::Clock).caption(
-                sel(if q.overdue_amount > 0 {
+            Stat::new(t("Interest due", "Interés por pagar"), money.format(owed_now.interest_outstanding))
+                .counting_money(n("interest-due"), owed_now.interest_outstanding, &money)
+                .icon(IconName::Clock)
+                .caption(sel(if q.overdue_amount > 0 {
                     let a = money.format(q.overdue_amount);
                     tr!("{a} overdue", "{a} atrasado")
                 } else {
                     t("Up to date", "Al día").to_string()
-                }),
-            )
+                }))
         }
         .map(|st| {
             if q.overdue_amount > 0 { st.tone(p.negative).chip(p.negative, p.negative_tint) } else { st.chip(p.muted, p.neutral_tint) }
@@ -493,14 +509,17 @@ impl VzApp {
         .lifting("loan-figures")
         .spacing(w.gap())
         .stats(vec![
-            Stat::new(owes_label, money.format(owed_now.payoff())).icon(IconName::Wallet).chip(p.accent_text, p.accent_tint).caption(sel(
-                if installment_loan {
+            Stat::new(owes_label, money.format(owed_now.payoff()))
+                .counting_money(n("owes"), owed_now.payoff(), &money)
+                .icon(IconName::Wallet)
+                .chip(p.accent_text, p.accent_tint)
+                .caption(sel(if installment_loan {
                     t("Capital, interest and late fees due", "Capital, interés y mora por pagar")
                 } else {
                     t("Capital plus interest due", "Capital más interés por pagar")
-                },
-            )),
+                })),
             Stat::new(t("Capital owed", "Capital adeudado"), money.format(owed_now.principal_outstanding))
+                .counting_money(n("capital"), owed_now.principal_outstanding, &money)
                 .icon(IconName::HandCoins)
                 .chip(p.info, p.info_tint)
                 .caption(sel(if view.amount_lent {
@@ -510,10 +529,12 @@ impl VzApp {
                 })),
             third,
             Stat::new(t("Interest paid", "Interés pagado"), money.format(pos.interest_paid))
+                .counting_money(n("interest"), pos.interest_paid, &money)
                 .icon(IconName::TrendingUp)
                 .chip(p.positive, p.positive_tint)
                 .caption(sel(t("Income from this loan", "Ganancia de este préstamo"))),
             Stat::new(t("Capital repaid", "Capital pagado"), money.format(pos.principal_paid))
+                .counting_money(n("repaid"), pos.principal_paid, &money)
                 .icon(IconName::Landmark)
                 .chip(p.positive, p.positive_tint)
                 .caption(sel(t("Money returned to you", "Dinero que regresó"))),

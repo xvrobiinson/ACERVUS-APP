@@ -205,8 +205,10 @@ impl VzApp {
                         DueState::Upcoming => (t("Due", "Vence"), Tone::Neutral),
                     };
                     let what = if e.interest {
+                        let lid = self.snap.loan_no(lid);
                         tr!("Loan #{lid} · interest", "Préstamo #{lid} · interés")
                     } else {
+                        let lid = self.snap.loan_no(lid);
                         tr!("Loan #{lid} · installment", "Préstamo #{lid} · cuota")
                     };
                     h_flex()
@@ -277,7 +279,10 @@ impl VzApp {
                                         .text_color(p.text)
                                         .child(self.snap.client_name(pe.client_id).to_string()),
                                 )
-                                .child(div().typeset(text::CAPTION).text_color(p.muted).child(tr!("Loan #{lid}", "Préstamo #{lid}"))),
+                                .child(div().typeset(text::CAPTION).text_color(p.muted).child({
+                                    let lid = self.snap.loan_no(lid);
+                                    tr!("Loan #{lid}", "Préstamo #{lid}")
+                                })),
                         )
                         .child(
                             div()

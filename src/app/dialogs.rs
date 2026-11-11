@@ -205,7 +205,10 @@ impl VzApp {
         let snap = self.snap.clone();
         let form = cx.new(|cx| LoanForm::new(app, snap, client_id, editing, window, cx));
         let title = match editing {
-            Some(id) => tr!("Edit loan #{id}", "Editar préstamo #{id}"),
+            Some(id) => {
+                let id = self.snap.loan_no(id);
+                tr!("Edit loan #{id}", "Editar préstamo #{id}")
+            }
             None => t("New loan", "Nuevo préstamo").to_string(),
         };
         let first = Cell::new(true);

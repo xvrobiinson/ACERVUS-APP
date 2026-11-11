@@ -59,17 +59,22 @@ impl VzApp {
         let cell = |ic: IconName, (fg, bg): (Hsla, Hsla), l: &str, v: String, sub: String, color: Hsla| {
             Stat::new(l.to_string(), v).icon(ic).chip(fg, bg).tone(color).caption(sel(sub))
         };
+        // Money figures count up when the page opens.
+        let money_cell = |key: &str, ic: IconName, tone: (Hsla, Hsla), l: &str, v: i64, sub: String, color: Hsla| {
+            cell(ic, tone, l, money.format(v), sub, color).counting_money(SharedString::from(format!("an-{key}")), v, &money)
+        };
         let gain_color = match gain.signum() {
             1 => p.positive,
             -1 => p.negative,
             _ => p.text,
         };
         let return_cells = vec![
-            cell(
+            money_cell(
+                "portfolio-value",
                 IconName::Wallet,
                 acc,
                 t("Portfolio value", "Valor de la cartera"),
-                money.format(s.portfolio_value),
+                s.portfolio_value,
                 t("Cash + capital lent + interest due", "Efectivo + capital prestado + interés vencido").into(),
                 p.text,
             ),
@@ -80,7 +85,11 @@ impl VzApp {
                 money.format_signed(gain),
                 t("Value minus capital invested", "Valor menos capital invertido").into(),
                 gain_color,
-            ),
+            )
+            .counting("an-portfolio-gain", gain, {
+                let money = money.clone();
+                move |v| money.format_signed(v)
+            }),
             cell(
                 IconName::Percent,
                 pos,
@@ -89,11 +98,12 @@ impl VzApp {
                 t("Total, not annualized", "Total, no anualizado").into(),
                 gain_color,
             ),
-            cell(
+            money_cell(
+                "income-received",
                 IconName::Coins,
                 pos,
                 t("Income received", "Ganancia cobrada"),
-                money.format(s.total_income()),
+                s.total_income(),
                 if s.other_income > 0 {
                     let other = money.format(s.other_income);
                     tr!("Includes {other} other income", "Incluye {other} de otros ingresos")
@@ -107,30 +117,33 @@ impl VzApp {
         // wide column, six need an ultra one.
         let returns = StatCards::new(if w >= Width::Wide { 4 } else { 2 }).lifting("an-returns").spacing(w.gap()).stats(return_cells);
         let capital_cells = vec![
-            cell(
+            money_cell(
+                "capital-invested",
                 IconName::Landmark,
                 acc,
                 t("Capital invested", "Capital invertido"),
-                money.format(invested),
+                invested,
                 {
                     let (i, o) = (money.format(s.contributions + s.capital_income), money.format(s.withdrawals));
                     tr!("{i} in · {o} out", "{i} entró · {o} salió")
                 },
                 p.text,
             ),
-            cell(
+            money_cell(
+                "available-capital",
                 IconName::Banknote,
                 acc,
                 t("Available capital", "Capital disponible"),
-                money.format(s.available_capital),
+                s.available_capital,
                 t("Capital not lent out", "Capital sin prestar").into(),
                 p.text,
             ),
-            cell(
+            money_cell(
+                "available-interest",
                 IconName::Coins,
                 pos,
                 t("Available interest", "Interés disponible"),
-                money.format(s.available_interest),
+                s.available_interest,
                 if s.expenses() > 0 {
                     let spent = money.format(s.expenses());
                     tr!("{spent} spent in expenses", "{spent} usado en gastos")
@@ -139,27 +152,30 @@ impl VzApp {
                 },
                 p.text,
             ),
-            cell(
+            money_cell(
+                "interest-due-not-collected",
                 IconName::Clock,
                 info,
                 t("Interest due, not collected", "Interés vencido sin cobrar"),
-                money.format(s.interest_receivable),
+                s.interest_receivable,
                 t("Past its due date", "Ya pasó su fecha").into(),
                 p.text,
             ),
-            cell(
+            money_cell(
+                "expected-interest-per-month",
                 IconName::CalendarClock,
                 info,
                 t("Expected interest per month", "Interés esperado por mes"),
-                money.format(s.expected_monthly_interest),
+                s.expected_monthly_interest,
                 t("At today's capital", "Con el capital de hoy").into(),
                 p.text,
             ),
-            cell(
+            money_cell(
+                "defaulted-balance",
                 IconName::CircleAlert,
                 neg,
                 t("Defaulted balance", "Saldo incobrable"),
-                money.format(s.defaulted_principal + s.defaulted_interest),
+                s.defaulted_principal + s.defaulted_interest,
                 t("Excluded from value", "Fuera del valor").into(),
                 if s.defaulted_principal > 0 { p.negative } else { p.text },
             ),

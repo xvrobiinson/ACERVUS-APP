@@ -236,7 +236,7 @@ impl VzApp {
         let ds = self.settings().date_style;
         let x = &r.pending;
         let name = self.snap.client_name(r.client).to_string();
-        let (loan, collector) = (r.loan, x.collector_name.clone());
+        let (loan, collector) = (self.snap.loan_no(r.loan), x.collector_name.clone());
         let mut sub = tr!("Loan #{loan} · collected by {collector}", "Préstamo #{loan} · cobrado por {collector}");
         if x.status == "rejected" {
             sub = format!("{sub} · “{}”", x.reason);

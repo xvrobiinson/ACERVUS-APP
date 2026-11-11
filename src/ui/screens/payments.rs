@@ -11,7 +11,7 @@ use crate::sync::wire::Need;
 use crate::tr;
 use crate::ui::components::{Tone, avatar, empty_state, icon, page_header, pill, sel, table_header, table_row, th};
 use crate::ui::forms::reason::ReasonKind;
-use crate::ui::kit::{Button, Card};
+use crate::ui::kit::{Button, Card, CountUp};
 use crate::ui::theme::{Typeset as _, Width, palette, space, tabular, text};
 
 impl VzApp {
@@ -39,12 +39,11 @@ impl VzApp {
                     return true;
                 }
                 let client = self.snap.loan(x.loan_id).map(|l| self.snap.client_name(l.client_id)).unwrap_or_default().to_lowercase();
-                client.contains(&q) || x.notes.to_lowercase().contains(&q) || format!("#{}", x.loan_id).contains(&q)
+                client.contains(&q) || x.notes.to_lowercase().contains(&q) || format!("#{}", self.snap.loan_no(x.loan_id)).contains(&q)
             })
             .collect();
 
         let n = count(live.len(), "payment", "payments", "pago", "pagos");
-        let received = money.format(received);
         let header = page_header(
             &p,
             t("Payments", "Pagos"),
@@ -54,8 +53,24 @@ impl VzApp {
                     .flex_wrap()
                     .gap(px(4.))
                     .font_features(tabular())
-                    .child(sel(tr!("{n} · {received} received, of which", "{n} · {received} recibido, de los cuales")))
-                    .child(div().text_color(p.positive).child(sel(money.format(income))))
+                    // Both amounts count up when the page opens.
+                    .child(
+                        CountUp::new("pay-received", received, {
+                            let (money, n) = (money.clone(), n.clone());
+                            move |v| {
+                                let received = money.format(v);
+                                tr!("{n} · {received} received, of which", "{n} · {received} recibido, de los cuales")
+                            }
+                        })
+                        .color(p.muted),
+                    )
+                    .child(
+                        CountUp::new("pay-income", income, {
+                            let money = money.clone();
+                            move |v| money.format(v)
+                        })
+                        .color(p.positive),
+                    )
                     .child(sel(t("is interest", "son interés")))
                     .into_any_element()
             } else {
@@ -114,7 +129,7 @@ impl VzApp {
                 let loan = self.snap.loan(x.loan_id);
                 let cid = loan.map(|l| l.client_id).unwrap_or(0);
                 let name = self.snap.client_name(cid).to_string();
-                let lid = x.loan_id;
+                let (loan_id, lid) = (x.loan_id, self.snap.loan_no(x.loan_id));
                 let pid = x.id;
                 let rev = x.is_reversed();
                 let dim = |d: Div| if rev { d.text_color(p.muted).line_through() } else { d };
@@ -193,7 +208,7 @@ impl VzApp {
                                 ))
                             }),
                     )
-                    .on_click(cx.listener(move |this, _, w, cx| this.open_row(Route::Loan(lid), w, cx)))
+                    .on_click(cx.listener(move |this, _, w, cx| this.open_row(Route::Loan(loan_id), w, cx)))
             });
             v_flex()
                 .child(

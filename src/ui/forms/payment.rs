@@ -142,13 +142,17 @@ impl PaymentForm {
             .iter()
             .map(|l| {
                 let name = snap.client_name(l.client_id);
-                let id = l.id;
+                let (id, no) = (l.id, snap.loan_no(l.id));
                 let owed = match l.plan_state(today) {
                     Some(s) => s.payoff(),
                     None => owed_at_payment(&l.facts, &l.payments, today).payoff(),
                 };
                 let owed = money.format(owed);
-                Choice { id, title: tr!("{name} — Loan #{id} · {owed} owed", "{name} — Préstamo #{id} · debe {owed}").into() }
+                let title = {
+                    let id = no;
+                    tr!("{name} — Loan #{id} · {owed} owed", "{name} — Préstamo #{id} · debe {owed}")
+                };
+                Choice { id, title: title.into() }
             })
             .collect();
         let loan_id = loan_id.or_else(|| (choices.len() == 1).then(|| choices[0].id));
@@ -510,6 +514,7 @@ impl PaymentForm {
         if self.editing.is_some() {
             let lid = self.loan_id.unwrap_or_default();
             let name = self.snap.loan(lid).map(|l| self.snap.client_name(l.client_id).to_string()).unwrap_or_default();
+            let lid = self.snap.loan_no(lid);
             div()
                 .h(px(32.))
                 .px(px(space::M))
