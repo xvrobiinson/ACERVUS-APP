@@ -85,7 +85,16 @@ gpui_kit::assets::icon_assets!(
         CalendarDays,
         Compass,
         BriefcaseBusiness,
-        LogOut
+        LogOut,
+        // Settings › About: Copy email.
+        Copy,
+        // A clickable card's arrow (2026-11-11).
+        ArrowUpRight,
+        // The date field's title, which opens the years (2026-11-11).
+        ChevronDown,
+        // The Team section: which device someone is on (2026-11-11).
+        Smartphone,
+        Monitor
     ]
 );
 

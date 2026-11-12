@@ -5,6 +5,7 @@ pub mod calendar;
 pub mod export;
 pub mod hero_layout;
 mod lending;
+pub mod list_filters;
 pub mod overview_layout;
 pub mod picture;
 pub mod receipt;
@@ -12,6 +13,7 @@ pub mod receipt_text;
 mod records;
 pub mod reports;
 pub mod settings;
+pub mod team;
 pub mod whatsapp;
 pub mod xlsx;
 

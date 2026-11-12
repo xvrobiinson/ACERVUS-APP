@@ -63,7 +63,7 @@ impl VzApp {
         self.open_whatsapp(whatsapp::link(&phone, &text), window, cx);
     }
 
-    fn open_whatsapp(&mut self, url: String, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_whatsapp(&mut self, url: String, window: &mut Window, cx: &mut Context<Self>) {
         let rx = crate::shell::browse(&url);
         cx.spawn_in(window, async move |this, cx| {
             if let Err(why) = crate::shell::wait(rx, cx.background_executor().clone()).await {
@@ -123,7 +123,7 @@ impl VzApp {
         use crate::sync::wire::Need;
         use crate::ui::kit::Button;
         use gpui_kit::assets::IconName;
-        if !self.can(Need::Record) || self.wa_phone(client_id).is_none() {
+        if !self.can(Need::PaymentsRecord) || self.wa_phone(client_id).is_none() {
             return None;
         }
         let reminder = reminders.iter().find(|r| r.client_id == client_id && loan_id.is_none_or(|l| r.loan_id == l)).cloned();
@@ -150,7 +150,7 @@ impl VzApp {
         use crate::sync::wire::Need;
         let pay = self.snap.payment(payment_id).filter(|p| !p.is_reversed())?;
         let client_id = self.snap.loan(pay.loan_id)?.client_id;
-        if !self.can(Need::Record) || self.wa_phone(client_id).is_none() {
+        if !self.can(Need::PaymentsRecord) || self.wa_phone(client_id).is_none() {
             return None;
         }
         Some(

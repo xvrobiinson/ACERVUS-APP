@@ -8,13 +8,16 @@ mod derived;
 mod dialogs;
 mod drive;
 mod hero;
+pub(crate) mod links;
 pub(crate) mod motion;
 mod prefs;
 mod profile;
 pub(crate) use profile::initials_of;
 mod search;
+pub(crate) mod support;
+mod team;
 mod tour;
-mod update;
+pub(crate) mod update;
 mod whatsapp;
 pub(crate) use brand::mark;
 
@@ -140,6 +143,10 @@ pub struct VzApp {
     pub(crate) settings_page: Option<crate::ui::screens::settings::SettingsPage>,
     /// Settings › Team while it is open.
     pub(crate) team_view: Option<Entity<crate::ui::screens::team::TeamView>>,
+    /// The Team section (roadmap 58): the open row, teammates' photos.
+    pub(crate) crew: team::Crew,
+    /// Whether Acervus support may see the books (Settings › Business, the Owner).
+    pub(crate) support: support::Support,
     pub(crate) route: Route,
     history: Vec<Route>,
     pub(crate) focus: FocusHandle,
@@ -162,9 +169,15 @@ pub struct VzApp {
     pub(crate) calendar_view: crate::ui::screens::calendar::CalendarView,
     pub(crate) calendar_anchor: Option<chrono::NaiveDate>,
     pub(crate) calendar_picked: Option<chrono::NaiveDate>,
-    pub(crate) show_archived: bool,
-    /// The Clients list's filter by collector.
-    pub(crate) collector_filter: crate::ui::screens::collect::CollectorFilter,
+    /// The page's scroll, the parts of it a card can scroll to, and a part
+    /// to scroll to once the page opened by a card is drawn (`links`).
+    pub(crate) page_scroll: ScrollHandle,
+    pub(crate) anchors: links::Anchors,
+    /// A part a card asked for on another page, and how many more frames to
+    /// wait for it to be drawn.
+    pub(crate) pending_anchor: Option<(&'static str, u8)>,
+    /// A loan's schedule list (scrolled to its first late row by a card).
+    pub(crate) schedule_scroll: ScrollHandle,
     pub(crate) chart_hover: Option<usize>,
     pub(crate) analytics_hover: Option<usize>,
     pub(crate) load_error: Option<String>,
@@ -355,9 +368,13 @@ impl VzApp {
             calendar_view: Default::default(),
             calendar_anchor: None,
             calendar_picked: None,
-            show_archived: false,
-            collector_filter: Default::default(),
+            page_scroll: ScrollHandle::new(),
+            anchors: Default::default(),
+            pending_anchor: None,
+            schedule_scroll: ScrollHandle::new(),
             team_view: None,
+            crew: Default::default(),
+            support: Default::default(),
             chart_hover: None,
             analytics_hover: None,
             load_error,
@@ -434,6 +451,16 @@ impl VzApp {
                         "calendar" => app.navigate(Route::Calendar, window, cx),
                         "tour" => app.start_tour(window, cx),
                         "help" => app.open_help(window, cx),
+                        // The Team section with made-up people (2026-11-11).
+                        "team" => app.crew.demo = Some(team::demo_team()),
+                        // The same with a collector's row open; "team-sheet": in its window.
+                        "team-open" | "team-sheet" => {
+                            app.crew.demo = Some(team::demo_team());
+                            app.crew.open = Some("demo-ana".into());
+                            if start == "team-sheet" {
+                                app.open_team(window, cx);
+                            }
+                        }
                         "wa-text" => app.open_wa_text_form(window, cx),
                         "settings-business" | "settings-formats" | "settings-data" | "settings-receipt-look" | "settings-receipt-parts" => {
                             use crate::ui::screens::settings::{SettingsPage, SettingsPanel};
@@ -577,10 +604,22 @@ impl VzApp {
                     app.maybe_drive_backup(window, cx);
                     app.maybe_local_backup(cx);
                     app.maybe_check_update(cx);
+                    // The Team section: "I'm here" while in front.
+                    app.team_beat(window);
                 });
                 if alive.is_err() {
                     break;
                 }
+            }
+        })
+        .detach();
+        // The Team section: here when the window comes to the front, gone
+        // when it goes to the back.
+        cx.observe_window_activation(window, |app, window, _| {
+            if window.is_window_active() {
+                app.team_beat(window);
+            } else {
+                app.team_leave();
             }
         })
         .detach();
@@ -660,7 +699,8 @@ impl VzApp {
     /// Width available to a screen's content, for layouts that reflow on
     /// narrow windows.
     pub fn content_width(&self, window: &Window) -> f32 {
-        hero::content_width(f32::from(window.viewport_size().width))
+        let column = self.team_column_width(window);
+        hero::content_width(f32::from(window.viewport_size().width) - column, column > 0.)
     }
 
     /// The active loan the current screen is about, for context-aware
@@ -688,7 +728,7 @@ impl VzApp {
 
     pub fn navigate(&mut self, route: Route, window: &mut Window, cx: &mut Context<Self>) {
         // Analytics shows the business's totals: admins only.
-        let route = if route == Route::Analytics && !self.can(Need::Manage) { Route::Overview } else { route };
+        let route = if route == Route::Analytics && !self.can(Need::Books) { Route::Overview } else { route };
         // A settings popup belongs to the Settings page.
         self.settings_panel = None;
         self.settings_page = None;
@@ -700,6 +740,10 @@ impl VzApp {
             self.route = route;
             self.chart_hover = None;
             self.analytics_hover = None;
+            // A new page: its parts are drawn again, and it starts at the top.
+            self.anchors.borrow_mut().clear();
+            self.pending_anchor = None;
+            self.page_scroll.set_offset(point(px(0.), px(0.)));
         }
         self.focus.focus(window, cx);
         cx.notify();
@@ -947,6 +991,29 @@ impl VzApp {
             if let Err(why) = crate::shell::wait(rx, cx.background_executor().clone()).await {
                 let _ = this.update_in(cx, |app, window, cx| {
                     app.notify_error(tr!("Windows couldn't open {url} ({why}).", "Windows no pudo abrir {url} ({why})."), window, cx)
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Opens the mail app on an email to support, its subject naming the app
+    /// and version; with no mail app, copies the address and says so.
+    pub(crate) fn email_support(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let subject = format!("{} {} ({}, Windows)", crate::APP_NAME, t("support", "soporte"), env!("CARGO_PKG_VERSION"));
+        let rx = crate::shell::mail(crate::SUPPORT_EMAIL, &subject);
+        cx.spawn_in(window, async move |this, cx| {
+            if crate::shell::wait(rx, cx.background_executor().clone()).await.is_err() {
+                let _ = this.update_in(cx, |app, window, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(crate::SUPPORT_EMAIL.to_string()));
+                    app.notify_success(
+                        t(
+                            "No mail app is set up on this PC, so the email address was copied.",
+                            "No hay una app de correo en esta PC; se copió el correo.",
+                        ),
+                        window,
+                        cx,
+                    )
                 });
             }
         })
@@ -1205,6 +1272,8 @@ impl Render for VzApp {
         i18n::set(self.snap.settings.language);
         self.begin_frame();
         crate::ui::components::begin_selectable_frame();
+        crate::ui::kit::motion::note_window(window);
+        self.settle_pending_anchor(window, cx);
         let p = palette(cx);
         let mut settings_popup = None;
         let content = match self.route {
@@ -1215,7 +1284,7 @@ impl Render for VzApp {
             Route::Loan(id) => self.render_loan(id, window, cx),
             Route::Payments => self.render_payments(window, cx),
             Route::Calendar => self.render_calendar(window, cx),
-            Route::Analytics if self.can(Need::Manage) => self.render_analytics(window, cx),
+            Route::Analytics if self.can(Need::Books) => self.render_analytics(window, cx),
             Route::Analytics => self.render_overview(window, cx),
             Route::Settings => {
                 let (page, popup) = self.render_settings(window, cx);
@@ -1239,15 +1308,17 @@ impl Render for VzApp {
             .key_context(CONTEXT)
             .track_focus(&self.focus)
             // Shortcuts for what the person's role may do.
-            .when(self.can(Need::Record), |d| {
+            .when(self.can(Need::PaymentsRecord), |d| {
                 d.on_action(cx.listener(|this, _: &NewPayment, w, cx| {
                     let loan = this.context_loan();
                     this.open_payment_form(loan, w, cx)
                 }))
-                .on_action(cx.listener(|this, _: &NewClient, w, cx| this.open_client_form(None, w, cx)))
-                .on_action(cx.listener(|this, _: &NewExpense, w, cx| this.open_entry_form(EntryKind::Expense, None, w, cx)))
             })
-            .when(self.can(Need::Manage), |d| {
+            .when(self.can(Need::ClientsAdd), |d| d.on_action(cx.listener(|this, _: &NewClient, w, cx| this.open_client_form(None, w, cx))))
+            .when(self.can(Need::EntriesRecord), |d| {
+                d.on_action(cx.listener(|this, _: &NewExpense, w, cx| this.open_entry_form(EntryKind::Expense, None, w, cx)))
+            })
+            .when(self.can(Need::Loans), |d| {
                 d.on_action(cx.listener(|this, _: &NewLoan, w, cx| {
                     let client = match this.route {
                         Route::Client(id) if this.snap.client(id).is_some_and(|c| !c.is_archived()) => Some(id),

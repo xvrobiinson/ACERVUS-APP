@@ -183,7 +183,7 @@ impl VzApp {
 
         // The picked day: its loans, to record or remind, and what came in.
         let day = days.get(&picked);
-        let record = self.can(Need::Record);
+        let record = self.can(Need::PaymentsRecord);
         let side_body: AnyElement = match day {
             None => empty_state(
                 &p,
@@ -295,7 +295,7 @@ impl VzApp {
                 });
                 v_flex()
                     .pb(px(space::S))
-                    .children(dues)
+                    .children(crate::ui::kit::motion::rise_rows("due-in", dues))
                     .when(!x.paid.is_empty(), |d| {
                         d.child(
                             h_flex()
@@ -309,7 +309,7 @@ impl VzApp {
                                 .child(t("Received this day", "Recibido este día")),
                         )
                     })
-                    .children(paid)
+                    .children(crate::ui::kit::motion::rise_rows("paid-in", paid))
                     .into_any_element()
             }
         };

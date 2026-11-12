@@ -43,6 +43,37 @@ pub fn browse(url: &str) -> mpsc::Receiver<Result<(), String>> {
     rx
 }
 
+/// Opens the person's mail app on a new email to `address` with `subject`.
+/// Only a plain address, and the subject is encoded, so nothing else can be
+/// started through here. An error when no mail app is set up.
+pub fn mail(address: &str, subject: &str) -> mpsc::Receiver<Result<(), String>> {
+    let (tx, rx) = mpsc::channel();
+    let plain = address.split_once('@').is_some_and(|(user, host)| !user.is_empty() && host.contains('.'))
+        && address.chars().all(|c| c.is_ascii_alphanumeric() || "@._+-".contains(c));
+    if !plain {
+        let _ = tx.send(Err("not an email address".into()));
+        return rx;
+    }
+    let url = format!("mailto:{address}?subject={}", encode(subject));
+    let spawned = std::thread::Builder::new().name("shell".into()).spawn({
+        let tx = tx.clone();
+        move || {
+            let _ = tx.send(imp::browse(&url));
+        }
+    });
+    if let Err(e) = spawned {
+        let _ = tx.send(Err(e.to_string()));
+    }
+    rx
+}
+
+/// Percent-encodes everything but letters, digits and `-._~` (UTF-8 bytes).
+fn encode(s: &str) -> String {
+    s.bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect()
+}
+
 fn run(path: PathBuf, f: fn(&Path) -> Result<(), String>) -> mpsc::Receiver<Result<(), String>> {
     let (tx, rx) = mpsc::channel();
     if !path.exists() {
@@ -206,5 +237,14 @@ mod tests {
         assert!(browse("C:\\Windows\\System32\\calc.exe").recv().unwrap().is_err());
         assert!(browse("http://example.com").recv().unwrap().is_err());
         assert!(browse("https://example.com\" --evil").recv().unwrap().is_err());
+    }
+
+    #[test]
+    fn only_plain_addresses_open_the_mail_app() {
+        assert!(mail("x@y.com?body=hi", "s").recv().unwrap().is_err());
+        assert!(mail("x@y.com\" --evil", "s").recv().unwrap().is_err());
+        assert!(mail(r"C:\Windows\calc.exe", "s").recv().unwrap().is_err());
+        assert!(mail("nobody", "s").recv().unwrap().is_err());
+        assert_eq!(encode("Acervus support (0.16.0, Windows) ñ&"), "Acervus%20support%20%280.16.0%2C%20Windows%29%20%C3%B1%26");
     }
 }

@@ -86,7 +86,7 @@ impl VzApp {
                 search,
                 finish,
             ],
-            Some(Role::Viewer) => vec![
+            Some(Role::Accountant) => vec![
                 welcome,
                 TourStep {
                     targets: &["figures"],
@@ -264,7 +264,7 @@ impl VzApp {
     pub(crate) fn open_help(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let money = self.settings().money();
         let m = move |c: i64| money.format(c);
-        let admin = self.can(Need::Manage);
+        let admin = self.can(Need::Books);
         let me = cx.entity().downgrade();
         window.open_dialog(cx, move |dialog, _, cx| {
             let p = palette(cx);

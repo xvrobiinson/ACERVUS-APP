@@ -18,9 +18,45 @@ use crate::ui::theme::{Palette, Typeset as _, space, text};
 
 pub(crate) fn role_label(r: Role) -> &'static str {
     match r {
+        Role::Owner => t("Owner", "Dueño"),
         Role::Admin => t("Admin", "Administrador"),
+        Role::Manager => t("Manager", "Gerente"),
+        Role::Accountant => t("Accountant", "Contador"),
         Role::Collector => t("Collector", "Cobrador"),
-        Role::Viewer => t("Viewer", "Solo lectura"),
+    }
+}
+
+/// What a role can do, in one line (Settings › Team).
+pub(crate) fn role_hint(r: Role) -> &'static str {
+    match r {
+        Role::Owner => t(
+            "The business is theirs: everything, including deleting it or handing it over.",
+            "El negocio es suyo: todo, incluso borrarlo o entregarlo.",
+        ),
+        Role::Admin => t("Everything except deleting the business or handing it over.", "Todo menos borrar el negocio o entregarlo."),
+        Role::Manager => t(
+            "Clients, loans and payments; confirms collectors' payments and manages collectors. No capital or settings.",
+            "Clientes, préstamos y pagos; confirma los pagos de los cobradores y maneja a los cobradores. Sin capital ni ajustes.",
+        ),
+        Role::Accountant => t(
+            "Sees all the books, totals and reports, and records expenses and income.",
+            "Ve todos los libros, totales y reportes, y registra gastos e ingresos.",
+        ),
+        Role::Collector => t(
+            "Their assigned clients: records payments, which wait for confirmation.",
+            "Sus clientes asignados: registra pagos, que esperan confirmación.",
+        ),
+    }
+}
+
+/// Each role's mark (the account's badge, Settings › Team).
+pub(crate) fn role_icon(r: Role) -> IconName {
+    match r {
+        Role::Owner => IconName::KeyRound,
+        Role::Admin => IconName::ShieldCheck,
+        Role::Manager => IconName::BriefcaseBusiness,
+        Role::Accountant => IconName::ChartLine,
+        Role::Collector => IconName::HandCoins,
     }
 }
 
@@ -167,10 +203,12 @@ impl VzApp {
             .gap(px(space::M))
             .when(choosing, |d| d.child(self.business_list(p, cx)))
             .child(self.drive_settings(p, cx));
-        body.children((!review.is_empty()).then(|| v_flex().mx(px(-space::XL)).children(review)))
-            .child(cards)
-            .child(delete_account)
-            .into_any_element()
+        body.children(
+            (!review.is_empty()).then(|| v_flex().mx(px(-space::XL)).children(crate::ui::kit::motion::rise_rows("refused-in", review))),
+        )
+        .child(cards)
+        .child(delete_account)
+        .into_any_element()
     }
 
     /// One of the page's two small cards.
@@ -223,7 +261,7 @@ impl VzApp {
                                     .on_click(cx.listener(move |this, _, w, cx| this.link_business(&open_id, w, cx))),
                             )
                         })
-                        .when(b.role == Role::Admin, |r| {
+                        .when(b.role == Role::Owner, |r| {
                             let (id, name) = (id.clone(), name.clone());
                             r.child(
                                 Button::new(SharedString::from(format!("sync-delete-{id}")))
@@ -257,7 +295,7 @@ impl VzApp {
                             .on_click(cx.listener(|this, _, w, cx| this.open_new_business(w, cx))),
                     ),
             )
-            .children(rows)
+            .children(crate::ui::kit::motion::rise_rows("biz-in", rows))
             .into_any_element()
     }
 

@@ -332,7 +332,7 @@ impl VzApp {
                             .child(fcol().child(th(&p, t("Net cash flow", "Flujo neto"))))
                             .child(fcol().child(th(&p, t("Ending cash", "Efectivo final")))),
                     )
-                    .children(flow_rows)
+                    .children(crate::ui::kit::motion::rise_rows("flow-in", flow_rows))
                     .into_any_element()
             });
 
@@ -349,7 +349,7 @@ impl VzApp {
             .chain(self.snap.entries.iter().map(|e| (e.occurred_on, e.id, Mv::Entry(e.id))))
             .collect();
         movements.sort_by_key(|(d, id, _)| std::cmp::Reverse((*d, *id)));
-        let manage = self.can(Need::Manage);
+        let manage = self.can(Need::Money);
         let move_rows: Vec<AnyElement> = movements
             .iter()
             .filter_map(|(date, _, mv)| {
@@ -497,7 +497,7 @@ impl VzApp {
                 )
                 .into_any_element()
             } else {
-                v_flex().children(move_rows).into_any_element()
+                v_flex().children(crate::ui::kit::motion::rise_rows("move-in", move_rows)).into_any_element()
             });
 
         let changes: Vec<_> = self.snap.changes.iter().collect();
@@ -522,7 +522,7 @@ impl VzApp {
                             .child(deploy_card),
                     )
                     .child(flow_card)
-                    .child(ledger_card)
+                    .child(self.anchor("money", ledger_card))
                     .children(history),
             )
             .into_any_element()
@@ -531,10 +531,10 @@ impl VzApp {
     /// Page actions. Wide windows show all three; narrower ones fold the
     /// secondary ones into a "More" menu so the primary never wraps.
     fn analytics_actions(&self, w: Width, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        if !self.can(Need::Manage) {
+        if !self.can(Need::Money) {
             // Collectors still add expenses and income.
             return self
-                .can(Need::Record)
+                .can(Need::EntriesRecord)
                 .then(|| {
                     Button::new("an-expense")
                         .icon(IconName::ReceiptText)

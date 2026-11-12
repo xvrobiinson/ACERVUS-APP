@@ -29,11 +29,19 @@ pub struct GlassFigure {
     rows: Vec<(SharedString, SharedString, FigureTone)>,
     body: Option<AnyElement>,
     compact: bool,
+    /// Clicking the card opens this; a hand and an arrow show on hover.
+    opens: Option<super::Callback>,
 }
 
 impl GlassFigure {
     pub fn new(id: impl Into<ElementId>) -> Self {
-        Self { id: id.into(), label: None, value: None, action: None, rows: Vec::new(), body: None, compact: false }
+        Self { id: id.into(), label: None, value: None, action: None, rows: Vec::new(), body: None, compact: false, opens: None }
+    }
+
+    /// Clicking the card opens the place that explains the figure.
+    pub fn opens(mut self, f: super::Callback) -> Self {
+        self.opens = Some(f);
+        self
     }
 
     /// The big figure and its label; a place can have only rows.
@@ -68,6 +76,16 @@ impl GlassFigure {
     }
 }
 
+/// A clickable card's arrow in its bottom right corner, showing as `t` goes
+/// from 0 (at rest: hidden) to 1 (under the pointer).
+pub(super) fn opens_arrow(color: Hsla, t: f32, right: f32, bottom: f32) -> Div {
+    div().absolute().right(px(right)).bottom(px(bottom)).opacity(t).child(crate::ui::components::icon(
+        gpui_kit::assets::IconName::ArrowUpRight,
+        color,
+        14.,
+    ))
+}
+
 /// "RD$1,234.56" → ("RD$1,234", ".56"): the cents are drawn faded.
 fn split_cents(s: &str) -> (String, String) {
     let b = s.as_bytes();
@@ -86,7 +104,9 @@ impl RenderOnce for GlassFigure {
         let lone = self.rows.len() == 1;
         let compact = self.compact;
         let id = self.id.clone();
+        let opens = self.opens;
         let card = v_flex()
+            .relative()
             .id(self.id)
             .flex_1()
             .flex_basis(px(0.))
@@ -148,12 +168,15 @@ impl RenderOnce for GlassFigure {
                 })))
             })
             .children(self.body);
-        if !compact {
+        if !compact && opens.is_none() {
             return card.into_any_element();
         }
         // The six small cards rise a little under the pointer, with a soft
-        // shadow (2026-11-10).
+        // shadow (2026-11-10); a card that opens something shows a hand and
+        // an arrow (2026-11-11).
         let (hovered, on_hover) = hover_state(&id, window, cx);
+        let link = opens.is_some();
+        let arrow = h.mute;
         div()
             .id(scoped(&id, "lift-box"))
             .flex_1()
@@ -161,9 +184,15 @@ impl RenderOnce for GlassFigure {
             .min_w_0()
             .flex()
             .on_hover(on_hover)
+            .when_some(opens, |d, f| d.cursor_pointer().on_click(move |_, w, cx| f(w, cx)))
             .with_spring(scoped(&id, "lift"), SpringAnimation::new(motion::CONTROL).to(hovered), move |d, t| {
                 let t = t.0.clamp(0., 1.);
-                d.relative().top(px(-3. * t)).child(card.shadow(elevation_between(&p, Elevation::Flat, Elevation::Lifted, t)))
+                let card = card.when(link, |c| c.child(opens_arrow(arrow, t, 12., 10.)));
+                if compact {
+                    d.relative().top(px(-3. * t)).child(card.shadow(elevation_between(&p, Elevation::Flat, Elevation::Lifted, t)))
+                } else {
+                    d.child(card)
+                }
             })
             .into_any_element()
     }

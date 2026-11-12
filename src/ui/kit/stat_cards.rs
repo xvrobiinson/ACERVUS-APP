@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use super::interact::{hover_state, scoped};
 use super::{Card, Glide, Stat};
-use crate::ui::theme::{motion, space};
+use crate::ui::theme::{motion, palette, space};
+use gpui_kit::prelude::FluentBuilder as _;
 
 /// Adds behavior to the card at a place.
 type Frame = Rc<dyn Fn(usize, Stateful<Div>) -> Stateful<Div>>;
@@ -80,8 +81,9 @@ impl RenderOnce for StatCards {
             .stats
             .into_iter()
             .enumerate()
-            .map(|(i, s)| {
-                let card = Card::new().flex_1().flex_basis(px(0.)).min_w_0().p(px(space::L + 2.));
+            .map(|(i, mut s)| {
+                let opens = s.take_opens();
+                let card = Card::new().flex_1().flex_basis(px(0.)).min_w_0().p(px(space::L + 2.)).relative();
                 let Some(parent) = &self.lifting else { return card.child(s).into_any_element() };
                 let name = self.keys.get(i).cloned().unwrap_or_else(|| i.to_string().into());
                 let id = ElementId::NamedChild(Arc::new(parent.clone()), name);
@@ -91,8 +93,17 @@ impl RenderOnce for StatCards {
                     Some(f) => f(i, wrapper),
                     None => wrapper,
                 };
+                let link = opens.is_some();
+                let wrapper = match opens {
+                    Some(f) => wrapper.cursor_pointer().on_click(move |_, w, cx| f(w, cx)),
+                    None => wrapper,
+                };
+                let ink = palette(cx).muted;
                 let card = wrapper.with_spring(scoped(&id, "lift"), SpringAnimation::new(motion::CONTROL).to(hovered), move |d, t| {
-                    d.relative().top(px(-2. * t.0)).child(card.lift(t.0.clamp(0., 1.)).child(s))
+                    let t = t.0.clamp(0., 1.);
+                    d.relative()
+                        .top(px(-2. * t))
+                        .child(card.lift(t).child(s).when(link, |c| c.child(super::glass_figure::opens_arrow(ink, t, 14., 14.))))
                 });
                 Glide::new(scoped(&id, "glide"), card).armed(self.glide).into_any_element()
             })

@@ -2,11 +2,15 @@
 //! src/ui/profile.tsx): their name, shown in the account panel and to their
 //! team, and a photo they can add, change or remove (initials without one).
 //! Kept with the account (convex/account.ts), so every phone and PC shows
-//! the same. A photo change is sent at once; the name with Save.
+//! the same. A photo change is sent at once; the name with Save. Since the
+//! Team section (2026-11-11) their teams see the photo too, the phone they
+//! choose to give (sent with Save), and when they are online unless they
+//! turn that off (sent at once).
 
 use std::path::PathBuf;
 
 use gpui_kit::assets::IconName;
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -26,6 +30,8 @@ pub struct ProfileForm {
     app: WeakEntity<VzApp>,
     pub name: Entity<InputState>,
     saved_name: String,
+    phone: Entity<InputState>,
+    saved_phone: String,
     busy: bool,
     photo_busy: bool,
     error: Option<String>,
@@ -33,14 +39,48 @@ pub struct ProfileForm {
 }
 
 impl ProfileForm {
-    pub fn new(app: WeakEntity<VzApp>, name: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(app: WeakEntity<VzApp>, name: String, phone: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| InputState::new(window, cx).default_value(name.clone()));
-        let subs = vec![cx.subscribe_in(&input, window, |_, _, ev: &InputEvent, _, cx| {
+        let phone_input = cx.new(|cx| InputState::new(window, cx).default_value(phone.clone()));
+        let changed = |_: &mut Self, _: &Entity<InputState>, ev: &InputEvent, _: &mut Window, cx: &mut Context<Self>| {
             if let InputEvent::Change = ev {
                 cx.notify()
             }
-        })];
-        Self { app, name: input, saved_name: name, busy: false, photo_busy: false, error: None, _subs: subs }
+        };
+        let subs = vec![cx.subscribe_in(&input, window, changed), cx.subscribe_in(&phone_input, window, changed)];
+        Self {
+            app,
+            name: input,
+            saved_name: name,
+            phone: phone_input,
+            saved_phone: phone,
+            busy: false,
+            photo_busy: false,
+            error: None,
+            _subs: subs,
+        }
+    }
+
+    fn typed_phone(&self, cx: &App) -> String {
+        value(&self.phone, cx).split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    /// Whether the team sees when they are online: sent at once.
+    fn set_show_online(&mut self, show: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let _ = self.app.update(cx, |app, cx| {
+            app.profile.hide_online = !show;
+            cx.notify();
+        });
+        cx.notify();
+        self.send("account:setHideOnline", json!({ "hide": !show }), window, cx, move |this, outcome, _, cx| {
+            if !matches!(outcome, Outcome::Accepted(_)) {
+                let _ = this.app.update(cx, |app, cx| {
+                    app.profile.hide_online = show;
+                    cx.notify();
+                });
+                this.failed(&outcome, cx);
+            }
+        });
     }
 
     fn typed(&self, cx: &App) -> String {
@@ -81,24 +121,54 @@ impl ProfileForm {
             self.error = Some(t("Write your name", "Escribe tu nombre").into());
             return cx.notify();
         }
-        if name == self.saved_name {
+        let phone = self.typed_phone(cx);
+        if name == self.saved_name && phone == self.saved_phone {
             window.close_dialog(cx);
             return;
         }
         self.busy = true;
         self.error = None;
         cx.notify();
-        self.send("account:setName", json!({ "name": name }), window, cx, move |this, outcome, window, cx| {
+        if name != self.saved_name {
+            self.send("account:setName", json!({ "name": name }), window, cx, move |this, outcome, window, cx| {
+                if !matches!(outcome, Outcome::Accepted(_)) {
+                    this.busy = false;
+                    return this.failed(&outcome, cx);
+                }
+                this.saved_name = name.clone();
+                let _ = this.app.update(cx, |app, cx| {
+                    app.profile.name = name.clone();
+                    cx.notify();
+                });
+                this.save_phone(window, cx);
+            });
+        } else {
+            self.save_phone(window, cx);
+        }
+    }
+
+    /// The phone, when it changed; then the window closes.
+    fn save_phone(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let phone = self.typed_phone(cx);
+        let done = |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
             this.busy = false;
+            window.close_dialog(cx);
+            let _ = this.app.update(cx, |app, cx| app.notify_success(t("Profile saved", "Perfil guardado"), window, cx));
+        };
+        if phone == self.saved_phone {
+            return done(self, window, cx);
+        }
+        self.send("account:setPhone", json!({ "phone": phone }), window, cx, move |this, outcome, window, cx| {
             if !matches!(outcome, Outcome::Accepted(_)) {
+                this.busy = false;
                 return this.failed(&outcome, cx);
             }
-            window.close_dialog(cx);
+            this.saved_phone = phone.clone();
             let _ = this.app.update(cx, |app, cx| {
-                app.profile.name = name.clone();
-                app.notify_success(t("Name saved", "Nombre guardado"), window, cx);
+                app.profile.phone = phone.clone();
                 cx.notify();
             });
+            done(this, window, cx);
         });
     }
 
@@ -189,11 +259,14 @@ impl ProfileForm {
 impl Render for ProfileForm {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let p = palette(cx);
-        let (photo, email) = self
+        let (photo, email, hide_online) = self
             .app
-            .read_with(cx, |app, _| (app.profile.photo.clone(), app.cloud.as_ref().map(|c| c.email.clone()).unwrap_or_default()))
+            .read_with(cx, |app, _| {
+                (app.profile.photo.clone(), app.cloud.as_ref().map(|c| c.email.clone()).unwrap_or_default(), app.profile.hide_online)
+            })
             .unwrap_or_default();
         let typed = self.typed(cx);
+        let phone = self.typed_phone(cx);
         let letters = crate::app::initials_of(&typed, &email);
         let face = h_flex()
             .flex_none()
@@ -239,11 +312,32 @@ impl Render for ProfileForm {
                 Some(t("Your team sees it, and the greeting uses it.", "Tu equipo lo ve, y el saludo lo usa.").into()),
                 None,
             ))
+            .child(field(
+                &p,
+                t("Phone (optional)", "Teléfono (opcional)"),
+                Input::new(&self.phone),
+                Some(t("Your team can write to you on WhatsApp.", "Tu equipo puede escribirte por WhatsApp.").into()),
+                None,
+            ))
+            .child(
+                v_flex()
+                    .gap(px(space::XS))
+                    .child(
+                        Checkbox::new("profile-show-online")
+                            .label(t("Show my team when I'm online", "Mostrar a mi equipo cuando estoy en línea"))
+                            .checked(!hide_online)
+                            .on_click(cx.listener(|this, on: &bool, w, cx| this.set_show_online(*on, w, cx))),
+                    )
+                    .child(div().pl(px(24.)).typeset(text::CAPTION).text_color(p.muted).child(t(
+                        "Off: nobody sees whether you're online or when you were last.",
+                        "Apagado: nadie ve si estás en línea ni cuándo estuviste por última vez.",
+                    ))),
+            )
             .child(div().typeset(text::CAPTION).text_color(p.muted).child(tr!("Signed in as {email}", "Sesión iniciada como {email}")))
             .child(footer(
                 &p,
                 t("Save", "Guardar"),
-                !typed.is_empty() && typed != self.saved_name,
+                !typed.is_empty() && (typed != self.saved_name || phone != self.saved_phone),
                 self.busy,
                 cx.listener(|this, _, w, cx| this.submit(w, cx)),
             ))

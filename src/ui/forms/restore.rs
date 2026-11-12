@@ -98,10 +98,10 @@ impl RestoreForm {
                     "Esta copia es de otro negocio, {other}. Abre ese negocio para restaurarla."
                 ))
             }
-            Some(l) if l.role != Role::Admin => Some(
+            Some(l) if l.role == Role::Collector => Some(
                 t(
-                    "This backup comes from a collector's or viewer's PC, which holds only part of the books. Use a backup made on an admin's PC.",
-                    "Esta copia viene de la PC de un cobrador o de alguien de solo lectura, que tiene solo parte de los registros. Usa una copia hecha en la PC de un administrador.",
+                    "This backup comes from a collector's PC, which holds only part of the books. Use a backup made on the Owner's or an Admin's PC.",
+                    "Esta copia viene de la PC de un cobrador, que tiene solo parte de los registros. Usa una copia hecha en la PC del dueño o de un administrador.",
                 )
                 .into(),
             ),

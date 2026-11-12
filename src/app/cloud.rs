@@ -157,6 +157,8 @@ pub(crate) struct Cloud {
     waiting: Vec<Waiting>,
     /// The bell: this person's messages in the linked business.
     pub(crate) messages: Vec<crate::sync::wire::Message>,
+    /// The Team section's list (`team:list`).
+    pub(crate) team: Vec<crate::sync::wire::TeamMember>,
     /// Backups to Google Drive.
     pub(crate) drive: super::drive::Drive,
     /// Invitations waiting for this person, once asked (welcome screen).
@@ -225,6 +227,7 @@ impl VzApp {
             update_required: None,
             waiting: Vec::new(),
             messages: Vec::new(),
+            team: Vec::new(),
             drive: Default::default(),
             invites: None,
             accepting: None,
@@ -410,8 +413,10 @@ impl VzApp {
         let c = self.cloud.as_ref().filter(|c| c.linked.is_some())?;
         match &c.last {
             Some(snap) => Some(snap.me.role),
-            // Before the first copy arrives: the role kept with the books.
-            None => Some(self.store.cloud_link().ok().flatten().map_or(Role::Viewer, |l| l.role)),
+            // Before the first copy arrives: the role kept with the books, else
+            // the role that sees least (no business totals, Portfolio or
+            // Reports) until the cloud says otherwise.
+            None => Some(self.store.cloud_link().ok().flatten().map_or(Role::Collector, |l| l.role)),
         }
     }
 
@@ -690,6 +695,7 @@ impl VzApp {
             c.linked = Some(business_id.to_string());
             c.last = None;
             c.messages.clear();
+            c.team.clear();
             c.worker.open(business_id);
         }
         self.pump(window, cx);
@@ -765,6 +771,7 @@ impl VzApp {
             c.linked = None;
             c.last = None;
             c.messages.clear();
+            c.team.clear();
         }
         self.swap_store(local, window, cx);
     }
@@ -1053,6 +1060,7 @@ impl VzApp {
                 }
             }
             Event::Messages(list) => c.messages = list,
+            Event::Team(list) => c.team = list,
             Event::Downloaded { file, bytes } => {
                 if c.linked.is_some() {
                     match self.store.save_download(&file, &bytes) {

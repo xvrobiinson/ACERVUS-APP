@@ -8,6 +8,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
+use crate::app::links::CardLink;
 use crate::app::{LoanFilter, Route, VzApp};
 use crate::domain::ledger::DisplayStatus;
 use crate::domain::money::Cents;
@@ -30,7 +31,9 @@ impl VzApp {
     fn go_today(&mut self, go: Go, window: &mut Window, cx: &mut Context<Self>) {
         match go {
             Go::LateLoans => {
+                let late = crate::services::list_filters::LoansBy { statuses: vec!["late".into(), "later".into()], ..Default::default() };
                 self.loan_filter = LoanFilter::Attention;
+                self.update_settings(|s| s.loans_filter = late, window, cx);
                 self.navigate(Route::Loans, window, cx);
             }
             Go::Confirm => self.navigate(Route::Payments, window, cx),
@@ -57,7 +60,7 @@ impl VzApp {
                 _ => {}
             }
         }
-        let waiting = if self.can(Need::Manage) { self.waiting_to_confirm() } else { 0 };
+        let waiting = if self.can(Need::PaymentsConfirm) { self.waiting_to_confirm() } else { 0 };
         let mut items: Vec<(Go, String, String)> = Vec::new();
         if !late.is_empty() {
             let n = late.len();
@@ -152,7 +155,7 @@ impl VzApp {
                 .px(px(space::XL))
                 .pb(px(space::XL))
                 .gap(px(8.))
-                .children(rows)
+                .children(crate::ui::kit::motion::rise_rows("today-in", rows))
                 .when(!late.is_empty(), |d| {
                     d.child(
                         h_flex().pt(px(4.)).child(
@@ -184,18 +187,19 @@ impl VzApp {
             match l.display_status(today) {
                 DisplayStatus::Active | DisplayStatus::Restructured => ok += 1,
                 DisplayStatus::DueSoon => soon += 1,
-                DisplayStatus::Overdue if l.delinquency(today).days_overdue > 30 => later += 1,
+                DisplayStatus::Overdue if l.delinquency(today).days_overdue > crate::ui::components::LATE_OVER_DAYS => later += 1,
                 DisplayStatus::Overdue => late += 1,
                 DisplayStatus::Defaulted => gone += 1,
                 DisplayStatus::PaidOff => paid += 1,
             }
         }
+        // Each line opens Loans on its filter (2026-11-11).
         let groups = [
-            (t("On time", "Al día"), ok, p.positive),
-            (t("Due soon", "Vence pronto"), soon, p.info),
-            (t("Late up to 30 days", "Atrasados hasta 30 días"), late, p.warning_fill),
-            (t("Late over 30 days", "Atrasados más de 30 días"), later, p.negative),
-            (t("Defaulted", "Incobrables"), gone, p.faint),
+            (t("On time", "Al día"), ok, p.st_ok, CardLink::LoanStatus(LoanFilter::Open, "ok")),
+            (t("Due soon", "Vence pronto"), soon, p.st_soon, CardLink::LoanStatus(LoanFilter::Attention, "soon")),
+            (t("Late up to 30 days", "Atrasados hasta 30 días"), late, p.st_late, CardLink::LoanStatus(LoanFilter::Attention, "late")),
+            (t("Late over 30 days", "Atrasados más de 30 días"), later, p.st_later, CardLink::LoanStatus(LoanFilter::Attention, "later")),
+            (t("Defaulted", "Incobrables"), gone, p.st_gone, CardLink::Loans(LoanFilter::Defaulted)),
         ];
         let total: usize = groups.iter().map(|g| g.1).sum();
         let all = Button::new("status-all")
@@ -222,14 +226,31 @@ impl VzApp {
                 ),
                 "status-fill",
             );
-            let list = v_flex().gap(px(9.)).typeset(text::BODY).children(groups.iter().map(|(label, n, color)| {
-                let pct = (*n as f32 / total as f32 * 100.).round() as i64;
-                h_flex()
-                    .gap(px(8.))
-                    .child(div().flex_none().size(px(9.)).rounded(px(3.)).bg(*color))
-                    .child(div().flex_1().min_w_0().text_color(p.text).child(*label))
-                    .child(div().flex_none().font_features(tabular()).text_color(p.muted).child(format!("{n} · {pct}%")))
-            }));
+            let hover = p.hover;
+            let list = v_flex().gap(px(1.)).mx(px(-6.)).typeset(text::BODY).children(groups.iter().enumerate().map(
+                |(i, (label, n, color, filter))| {
+                    let pct = (*n as f32 / total as f32 * 100.).round() as i64;
+                    let open = self.link(*filter, cx);
+                    h_flex()
+                        .id(("status-line", i as u64))
+                        .group("status-line")
+                        .gap(px(8.))
+                        .px(px(6.))
+                        .py(px(4.))
+                        .rounded(px(7.))
+                        .cursor_pointer()
+                        .hover(move |s| s.bg(hover))
+                        .on_click(move |_, w, cx| open(w, cx))
+                        .child(div().flex_none().size(px(9.)).rounded(px(3.)).bg(*color))
+                        .child(div().flex_1().min_w_0().text_color(p.text).child(*label))
+                        .child(div().flex_none().font_features(tabular()).text_color(p.muted).child(format!("{n} · {pct}%")))
+                        .child(div().flex_none().opacity(0.).group_hover("status-line", |s| s.opacity(1.)).child(icon(
+                            IconName::ArrowUpRight,
+                            p.muted,
+                            13.,
+                        )))
+                },
+            ));
             v_flex()
                 .px(px(space::XL))
                 .pb(px(space::XL))

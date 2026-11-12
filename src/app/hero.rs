@@ -31,9 +31,19 @@ fn side_pad(viewport: f32) -> f32 {
     theme::Width::gutter(viewport).max((viewport - MAX) / 2.)
 }
 
-/// The width a screen's content gets.
-pub(crate) fn content_width(viewport: f32) -> f32 {
-    viewport - 2. * side_pad(viewport)
+/// The widest the content gets beside the Team column (the web's 1,640px).
+const MAX_BESIDE_TEAM: f32 = 1640.;
+
+/// The space at each side of the bar and the page, in `main` (the window
+/// less the Team column): beside the column the page takes the room there.
+fn page_pad(main: f32, team: bool) -> f32 {
+    if team { 48f32.max((main - MAX_BESIDE_TEAM) / 2.) } else { side_pad(main) }
+}
+
+/// The width a screen's content gets, in `main` (the window less the Team
+/// column, when it shows).
+pub(crate) fn content_width(main: f32, team: bool) -> f32 {
+    main - 2. * page_pad(main, team)
 }
 
 /// The section nav: Settings is in the account menu; Portfolio is for admins.
@@ -116,7 +126,9 @@ impl VzApp {
             use crate::app::SyncStatus;
             self.note_sync(matches!(status, SyncStatus::Sending(_)), status == SyncStatus::Synced, cx);
         }
-        let pad = side_pad(f32::from(window.viewport_size().width));
+        // The Team column (roadmap 58) takes the right of wide windows.
+        let column_w = self.team_column_width(window);
+        let pad = page_pad(f32::from(window.viewport_size().width) - column_w, column_w > 0.);
 
         // The sections: Loans counts the loans overdue (a red badge that hops
         // when the count rises), Payments the collector payments to confirm.
@@ -149,7 +161,7 @@ impl VzApp {
                 .tooltip(move |w, cx| Tooltip::new(tip.clone()).build(w, cx))
         };
         let mut nav: Vec<AnyElement> = Vec::new();
-        for (route, _, label, keys) in hero_nav(self.can(Need::Manage)) {
+        for (route, _, label, keys) in hero_nav(self.can(Need::Books)) {
             let badge = match route {
                 Route::Loans if overdue > 0 => Some((Badge::new(overdue, BadgeTone::Alert), overdue_rises)),
                 Route::Payments if waiting > 0 => Some((Badge::new(waiting, BadgeTone::Waiting), 0)),
@@ -249,7 +261,7 @@ impl VzApp {
                     .child(sel(title))
                     // Admins on the Overview: a small ⇄ under the name says
                     // it switches (2026-11-10, the owner's pick).
-                    .when(switchable && self.route == Route::Overview && self.can(crate::sync::wire::Need::Manage), |d| {
+                    .when(switchable && self.route == Route::Overview && self.can(crate::sync::wire::Need::Settings), |d| {
                         d.child(
                             h_flex().absolute().top(relative(1.)).left_0().right_0().justify_center().child(crate::ui::components::icon(
                                 IconName::ArrowLeftRight,
@@ -304,18 +316,24 @@ impl VzApp {
             .gap(px(14.))
             .children(banner.map(|b| div().rounded(px(12.)).overflow_hidden().child(b)))
             .when(!covering, |d| d.child(screen));
-        let page = div().id(SharedString::from(format!("scroll-{section:?}"))).flex_1().min_h_0().overflow_y_scroll().child(
-            v_flex()
-                .w_full()
-                .pb(px(48.))
-                .child(identity)
-                .children(figures.map(|f| {
-                    div().px(px(pad)).pb(px(14.)).child(div().relative().child(f).child(tour_mark("figures", &self.tour_targets)))
-                }))
-                .child(body),
-        );
+        let page = div()
+            .id(SharedString::from(format!("scroll-{section:?}")))
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&self.page_scroll)
+            .child(
+                v_flex()
+                    .w_full()
+                    .pb(px(48.))
+                    .child(identity)
+                    .children(figures.map(|f| {
+                        div().px(px(pad)).pb(px(14.)).child(div().relative().child(f).child(tour_mark("figures", &self.tour_targets)))
+                    }))
+                    .child(body),
+            );
 
-        v_flex()
+        let main = v_flex()
             .relative()
             .flex_1()
             .min_w_0()
@@ -327,7 +345,8 @@ impl VzApp {
             .when(self.route == Route::Overview, |d| {
                 let mark = tour_mark("add", &self.tour_targets);
                 d.children(self.add_button(cx).map(|f| div().absolute().right(px(28.)).bottom(px(28.)).child(f).child(mark)))
-            })
-            .into_any_element()
+            });
+        let column = self.render_team_column(window, cx);
+        h_flex().flex_1().min_w_0().h_full().bg(p.ground).child(main).children(column).into_any_element()
     }
 }

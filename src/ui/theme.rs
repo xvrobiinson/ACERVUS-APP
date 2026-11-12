@@ -40,6 +40,19 @@ pub struct Palette {
     /// Icon chips that tell stats apart. Never a money state.
     pub info: Hsla,
     pub info_tint: Hsla,
+    /// Loan statuses (owner's Option A, 2026-11-11): one color per status
+    /// everywhere, a fill for bars and a darker shade for words where light
+    /// needs it. On time is the graphite; paid off is `positive`.
+    pub st_ok: Hsla,
+    pub st_soon: Hsla,
+    pub st_late: Hsla,
+    pub st_later: Hsla,
+    pub st_gone: Hsla,
+    pub st_ok_ink: Hsla,
+    pub st_soon_ink: Hsla,
+    pub st_late_ink: Hsla,
+    pub st_later_ink: Hsla,
+    pub st_gone_ink: Hsla,
     pub neutral_tint: Hsla,
     pub grid: Hsla,
     pub chart_reference: Hsla,
@@ -61,7 +74,7 @@ pub struct Palette {
 /// black tile, the white ring and dot, the name and a line.
 #[derive(Clone, Copy, Debug)]
 pub struct SplashColors {
-    /// Under the picture, while it loads.
+    /// The ground: white in light, under the streaks picture in dark.
     pub base: Hsla,
     pub tile: Hsla,
     /// A thin line around the tile (dark only, so it shows on black).
@@ -75,7 +88,9 @@ pub struct SplashColors {
 impl SplashColors {
     fn light() -> Self {
         Self {
-            base: hex(0xA4A8AA),
+            // A plain white ground in light mode, the clean look (owner
+            // 2026-11-11); dark keeps the streaks picture.
+            base: hex(0xFFFFFF),
             tile: hex(0x000000),
             tile_line: None,
             ring: hex(0xFFFFFF),
@@ -224,6 +239,16 @@ impl Palette {
             negative_tint: hex(0xFBEAEA),
             info: hex(0x2F6FDB),
             info_tint: hex(0xE5EEFB),
+            st_ok: hex(0x3D434A),
+            st_soon: hex(0xC98A1E),
+            st_late: hex(0xD9692E),
+            st_later: hex(0xB4282E),
+            st_gone: hex(0x8A9096),
+            st_ok_ink: hex(0x3D434A),
+            st_soon_ink: hex(0x8F5A00),
+            st_late_ink: hex(0xA9481A),
+            st_later_ink: hex(0xB4282E),
+            st_gone_ink: hex(0x6B7177),
             neutral_tint: hex(0xEEF0F2),
             grid: hex(0xEEF0F2),
             chart_reference: hex(0x8A9096),
@@ -266,6 +291,16 @@ impl Palette {
             negative_tint: hex(0x331C1E),
             info: hex(0x6E9CEB),
             info_tint: hex(0x16233A),
+            st_ok: hex(0xC4C9CF),
+            st_soon: hex(0xE9B35C),
+            st_late: hex(0xF0915A),
+            st_later: hex(0xF06A6A),
+            st_gone: hex(0x6B7177),
+            st_ok_ink: hex(0xC4C9CF),
+            st_soon_ink: hex(0xE9B35C),
+            st_late_ink: hex(0xF0915A),
+            st_later_ink: hex(0xF27B7B),
+            st_gone_ink: hex(0x8C9197),
             neutral_tint: hex(0x22262C),
             grid: hex(0x1D2126),
             chart_reference: hex(0x6B7178),
@@ -497,7 +532,8 @@ pub mod motion {
     /// How far a screen or list row travels as it arrives (px).
     pub const ENTER_DISTANCE: f32 = 8.0;
     /// Rows that rise in one after another: the gap between two, and how
-    /// many rise (the rest are there at once).
+    /// many rise before the window's height is known (then every row that
+    /// fits it, `kit::motion::note_window`).
     pub const STAGGER: Duration = Duration::from_millis(40);
     pub const STAGGER_ROWS: usize = 8;
     /// Totals counting up when a screen opens, and rolling to a new amount.

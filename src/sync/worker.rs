@@ -24,7 +24,7 @@ use super::auth::{self, AuthError, Endpoints};
 use super::outbox::{Outcome, Queued};
 use super::replica::Download;
 use super::vault::{self, Stored};
-use super::wire::{self, Membership, Message, Snapshot};
+use super::wire::{self, Membership, Message, Snapshot, TeamMember};
 
 /// How often the Convex token is renewed while connected (Better Auth's
 /// tokens last longer than this).
@@ -55,6 +55,8 @@ pub enum Event {
     Snapshot(Box<Snapshot>),
     /// The signed-in person's messages in the open business, newest first.
     Messages(Vec<Message>),
+    /// The open business's team as the person sees it (the Team section).
+    Team(Vec<TeamMember>),
     /// Something went wrong that the worker keeps going after (logged too).
     Problem(String),
     /// A photo or logo asked for with `Worker::download`.
@@ -434,12 +436,14 @@ async fn run(config: Config, stored: Stored, mut commands: mpsc::UnboundedReceiv
     };
     let mut books: Option<convex::QuerySubscription> = None;
     let mut bell: Option<convex::QuerySubscription> = None;
+    let mut team: Option<convex::QuerySubscription> = None;
     let mut open: Option<String> = None;
     if let Some(id) = wanted {
         match client.subscribe("data:snapshot", args(&[("businessId", &id)])).await {
             Ok(s) => {
                 books = Some(s);
                 bell = client.subscribe("messages:mine", args(&[("businessId", &id)])).await.ok();
+                team = client.subscribe("team:list", args(&[("businessId", &id)])).await.ok();
                 open = Some(id);
             }
             Err(e) => send(Event::Problem(format!("books: {e}"))),
@@ -472,12 +476,19 @@ async fn run(config: Config, stored: Stored, mut commands: mpsc::UnboundedReceiv
                     Err(e) => send(Event::Problem(format!("messages: {e}"))),
                 }
             },
+            Some(r) = async { match team.as_mut() { Some(b) => b.next().await, None => std::future::pending().await } } => {
+                match read::<Vec<TeamMember>>(r) {
+                    Ok(list) => send(Event::Team(list)),
+                    Err(e) => send(Event::Problem(format!("team: {e}"))),
+                }
+            },
             _ = renewal.tick() => client.set_auth_callback(Some(fetcher())).await,
             cmd = commands.recv() => match cmd {
                 Some(Command::Open(id)) => match client.subscribe("data:snapshot", args(&[("businessId", &id)])).await {
                     Ok(s) => {
                         books = Some(s);
                         bell = client.subscribe("messages:mine", args(&[("businessId", &id)])).await.ok();
+                        team = client.subscribe("team:list", args(&[("businessId", &id)])).await.ok();
                         open = Some(id);
                     }
                     Err(e) => send(Event::Problem(format!("books: {e}"))),

@@ -52,7 +52,7 @@ impl VzApp {
     /// (office staff). New messages are left out; the bell counts them.
     fn app_status(&self) -> (Severity, Vec<Reason>) {
         let mut out = Vec::new();
-        let admin = self.can(Need::Manage);
+        let admin = self.can(Need::Books);
         match self.sync_status() {
             None | Some(SyncStatus::NotLinked) => return (0, out),
             Some(SyncStatus::UpdateRequired) => out.push(Reason {
@@ -88,8 +88,9 @@ impl VzApp {
                 out.push(Reason { sev: 2, text, fix: Some((t("Back up", "Copiar"), Fix::Backup)) });
             }
         }
-        if self.role() != Some(Role::Collector) {
-            let n = self.cloud_copy().map_or(0, |s| s.pending.iter().filter(|p| p.status == "waiting").count());
+        // Only for those who can confirm them (Owner, Admin, Manager), like the bell.
+        {
+            let n = self.waiting_to_confirm();
             if n > 0 {
                 out.push(Reason {
                     sev: 2,
@@ -126,9 +127,8 @@ impl VzApp {
 
     fn role_badge(role: Option<Role>) -> IconName {
         match role {
-            Some(Role::Admin) | None => IconName::ShieldCheck,
-            Some(Role::Collector) => IconName::BriefcaseBusiness,
-            Some(Role::Viewer) => IconName::Eye,
+            None => IconName::ShieldCheck,
+            Some(r) => crate::ui::screens::role_icon(r),
         }
     }
 
@@ -145,7 +145,7 @@ impl VzApp {
 
     /// Collector payments waiting for an admin (none for collectors).
     pub(crate) fn waiting_to_confirm(&self) -> usize {
-        if !self.can(Need::Manage) {
+        if !self.can(Need::PaymentsConfirm) {
             return 0;
         }
         self.cloud_copy().map_or(0, |s| s.waiting().count())
@@ -157,7 +157,8 @@ impl VzApp {
 
     /// The bell and the account icon, on the hero's glass (the light/dark
     /// switch is in the account panel, as on the web).
-    pub(crate) fn account_cluster(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn account_cluster(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let people = self.team_button(window, cx);
         let p = palette(cx);
         let h = p.hero();
         let unread = self.unread_messages();
@@ -204,6 +205,7 @@ impl VzApp {
         h_flex()
             .flex_none()
             .gap(px(space::S))
+            .children(people)
             .children(bell)
             .child(div().relative().flex_none().child(avatar).children(panel))
             .into_any_element()
@@ -452,7 +454,7 @@ impl VzApp {
         )
         .child(
             section(None)
-                .when(self.can(Need::Manage), |d| {
+                .when(self.can(Need::Books), |d| {
                     d.child(item(
                         "acct-backup",
                         IconName::DatabaseBackup,

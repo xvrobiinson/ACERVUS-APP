@@ -1,6 +1,6 @@
 [package]
 name = "acervus"
-version = "0.15.0"
+version = "0.16.0"
 edition = "2024"
 description = "Acervus Finance by VZ Labs: a private lending portfolio manager for Windows"
 license = "Proprietary"
@@ -19,7 +19,7 @@ anyhow = "1.0.104"
 base64 = "0.22.1"
 # Checking a downloaded update against the SHA-256 the release publishes.
 sha2 = "0.10.9"
-chrono = "0.4.45"
+chrono = { version = "0.4.45", features = ["serde"] }
 csv = "1.4.0"
 dirs = "7.0.0"
 env_logger = "0.11.11"

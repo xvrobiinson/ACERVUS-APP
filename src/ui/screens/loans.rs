@@ -6,6 +6,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{crumb, ncolumn, row_icon_button, status_detail_pill};
+use crate::app::links::CardLink;
 use crate::app::{LoanFilter, Route, VzApp};
 use crate::database::repositories::loans::Loan;
 use crate::domain::ledger::{ContractStatus, DisplayStatus, PeriodState, owed_at_payment, period_states};
@@ -15,6 +16,7 @@ use crate::i18n::{count, t};
 use crate::sync::wire::Need;
 use crate::tr;
 use crate::ui::components::{Tone, avatar, empty_state, filling_bar, icon, kv, page_header, pill, sel, table_header, table_row, th};
+use crate::ui::forms::filter::FilterPage;
 use crate::ui::forms::reason::ReasonKind;
 use crate::ui::kit::{Button, Card, CountUp, Dropdown, DropdownItem, Segmented, SortHeader, Stat, StatCards};
 use crate::ui::lists::{self, Key};
@@ -98,6 +100,13 @@ impl VzApp {
             LoanFilter::All => true,
         };
         let statuses: Vec<_> = self.snap.book.loans.iter().map(|l| (l, l.display_status(today))).collect();
+        let team = self.manages_collectors();
+        let cloud = self.cloud_copy();
+        let by = if team {
+            self.settings().loans_filter.clone()
+        } else {
+            crate::services::list_filters::LoansBy { collectors: Vec::new(), ..self.settings().loans_filter.clone() }
+        };
         let n = |f: LoanFilter| statuses.iter().filter(|(_, st)| matches(f, *st)).count();
         let labels = [
             (LoanFilter::Open, format!("{} {}", t("Active", "Activos"), n(LoanFilter::Open))),
@@ -138,6 +147,22 @@ impl VzApp {
         let mut visible: Vec<LoanLine> = statuses
             .iter()
             .filter(|(_, st)| matches(self.loan_filter, *st))
+            // Filter beside the quick tabs, kept on this PC (2026-11-11).
+            .filter(|(l, st)| {
+                let days = if *st == DisplayStatus::Overdue { l.delinquency(today).days_overdue } else { 0 };
+                let collector = if team { cloud.and_then(|c| c.collector_of(l.client_id)) } else { None };
+                let method = self.snap.loan(l.id).map_or("", |x| x.terms.method.key());
+                by.passes(
+                    &crate::services::list_filters::LoanRow {
+                        status: crate::services::list_filters::loan_status_key(*st, days),
+                        collector,
+                        method,
+                        frequency: l.facts.frequency.key(),
+                        start: l.facts.start_date,
+                    },
+                    today,
+                )
+            })
             .map(|(l, st)| {
                 let pos = l.position(today);
                 let closed = matches!(st, DisplayStatus::PaidOff | DisplayStatus::Defaulted);
@@ -216,7 +241,7 @@ impl VzApp {
             let active = count(s.active_loans, "active loan", "active loans", "préstamo activo", "préstamos activos");
             // The business's totals are for admins (collectors see their work).
             // The amount counts up when the page opens.
-            if self.can(Need::Manage) {
+            if self.can(Need::Books) {
                 let money = money.clone();
                 CountUp::new("loans-lent-out", s.outstanding_principal, move |v| {
                     let out = money.format(v);
@@ -232,7 +257,7 @@ impl VzApp {
             &p,
             t("Loans", "Préstamos"),
             Some(subtitle),
-            self.can(Need::Manage)
+            self.can(Need::Loans)
                 .then(|| {
                     Button::new("loans-new")
                         .primary()
@@ -334,7 +359,7 @@ impl VzApp {
                     "Create a loan to start tracking its interest and payments. You'll see the interest per period before anything is saved.",
                     "Crea un préstamo para seguir sus intereses y pagos. Verás el interés por período antes de guardar.",
                 ),
-                self.can(Need::Manage).then(|| {
+                self.can(Need::Loans).then(|| {
                     Button::new("loans-empty-new")
                         .primary()
                         .label(t("New loan", "Nuevo préstamo"))
@@ -394,7 +419,16 @@ impl VzApp {
             .child(Input::new(&self.loan_search).prefix(icon(IconName::Search, p.faint, 14.)).cleanable(true));
         v_flex()
             .child(header)
-            .child(h_flex().flex_wrap().gap(px(space::M)).pb(px(space::L)).child(filter_el).child(search))
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap(px(space::M))
+                    .pb(px(space::L))
+                    .child(filter_el)
+                    .child(search)
+                    .child(div().flex_none().child(self.filter_button(FilterPage::Loans, cx))),
+            )
+            .children(self.filter_chips(FilterPage::Loans, cx))
             .child(Card::new().overflow_hidden().child(body))
             .into_any_element()
     }
@@ -469,12 +503,30 @@ impl VzApp {
         let view = self.view();
         let interest_now = book.facts.rate.interest(owed_now.principal_outstanding);
         let installment_loan = plan_state.is_some();
+        // Its cards open the schedule (at the first late row), its payments,
+        // or Record payment with what it owes today (2026-11-11).
+        let late_row = match &plan_state {
+            Some(s) => s.installments.iter().position(|x| x.status(today) == crate::domain::installments::InstallmentStatus::Overdue),
+            None => period_states(&pos, today)
+                .iter()
+                .rev()
+                .position(|(_, s, _)| *s == PeriodState::Overdue)
+                .map(|i| i + usize::from(active && pos.principal_outstanding > 0)),
+        };
+        let to_schedule = self.link(CardLink::Schedule(None), cx);
+        let to_payments = self.link(CardLink::Section(None, "payments"), cx);
+        let pay_now = if active && self.can(Need::PaymentsRecord) {
+            self.link(CardLink::Pay(id, owed_now.payoff()), cx)
+        } else {
+            to_schedule.clone()
+        };
         // Each figure counts up when the loan's page opens.
         let n = |key: &str| SharedString::from(format!("loan-{id}-{key}"));
         let third = if installment_loan {
             let fees_due = if view.late_fees { owed_now.fees_outstanding } else { 0 };
             Stat::new(t("Overdue now", "Atrasado ahora"), money.format(q.overdue_amount))
                 .counting_money(n("overdue"), q.overdue_amount, &money)
+                .opens(self.link(CardLink::Schedule(late_row), cx))
                 .icon(IconName::CircleAlert)
                 .caption(sel(match (q.overdue_since, fees_due) {
                     (Some(_), f) if f > 0 => {
@@ -490,6 +542,7 @@ impl VzApp {
         } else {
             Stat::new(t("Interest due", "Interés por pagar"), money.format(owed_now.interest_outstanding))
                 .counting_money(n("interest-due"), owed_now.interest_outstanding, &money)
+                .opens(self.link(CardLink::Schedule(late_row), cx))
                 .icon(IconName::Clock)
                 .caption(sel(if q.overdue_amount > 0 {
                     let a = money.format(q.overdue_amount);
@@ -511,6 +564,7 @@ impl VzApp {
         .stats(vec![
             Stat::new(owes_label, money.format(owed_now.payoff()))
                 .counting_money(n("owes"), owed_now.payoff(), &money)
+                .opens(pay_now)
                 .icon(IconName::Wallet)
                 .chip(p.accent_text, p.accent_tint)
                 .caption(sel(if installment_loan {
@@ -520,6 +574,7 @@ impl VzApp {
                 })),
             Stat::new(t("Capital owed", "Capital adeudado"), money.format(owed_now.principal_outstanding))
                 .counting_money(n("capital"), owed_now.principal_outstanding, &money)
+                .opens(to_schedule)
                 .icon(IconName::HandCoins)
                 .chip(p.info, p.info_tint)
                 .caption(sel(if view.amount_lent {
@@ -530,11 +585,13 @@ impl VzApp {
             third,
             Stat::new(t("Interest paid", "Interés pagado"), money.format(pos.interest_paid))
                 .counting_money(n("interest"), pos.interest_paid, &money)
+                .opens(to_payments.clone())
                 .icon(IconName::TrendingUp)
                 .chip(p.positive, p.positive_tint)
                 .caption(sel(t("Income from this loan", "Ganancia de este préstamo"))),
             Stat::new(t("Capital repaid", "Capital pagado"), money.format(pos.principal_paid))
                 .counting_money(n("repaid"), pos.principal_paid, &money)
+                .opens(to_payments)
                 .icon(IconName::Landmark)
                 .chip(p.positive, p.positive_tint)
                 .caption(sel(t("Money returned to you", "Dinero que regresó"))),
@@ -612,7 +669,7 @@ impl VzApp {
                                 d.child(kv(&p, t("Interest per period now", "Interés por período ahora"), sel(money.format(interest_now))))
                             })
                             // Where its interest goes (0.15; admins).
-                            .when(self.can(crate::sync::wire::Need::Manage), |d| {
+                            .when(self.can(crate::sync::wire::Need::Books), |d| {
                                 let today = self.today;
                                 let pct = loan.reinvest.iter().rfind(|c| c.from <= today).map_or(0, |c| c.percent);
                                 d.child(kv(&p, t("Interest", "Interés"), sel(reinvest_label(pct))))
@@ -652,6 +709,8 @@ impl VzApp {
         };
         let fees_card = plan_state.as_ref().filter(|_| view.late_fees).and_then(|_| self.late_fees_card(&p, id, cx));
         let tx_card = self.loan_payments_card(&p, id, installment_loan, active, w, cx);
+        let periods_card = self.anchor("schedule", periods_card);
+        let tx_card = self.anchor("payments", tx_card);
 
         // The installment table needs the full width; the summary sits next
         // to the late fees. Interest-only loans put the periods beside it.
@@ -718,9 +777,10 @@ impl VzApp {
         let edit = cx.listener(move |this, _, w, cx| this.edit_loan(id, w, cx));
         let delete = cx.listener(move |this, _, w, cx| this.open_reason_form(ReasonKind::DeleteLoan(id), w, cx));
         let default = cx.listener(move |this, _, w, cx| this.open_reason_form(ReasonKind::MarkDefaulted(id), w, cx));
-        let manage = self.can(Need::Manage);
+        let manage = self.can(Need::Loans);
+        let deletes = self.can(Need::LoansDelete);
         let main = match status {
-            ContractStatus::Active if self.can(Need::Record) => Some(
+            ContractStatus::Active if self.can(Need::PaymentsRecord) => Some(
                 Button::new("loan-pay")
                     .primary()
                     .icon(IconName::Plus)
@@ -756,13 +816,17 @@ impl VzApp {
                     .on_click(receipt)
                     .into_any_element(),
                 Button::new("loan-edit").ghost().icon(IconName::Pencil).label(t("Edit", "Editar")).on_click(edit).into_any_element(),
-                Button::new("loan-delete")
-                    .ghost()
-                    .icon(IconName::Trash)
-                    .tooltip(t("Delete loan", "Eliminar préstamo"))
-                    .on_click(delete)
-                    .into_any_element(),
             ];
+            if deletes {
+                v.push(
+                    Button::new("loan-delete")
+                        .ghost()
+                        .icon(IconName::Trash)
+                        .tooltip(t("Delete loan", "Eliminar préstamo"))
+                        .on_click(delete)
+                        .into_any_element(),
+                );
+            }
             if active {
                 v.push(
                     Button::new("loan-default")
@@ -783,10 +847,10 @@ impl VzApp {
             if active {
                 more = more.item(DropdownItem::new(t("Mark defaulted", "Marcar incobrable"), default).icon(IconName::CircleAlert));
             }
-            vec![
-                more.item(DropdownItem::new(t("Delete loan", "Eliminar préstamo"), delete).icon(IconName::Trash).danger())
-                    .into_any_element(),
-            ]
+            if deletes {
+                more = more.item(DropdownItem::new(t("Delete loan", "Eliminar préstamo"), delete).icon(IconName::Trash).danger());
+            }
+            vec![more.into_any_element()]
         };
         out.extend(main);
         out
@@ -868,7 +932,14 @@ impl VzApp {
                     .child(ncolumn(110.).child(th(p, t("Paid", "Pagado"))))
                     .child(ncolumn(110.).child(th(p, t("Status", "Estado")))),
             )
-            .child(div().id("periods-scroll").max_h(px(440.)).overflow_y_scroll().children(period_rows))
+            .child(
+                div()
+                    .id("periods-scroll")
+                    .max_h(px(440.))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.schedule_scroll)
+                    .children(crate::ui::kit::motion::rise_rows("period-in", period_rows)),
+            )
             .into_any_element()
     }
 
@@ -889,7 +960,7 @@ impl VzApp {
         let full = w >= Width::Wide;
         let split = w > Width::Compact;
         let actions_w = if full { 222. } else { 172. };
-        let manage = self.can(Need::Manage);
+        let manage = self.can(Need::PaymentsEdit);
         let payments: Vec<_> = self.snap.payments_for_loan(id).cloned().collect();
         let view = self.view();
         let tx_rows = payments.iter().rev().map(|x| {
@@ -982,7 +1053,7 @@ impl VzApp {
                     "Each payment shows how much went to interest and how much to capital.",
                     "Cada pago muestra cuánto fue a interés y cuánto a capital.",
                 ),
-                (active && self.can(Need::Record)).then(|| {
+                (active && self.can(Need::PaymentsRecord)).then(|| {
                     Button::new("loan-empty-pay")
                         .primary()
                         .label(t("Record payment", "Registrar pago"))

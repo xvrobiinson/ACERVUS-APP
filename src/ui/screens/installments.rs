@@ -91,7 +91,14 @@ impl VzApp {
                     .child(ncolumn(100.).child(th(p, t("Outstanding", "Pendiente"))))
                     .child(ncolumn(96.).child(th(p, t("Status", "Estado")))),
             )
-            .child(div().id("installments-scroll").max_h(px(460.)).overflow_y_scroll().children(rows))
+            .child(
+                div()
+                    .id("installments-scroll")
+                    .max_h(px(460.))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.schedule_scroll)
+                    .children(crate::ui::kit::motion::rise_rows("inst-in", rows)),
+            )
             .into_any_element()
     }
 
@@ -104,7 +111,7 @@ impl VzApp {
         }
         let money = self.settings().money();
         let ds = self.settings().date_style;
-        let manage = self.can(Need::Manage);
+        let manage = self.can(Need::Loans);
         let state = self.snap.book_loan(loan_id).and_then(|b| b.plan_state(self.today));
         let rows = fees.iter().map(|f| {
             let seq = f.seq;
@@ -160,7 +167,7 @@ impl VzApp {
                         .text_color(p.muted)
                         .child(t("Charged once per overdue installment", "Una vez por cuota atrasada")),
                 )
-                .child(div().pb(px(space::S)).children(rows))
+                .child(div().pb(px(space::S)).children(crate::ui::kit::motion::rise_rows("fee-in", rows)))
                 .into_any_element(),
         )
     }

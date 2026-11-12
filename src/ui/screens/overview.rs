@@ -12,8 +12,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{header_link, status_detail_pill};
+use crate::app::links::CardLink;
 use crate::app::motion::Fresh;
-use crate::app::{Route, VzApp};
+use crate::app::{LoanFilter, Route, VzApp};
 use crate::charts::line::{LineChart, Series};
 use crate::domain::ledger::DisplayStatus;
 use crate::domain::money::{Cents, percent_label};
@@ -80,6 +81,8 @@ pub(crate) enum ChartSlot {
 
 impl VzApp {
     pub(crate) fn render_overview(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        // Whether Acervus support can see the books (the Owner and Admins).
+        self.load_support(window, cx);
         let p = palette(cx);
         let w = Width::of(self.content_width(window));
         let gap = px(w.gap());
@@ -153,6 +156,7 @@ impl VzApp {
         v_flex()
             .gap(gap)
             .when(editing, |d| d.child(self.customize_bar(&p, cx)))
+            .children(self.support_banner(&p, cx))
             .children(self.pending_banner(&p, cx))
             .children(self.render_setup(&p, w, cx))
             .children(body)
@@ -290,7 +294,7 @@ impl VzApp {
     /// chose them (saved to their account; the role decides what may be
     /// picked), each a picker while arranging.
     pub(crate) fn hero_figures(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        if self.can(Need::Manage) {
+        if self.can(Need::Books) {
             return self.hero_six(window, cx);
         }
         let layout = self.hero_layout();
@@ -305,6 +309,10 @@ impl VzApp {
                 .enumerate()
                 .map(|(i, (big, rows))| {
                     let mut card = GlassFigure::new(SharedString::from(format!("hero-fig-{i}")));
+                    // The card opens what its big figure (or first row) is about.
+                    if let Some(f) = big.or_else(|| rows.first().copied()) {
+                        card = card.opens(self.link(figure_link(f, self.settings().interest_period), cx));
+                    }
                     if let Some(f) = big {
                         card = card.big(f.label(), value(f).0);
                         if f == HeroFig::InterestEarned {
@@ -471,6 +479,8 @@ impl VzApp {
                     .child(
                         v_flex()
                             .h(px(32.))
+                            // Room for the arrow of a card that opens something.
+                            .pr(px(18.))
                             .justify_end()
                             .typeset(text::CAPTION)
                             .font_features(tabular())
@@ -598,6 +608,17 @@ impl VzApp {
                 None,
             ),
         ];
+        // Each card opens the place that explains it (2026-11-11).
+        let money_part = CardLink::Section(Some(Route::Analytics), "money");
+        let targets = [
+            CardLink::Route(Route::Analytics),
+            money_part,
+            CardLink::Loans(LoanFilter::Open),
+            money_part,
+            CardLink::Payments(period),
+            CardLink::Loans(LoanFilter::Attention),
+        ];
+        let cards: Vec<_> = cards.into_iter().zip(targets).map(|(c, to)| c.opens(self.link(to, cx))).collect();
         let gap = px(gap);
         if wide {
             h_flex().gap(gap).children(cards).into_any_element()
@@ -623,16 +644,15 @@ impl VzApp {
             .into_any_element()
     }
 
-    /// The "+" button: what the Overview's header offered before (Record
-    /// payment nearest, New record, and for admins New loan and Add
-    /// capital), with the same shortcuts. None for viewers.
+    /// The "+" button: what the person's role may add (Record payment
+    /// nearest, New record, New loan, Add capital), with the same shortcuts.
     pub(crate) fn add_button(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        if !self.can(Need::Record) || self.customizing {
+        if self.customizing {
             return None;
         }
-        let mut fab = Fab::new("add", t("Add", "Agregar"))
-            .start_open(self.add_open_at_start)
-            .item(
+        let mut fab = Fab::new("add", t("Add", "Agregar")).start_open(self.add_open_at_start);
+        if self.can(Need::PaymentsRecord) {
+            fab = fab.item(
                 FabItem::new(
                     t("Record payment", "Registrar pago"),
                     IconName::Banknote,
@@ -640,30 +660,32 @@ impl VzApp {
                 )
                 .hint("Ctrl+P")
                 .primary(),
-            )
-            .item(
-                FabItem::new(
-                    t("New record", "Nuevo registro"),
-                    IconName::ReceiptText,
-                    cx.listener(|this, _, w, cx| this.open_entry_form(EntryKind::Expense, None, w, cx)),
-                )
-                .hint("Ctrl+E"),
             );
-        if self.can(Need::Manage) {
-            fab = fab
-                .item(
-                    FabItem::new(
-                        t("New loan", "Nuevo préstamo"),
-                        IconName::HandCoins,
-                        cx.listener(|this, _, w, cx| this.open_loan_form(None, w, cx)),
-                    )
-                    .hint("Ctrl+L"),
+        }
+        fab = fab.item(
+            FabItem::new(
+                t("New record", "Nuevo registro"),
+                IconName::ReceiptText,
+                cx.listener(|this, _, w, cx| this.open_entry_form(EntryKind::Expense, None, w, cx)),
+            )
+            .hint("Ctrl+E"),
+        );
+        if self.can(Need::Loans) {
+            fab = fab.item(
+                FabItem::new(
+                    t("New loan", "Nuevo préstamo"),
+                    IconName::HandCoins,
+                    cx.listener(|this, _, w, cx| this.open_loan_form(None, w, cx)),
                 )
-                .item(FabItem::new(
-                    t("Add capital", "Agregar capital"),
-                    IconName::Landmark,
-                    cx.listener(|this, _, w, cx| this.open_capital_form(CapitalKind::Contribution, w, cx)),
-                ));
+                .hint("Ctrl+L"),
+            );
+        }
+        if self.can(Need::Money) {
+            fab = fab.item(FabItem::new(
+                t("Add capital", "Agregar capital"),
+                IconName::Landmark,
+                cx.listener(|this, _, w, cx| this.open_capital_form(CapitalKind::Contribution, w, cx)),
+            ));
         }
         Some(fab.into_any_element())
     }
@@ -671,7 +693,7 @@ impl VzApp {
     /// First-run checklist, shown until the first loan exists.
     fn render_setup(&self, p: &Palette, w: Width, cx: &mut Context<Self>) -> Option<AnyElement> {
         // The first steps are an admin's to take.
-        if !self.snap.loans.is_empty() || !self.can(Need::Manage) {
+        if !self.snap.loans.is_empty() || !self.can(Need::Loans) {
             return None;
         }
         let has_capital = !self.snap.capital.is_empty();
@@ -796,7 +818,7 @@ impl VzApp {
         }
         // Six full money figures need about 1,680px; below that, 3 + 3.
         // Figures are never truncated to make a row fit.
-        let most = if !self.can(Need::Manage) {
+        let most = if !self.can(Need::Books) {
             if w == Width::Compact { 2 } else { 3 }
         } else {
             match w {
@@ -902,7 +924,7 @@ impl VzApp {
                 let st = Stat::new(t("Total portfolio value", "Valor total de la cartera"), money.format(s.portfolio_value))
                     .icon(IconName::Wallet)
                     .chip(p.accent_text, p.accent_tint)
-                    .when(self.can(Need::Manage), |s| s.accessory(adjust))
+                    .when(self.can(Need::Money), |s| s.accessory(adjust))
                     .caption(gain_sub);
                 counted(st, s.portfolio_value)
             }
@@ -1065,7 +1087,7 @@ impl VzApp {
     }
 
     /// How a period is named on Interest earned.
-    fn period_name(p: Period) -> &'static str {
+    pub(crate) fn period_name(p: Period) -> &'static str {
         match p {
             Period::Day => t("Today", "Hoy"),
             Period::Week => t("This week", "Esta semana"),
@@ -1274,7 +1296,7 @@ impl VzApp {
                                 .child(div().text_color(p.negative).font_features(tabular()).child(sel(money.format(s.defaulted_principal + s.defaulted_interest)))),
                         )
                     })
-                    .when(self.can(Need::Manage), |d| d.child(
+                    .when(self.can(Need::Money), |d| d.child(
                         h_flex()
                             .gap(px(space::S))
                             .flex_wrap()
@@ -1474,7 +1496,7 @@ impl VzApp {
     fn attention_list(&self, p: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let money = self.settings().money();
         let ds = self.settings().date_style;
-        let record = self.can(Need::Record);
+        let record = self.can(Need::PaymentsRecord);
         let mut items: Vec<_> = self
             .snap
             .book
@@ -1575,6 +1597,21 @@ impl VzApp {
 
 /// What each of the six cards means, in one sentence (the "i" beside its
 /// name; the web's `hint` in six-figures.tsx).
+/// Where a picked card goes (the owner's list, 2026-11-11).
+fn figure_link(f: HeroFig, period: Period) -> CardLink {
+    match f {
+        HeroFig::Portfolio | HeroFig::Gain6m => CardLink::Route(Route::Analytics),
+        HeroFig::AvailableCapital | HeroFig::AvailableInterest => CardLink::Section(Some(Route::Analytics), "money"),
+        HeroFig::LentOut | HeroFig::Receivable | HeroFig::ActiveLoans => CardLink::Loans(LoanFilter::Open),
+        HeroFig::Overdue | HeroFig::OverdueLoans => CardLink::Loans(LoanFilter::Attention),
+        HeroFig::InterestEarned => CardLink::Payments(period),
+        HeroFig::CollectedMonth => CardLink::Payments(Period::Month),
+        HeroFig::ExpectedInterest => CardLink::Calendar(crate::ui::screens::calendar::CalendarView::Month),
+        HeroFig::DueNext7 => CardLink::Calendar(crate::ui::screens::calendar::CalendarView::Week),
+        HeroFig::ToConfirm => CardLink::Route(Route::Payments),
+    }
+}
+
 fn six_hint(id: &str) -> &'static str {
     match id {
         "portfolio" => t(
@@ -1596,5 +1633,33 @@ fn six_hint(id: &str) -> &'static str {
             "Lo que pasó su fecha de pago y sigue sin pagar, en todos los préstamos.",
         ),
         _ => "",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use core::prelude::v1::test;
+
+    use super::*;
+    use crate::ui::screens::calendar::CalendarView;
+
+    #[test]
+    fn each_picked_card_opens_the_owners_place() {
+        let go = |f| figure_link(f, Period::Week);
+        assert_eq!(go(HeroFig::Portfolio), CardLink::Route(Route::Analytics));
+        assert_eq!(go(HeroFig::Gain6m), CardLink::Route(Route::Analytics));
+        assert_eq!(go(HeroFig::AvailableCapital), CardLink::Section(Some(Route::Analytics), "money"));
+        assert_eq!(go(HeroFig::AvailableInterest), CardLink::Section(Some(Route::Analytics), "money"));
+        assert_eq!(go(HeroFig::LentOut), CardLink::Loans(LoanFilter::Open));
+        assert_eq!(go(HeroFig::Receivable), CardLink::Loans(LoanFilter::Open));
+        assert_eq!(go(HeroFig::ActiveLoans), CardLink::Loans(LoanFilter::Open));
+        assert_eq!(go(HeroFig::Overdue), CardLink::Loans(LoanFilter::Attention));
+        assert_eq!(go(HeroFig::OverdueLoans), CardLink::Loans(LoanFilter::Attention));
+        // Interest earned keeps the period picked on the card.
+        assert_eq!(go(HeroFig::InterestEarned), CardLink::Payments(Period::Week));
+        assert_eq!(go(HeroFig::CollectedMonth), CardLink::Payments(Period::Month));
+        assert_eq!(go(HeroFig::ExpectedInterest), CardLink::Calendar(CalendarView::Month));
+        assert_eq!(go(HeroFig::DueNext7), CardLink::Calendar(CalendarView::Week));
+        assert_eq!(go(HeroFig::ToConfirm), CardLink::Route(Route::Payments));
     }
 }

@@ -85,7 +85,9 @@ impl SettingsPanel {
             Self::Data => t("Backups, Google Drive, exports, diagnostics", "Copias, Google Drive, exportar, diagnóstico"),
             Self::Privacy => t("How your data is handled", "Cómo se manejan tus datos"),
             Self::Keyboard => t("Every shortcut in the app", "Todos los atajos de la app"),
-            Self::About => t("Version, help, terms and privacy", "Versión, ayuda, términos y privacidad"),
+            Self::About => {
+                t("Support and contact, updates, terms and privacy", "Soporte y contacto, actualizaciones, términos y privacidad")
+            }
         }
     }
 
@@ -523,7 +525,7 @@ impl VzApp {
         let accent = p.accent;
 
         // The business's own settings are an admin's; the rest is this PC's.
-        let manage = self.can(Need::Manage);
+        let manage = self.can(Need::Settings);
         let admins_only = || {
             div().typeset(text::CAPTION).text_color(p.muted).child(t(
                 "Company details, formats, lending defaults and receipt choices are changed by an admin.",
@@ -632,9 +634,72 @@ impl VzApp {
                         )
                     }),
             )))
+            // Letting Acervus support see the books, read-only, for a while
+            // (roadmap 46 and P1 of 2026-11-12, app/support.rs); the Owner only.
+            // 1 hour unless they pick longer; the button names the length.
+            .children(self.owned_business().map(|_| {
+                let online = self.cloud.as_ref().is_some_and(|c| c.online);
+                let on = self.support.on();
+                let busy = self.support.busy;
+                let mut hint = match self.support.until.filter(|_| on) {
+                    Some(ms) => {
+                        let until = crate::app::support::until_label(ms, s.date_style);
+                        tr!(
+                            "Support can look until {until}. They can't change anything or see ID photos.",
+                            "El soporte puede mirar hasta el {until}. No puede cambiar nada ni ver fotos de identificación."
+                        )
+                    }
+                    None => t(
+                        "Off unless you turn it on, so they can help with a problem. They can only look: no changes, no ID photos. It ends by itself.",
+                        "Apagado a menos que lo actives, para que te ayuden con un problema. Solo pueden mirar: sin cambios ni fotos de identificación. Termina por sí solo.",
+                    )
+                    .to_string(),
+                };
+                if let Some((at, who)) = self.support.last_opened.as_ref().filter(|_| on) {
+                    let when = crate::app::support::until_label(*at, s.date_style);
+                    hint.push(' ');
+                    hint.push_str(&tr!("Last opened by {who} on {when}.", "Abiertos por última vez por {who} el {when}."));
+                }
+                // What the Owner shares (phase A item A7).
+                hint.push(' ');
+                hint.push_str(t(
+                    "Support will see clients' contact details and ID numbers, not their photos. Each time they open your books, it shows in your history.",
+                    "El soporte verá los datos de contacto y números de identificación de los clientes, no sus fotos. Cada vez que abran tus libros, aparece en tu historial.",
+                ));
+                let hours: Vec<(u16, &str)> =
+                    crate::app::support::SUPPORT_HOURS.iter().map(|h| (*h, crate::app::support::length_label(*h))).collect();
+                let picked = crate::app::support::length_label(self.support.hours);
+                let control = h_flex()
+                    .gap(px(space::S))
+                    .when(on, |d| {
+                        d.child(
+                            Button::new("support-end")
+                                .danger_ghost()
+                                .label(t("End support access", "Terminar el acceso de soporte"))
+                                .loading(busy)
+                                .disabled(!online)
+                                .on_click(cx.listener(|this, _, w, cx| this.set_support(false, w, cx))),
+                        )
+                    })
+                    .when(!on, |d| {
+                        d.child(Segmented::pick("support-hours", hours.iter().copied(), self.support.hours, cx, |app, v, _, cx| {
+                            app.support.hours = v;
+                            cx.notify();
+                        }))
+                        .child(
+                            Button::new("support-allow")
+                                .primary()
+                                .label(tr!("Allow for {picked}", "Permitir por {picked}"))
+                                .loading(busy)
+                                .disabled(!online)
+                                .on_click(cx.listener(|this, _, w, cx| this.set_support(true, w, cx))),
+                        )
+                    });
+                row(&p, t("Let Acervus support see your books", "Permitir que el soporte de Acervus vea tus libros"), Some(&hint), control)
+            }))
             // Deleting the business for everyone (it moved here from Cloud
-            // sync's list, 2026-11-10). The same typed-name check.
-            .children(self.cloud.as_ref().and_then(|c| c.linked.clone()).filter(|_| manage).map(|id| {
+            // sync's list, 2026-11-10). The same typed-name check; the Owner only.
+            .children(self.cloud.as_ref().and_then(|c| c.linked.clone()).filter(|_| self.can(Need::Owner)).map(|id| {
                 let name = self.business_name();
                 let online = self.cloud.as_ref().is_some_and(|c| c.online);
                 row(
@@ -1163,11 +1228,88 @@ impl VzApp {
                         env!("CARGO_PKG_VERSION")
                     ))),
             )
+            // Updates: check now and this version's notes (owner 2026-11-11).
+            .child(div().pt(px(space::S)).typeset(text::LABEL).child(t("Updates", "Actualizaciones")))
+            .child({
+                use crate::app::update::Manual;
+                let (line, color) = match (&self.updates.available, self.updates.manual) {
+                    (Some(r), _) => {
+                        let v = r.version.clone();
+                        (tr!("Version {v} is ready to install.", "La versión {v} está lista para instalar."), p.text)
+                    }
+                    (None, Some(Manual::Checking)) => {
+                        (t("Checking for a newer version…", "Buscando una versión más nueva…").to_string(), p.muted)
+                    }
+                    (None, Some(Manual::UpToDate)) => (
+                        t("You're up to date: this is the newest version.", "Estás al día: esta es la versión más nueva.").to_string(),
+                        p.positive,
+                    ),
+                    (None, Some(Manual::Offline)) => (
+                        t(
+                            "You're offline. Connect to the internet to check for updates.",
+                            "Estás sin conexión. Conéctate a internet para buscar actualizaciones.",
+                        )
+                        .to_string(),
+                        p.muted,
+                    ),
+                    (None, Some(Manual::Failed)) => (
+                        t(
+                            "Couldn't check right now. Try again in a few minutes.",
+                            "No se pudo revisar ahora. Inténtalo de nuevo en unos minutos.",
+                        )
+                        .to_string(),
+                        p.muted,
+                    ),
+                    (None, None) => (
+                        t(
+                            "Acervus also checks by itself every few hours while you're online.",
+                            "Acervus también revisa por sí solo cada pocas horas mientras estás en línea.",
+                        )
+                        .to_string(),
+                        p.muted,
+                    ),
+                };
+                div().text_color(color).child(line)
+            })
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap(px(space::S))
+                    .pt(px(space::XS))
+                    .child(if self.updates.available.is_some() {
+                        Button::new("about-update")
+                            .small()
+                            .primary()
+                            .icon(IconName::CloudUpload)
+                            .label(t("See what's new and update", "Ver novedades y actualizar"))
+                            .on_click(cx.listener(|this, _, w, cx| this.open_update(w, cx)))
+                    } else {
+                        Button::new("about-check")
+                            .small()
+                            .icon(IconName::RefreshCw)
+                            .label(t("Check for updates", "Buscar actualizaciones"))
+                            .loading(self.updates.manual == Some(crate::app::update::Manual::Checking))
+                            .on_click(cx.listener(|this, _, w, cx| this.check_update_now(w, cx)))
+                    })
+                    .child(
+                        Button::new("about-notes")
+                            .small()
+                            .icon(IconName::FileText)
+                            .label(t("See the latest release notes", "Ver las notas de la versión"))
+                            .on_click(cx.listener(|this, _, w, cx| this.open_release_notes(w, cx))),
+                    ),
+            )
+            // Support / Contact us: where to get help (owner 2026-11-11).
+            .child(div().pt(px(space::S)).typeset(text::LABEL).child(t("Support / Contact us", "Soporte / Contáctanos")))
+            .child(div().text_color(p.muted).child(t(
+                "Questions, a problem or an idea? Write to us and we'll help.",
+                "¿Preguntas, un problema o una idea? Escríbenos y te ayudamos.",
+            )))
             .child(
                 h_flex()
                     .gap(px(6.))
                     .text_color(p.muted)
-                    .child(t("Questions or help:", "Preguntas o ayuda:"))
+                    .child(t("Email:", "Correo:"))
                     .child(div().text_color(p.text).child(sel(crate::SUPPORT_EMAIL))),
             )
             .child(
@@ -1175,8 +1317,16 @@ impl VzApp {
                     .flex_wrap()
                     .gap(px(space::S))
                     .pt(px(space::XS))
-                    // Copies the address: a mail link could land on a webmail sign-in.
-                    .child(Button::new("about-mail").small().icon(IconName::Mail).label(t("Copy email", "Copiar correo")).on_click(
+                    .child(
+                        Button::new("about-email")
+                            .small()
+                            .primary()
+                            .icon(IconName::Mail)
+                            .label(t("Email us", "Escríbenos"))
+                            .on_click(cx.listener(|this, _, w, cx| this.email_support(w, cx))),
+                    )
+                    // Copy too: some PCs have no mail app set up.
+                    .child(Button::new("about-mail").small().icon(IconName::Copy).label(t("Copy email", "Copiar correo")).on_click(
                         cx.listener(|this, _, w, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(crate::SUPPORT_EMAIL.to_string()));
                             this.notify_success(t("Email address copied", "Correo copiado"), w, cx);
@@ -1265,18 +1415,23 @@ impl VzApp {
             SettingsPanel::About,
         ]
         .into_iter()
-        // Lending defaults are the business's: admins only. Everyone keeps
+        // Lending defaults are the business's: the Owner and Admins. Everyone keeps
         // Regional formats for this PC's language.
         .filter(|x| manage || (*x != SettingsPanel::Lending && *x != SettingsPanel::WhatsApp))
         // The team lives in the cloud: only for a business this PC follows.
-        .filter(|x| *x != SettingsPanel::Team || (manage && self.is_linked()))
+        .filter(|x| *x != SettingsPanel::Team || (self.can(Need::TeamCollectors) && self.is_linked()))
         .collect();
+        if self.settings_panel == Some(SettingsPanel::Business) {
+            self.load_support(window, cx);
+        }
         if self.settings_panel != Some(SettingsPanel::Team) {
             self.team_view = None;
         } else if self.team_view.is_none() {
             let app = cx.entity().downgrade();
             let (business, me) = self.cloud_copy().map_or((None, String::new()), |s| (Some(s.business.id.clone()), s.me.user_id.clone()));
-            self.team_view = Some(cx.new(|cx| crate::ui::screens::team::TeamView::new(app, business, me, window, cx)));
+            // From the Team section: straight to that person's page.
+            let wanted = self.crew.wanted.take();
+            self.team_view = Some(cx.new(|cx| crate::ui::screens::team::TeamView::new(app, business, me, wanted, window, cx)));
         }
         let team = self.team_view.clone();
         // Which way the popup's content slides: deeper pages come in from

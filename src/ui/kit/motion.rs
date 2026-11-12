@@ -44,13 +44,40 @@ pub fn rise(el: impl IntoElement, id: impl Into<ElementId>, delay: Duration) -> 
         .into_any_element()
 }
 
-/// Row `index` of a list that rises in one row after another. Rows past
-/// `STAGGER_ROWS` are there at once.
+thread_local! {
+    /// How many list rows the window shows at once (`note_window`).
+    static ROWS_THAT_FIT: std::cell::Cell<usize> = const { std::cell::Cell::new(motion::STAGGER_ROWS) };
+}
+
+/// A list row's least height (px), for counting the rows that fit.
+pub const ROW_PITCH: f32 = 52.0;
+
+/// Notes the window's height each frame: every list that opens staggers
+/// every row that can be on screen (owner 2026-11-11, "the whole visible
+/// list"), however tall this window is. The app calls it before drawing.
+pub fn note_window(window: &Window) {
+    ROWS_THAT_FIT.with(|n| n.set(rows_in(f32::from(window.viewport_size().height), ROW_PITCH)));
+}
+
+/// Row `index` of a list that rises in one row after another, while it is
+/// among the rows that fit the window; later rows are there at once, so a
+/// row scrolled into view never rises again.
 pub fn rise_nth(el: impl IntoElement, id: impl Into<ElementId>, index: usize) -> AnyElement {
-    if index >= motion::STAGGER_ROWS {
+    if index >= ROWS_THAT_FIT.with(|n| n.get()) {
         return el.into_any_element();
     }
     rise(el, id, motion::STAGGER * index as u32)
+}
+
+/// A list's rows rising one after another (`rise_nth`), each keyed by
+/// `key` and its place: for lists whose rows have no animation of their own.
+pub fn rise_rows<E: IntoElement>(key: &'static str, rows: impl IntoIterator<Item = E>) -> impl Iterator<Item = AnyElement> {
+    rows.into_iter().enumerate().map(move |(i, r)| rise_nth(r, (key, i as u64), i))
+}
+
+/// Rows at least `row_height` tall in `height` px, at least one.
+fn rows_in(height: f32, row_height: f32) -> usize {
+    (height / row_height).ceil().max(1.0) as usize
 }
 
 /// Nudges an element side to side once, smaller each time (a wrong field).
@@ -118,4 +145,17 @@ pub fn slide(el: impl IntoElement, id: impl Into<ElementId>, dir: i8) -> AnyElem
             d.opacity(t.clamp(0.0, 1.0)).relative().left(px(24.0 * f32::from(dir) * (1.0 - t)))
         })
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    #[test]
+    fn every_row_that_fits_the_window_rises() {
+        assert_eq!(rows_in(800., 52.), 16);
+        assert_eq!(rows_in(1440., 52.), 28);
+        assert_eq!(rows_in(0., 52.), 1);
+    }
 }

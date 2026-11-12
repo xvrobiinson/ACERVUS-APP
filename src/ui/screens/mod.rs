@@ -13,7 +13,7 @@ pub mod settings;
 mod sign_in;
 pub mod team;
 mod today;
-pub(crate) use sync::role_label;
+pub(crate) use sync::{role_hint, role_icon, role_label};
 mod sync;
 mod welcome;
 
@@ -27,7 +27,7 @@ use crate::database::repositories::changes::Change;
 use crate::domain::ledger::{Delinquency, DisplayStatus};
 use crate::i18n::t;
 use crate::tr;
-use crate::ui::components::{icon, pill, status_tone};
+use crate::ui::components::{icon, pill_in, status_color};
 use crate::ui::kit::{Button, Card};
 use crate::ui::theme::{Palette, Typeset as _, space, tabular, text};
 use crate::utils::dates::days_between;
@@ -117,7 +117,7 @@ impl VzApp {
                     .text_color(p.muted)
                     .child(t("Every edit and deletion is kept here", "Aquí queda cada edición y eliminación")),
             )
-            .child(v_flex().children(rows))
+            .child(v_flex().children(crate::ui::kit::motion::rise_rows("hist-in", rows)))
             .into_any_element()
     }
 }
@@ -137,7 +137,7 @@ pub fn status_detail_pill(p: &Palette, status: DisplayStatus, q: &Delinquency, t
         },
         s => s.label().to_string(),
     };
-    pill(p, text, status_tone(status))
+    pill_in(text, status_color(p, status, Some(q.days_overdue)))
 }
 
 /// "View all" style link in a card header.

@@ -23,6 +23,8 @@ pub struct Stat {
     above: Option<SharedString>,
     lead: bool,
     count: Option<super::CountUp>,
+    /// Clicking the card opens this (`StatCards` draws the hand and arrow).
+    opens: Option<super::Callback>,
 }
 
 impl Stat {
@@ -40,7 +42,18 @@ impl Stat {
             above: None,
             lead: false,
             count: None,
+            opens: None,
         }
+    }
+
+    /// Clicking the card opens the place that explains the figure.
+    pub fn opens(mut self, f: super::Callback) -> Self {
+        self.opens = Some(f);
+        self
+    }
+
+    pub(super) fn take_opens(&mut self) -> Option<super::Callback> {
+        self.opens.take()
     }
 
     pub fn icon(mut self, icon: IconName) -> Self {

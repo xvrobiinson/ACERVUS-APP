@@ -174,6 +174,8 @@ impl RenderOnce for Dropdown {
             let state = state.clone();
             let focus = focus.clone();
             move |_: &ClickEvent, w: &mut Window, cx: &mut App| {
+                // A menu inside a clickable card or row never opens it too.
+                cx.stop_propagation();
                 let now_open = state.update(cx, |s, cx| {
                     s.open = !s.open;
                     s.highlight = selected.or(Some(0));
@@ -278,6 +280,7 @@ impl RenderOnce for Dropdown {
                                 })
                             })
                             .on_click(move |e, w, cx| {
+                                cx.stop_propagation();
                                 close(w, cx);
                                 f(e, w, cx);
                             })

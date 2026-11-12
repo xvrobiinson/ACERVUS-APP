@@ -32,31 +32,89 @@ pub struct Membership {
     pub timezone: String,
 }
 
+/// A person's role in a business (roadmap 45, approved 2026-11-11). Exactly
+/// one Owner per business; a Viewer from before reads as an Accountant.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
+    Owner,
     Admin,
+    Manager,
+    #[serde(alias = "viewer")]
+    Accountant,
     Collector,
-    Viewer,
-}
-
-/// What a change needs from the person's role, as the cloud checks it
-/// (`convex/lib/access.ts` in the PWA repo).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Need {
-    /// New clients, payments, expenses and income: collectors and admins.
-    Record,
-    /// Everything else: admins only.
-    Manage,
 }
 
 impl Role {
-    pub fn allows(self, need: Need) -> bool {
-        match need {
-            Need::Record => self != Role::Viewer,
-            Need::Manage => self == Role::Admin,
+    pub const ALL: [Role; 5] = [Role::Owner, Role::Admin, Role::Manager, Role::Accountant, Role::Collector];
+    /// What someone can be given (invitations, Change role): never Owner,
+    /// which is only handed over.
+    pub const GIVEN: [Role; 4] = [Role::Admin, Role::Manager, Role::Accountant, Role::Collector];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Role::Owner => "owner",
+            Role::Admin => "admin",
+            Role::Manager => "manager",
+            Role::Accountant => "accountant",
+            Role::Collector => "collector",
         }
     }
+
+    /// A stored key; "viewer" (before 2026-11-11) is an Accountant.
+    pub fn from_key(key: &str) -> Option<Role> {
+        match key {
+            "viewer" => Some(Role::Accountant),
+            k => Role::ALL.into_iter().find(|r| r.key() == k),
+        }
+    }
+
+    /// What this role may do: the same list as the cloud's
+    /// (`shared/roles.ts` in the PWA repo); change both together.
+    pub fn allows(self, need: Need) -> bool {
+        use Role::*;
+        match need {
+            Need::Books => self != Collector,
+            Need::ClientsAdd | Need::PaymentsRecord => self != Accountant,
+            Need::Clients | Need::Loans | Need::PaymentsConfirm | Need::TeamCollectors => matches!(self, Owner | Admin | Manager),
+            Need::LoansDelete | Need::PaymentsEdit | Need::Money | Need::Settings | Need::Team | Need::Restore => {
+                matches!(self, Owner | Admin)
+            }
+            Need::EntriesRecord => true,
+            Need::Owner => self == Owner,
+        }
+    }
+}
+
+/// What a change or a screen needs from the person's role, as the cloud
+/// checks it (`shared/roles.ts` in the PWA repo).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Need {
+    /// Business totals, Portfolio and Money, Reports, the whole history.
+    Books,
+    ClientsAdd,
+    /// Edit, archive and delete clients, give them to collectors, ID photos.
+    Clients,
+    /// New loans, their terms, defaulted, late-fee waivers.
+    Loans,
+    LoansDelete,
+    PaymentsRecord,
+    /// Confirm or reject a collector's payment.
+    PaymentsConfirm,
+    /// Edit or delete payments.
+    PaymentsEdit,
+    /// Expenses and income.
+    EntriesRecord,
+    /// Capital, moving money, adjusting balances, editing money records.
+    Money,
+    Settings,
+    /// Invite and remove collectors, set their switches.
+    TeamCollectors,
+    /// Invite and remove anyone but the Owner, change roles.
+    Team,
+    Restore,
+    /// Delete the business, hand it over.
+    Owner,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -235,6 +293,37 @@ pub struct Pending {
     pub created_at: i64,
     #[serde(default)]
     pub decided_at: Option<i64>,
+}
+
+/// Someone in the Team section (`team:list`, roadmap 58): the cloud
+/// leaves out whom the person here doesn't see (a collector sees the Owner,
+/// Admins and Managers only).
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamMember {
+    pub user_id: String,
+    pub name: String,
+    pub role: Role,
+    /// The person here.
+    pub me: bool,
+    #[serde(default)]
+    pub photo_url: Option<String>,
+    /// The phone they chose to give their teams ("" when none).
+    #[serde(default)]
+    pub phone: String,
+    /// None: they hide it, or were never seen.
+    #[serde(default)]
+    pub status: Option<TeamStatus>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamStatus {
+    pub online: bool,
+    /// Milliseconds since 1970: when they came (online) or were last there.
+    pub seen_at: f64,
+    /// "phone" or "pc".
+    pub device: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]

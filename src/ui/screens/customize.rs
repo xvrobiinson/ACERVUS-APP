@@ -68,8 +68,8 @@ impl VzApp {
     /// The blocks this person's Overview can show (the business's totals
     /// are for admins).
     pub(crate) fn overview_blocks(&self) -> Vec<Block> {
-        let manage = self.can(Need::Manage);
-        let record = self.can(Need::Record);
+        let manage = self.can(Need::Books);
+        let record = self.can(Need::PaymentsRecord);
         Block::ALL
             .into_iter()
             .filter(|b| match b {
@@ -83,7 +83,7 @@ impl VzApp {
 
     /// The figures this person's Overview can show.
     pub(crate) fn overview_figures(&self) -> Vec<Figure> {
-        let manage = self.can(Need::Manage);
+        let manage = self.can(Need::Books);
         Figure::ALL
             .into_iter()
             .filter(|f| match f {

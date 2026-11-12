@@ -9,7 +9,7 @@ use gpui_kit::*;
 
 use super::{error_banner, footer_with};
 use crate::app::VzApp;
-use crate::i18n::{Lang, t};
+use crate::i18n::t;
 use crate::sync::auth::Endpoints;
 use crate::sync::update::{self, DownloadError, Release};
 use crate::tr;
@@ -25,18 +25,26 @@ pub struct UpdateForm {
     error: Option<String>,
 }
 
+/// Release notes as a list, one dot per line (the update window and
+/// Settings › About's release notes).
+pub fn notes_list(p: &crate::ui::theme::Palette, notes: Vec<String>) -> impl Iterator<Item = Div> + '_ {
+    notes.into_iter().map(move |line| {
+        h_flex()
+            .items_start()
+            .gap(px(space::S))
+            .child(div().pt(px(9.)).flex_none().child(div().size(px(5.)).rounded_full().bg(p.accent)))
+            .child(div().flex_1().min_w_0().typeset(text::BODY).text_color(p.muted).child(line))
+    })
+}
+
 impl UpdateForm {
     pub fn new(app: WeakEntity<VzApp>, release: Release, endpoints: Endpoints) -> Self {
         Self { app, release, endpoints, progress: None, error: None }
     }
 
-    /// The notes in the language the app is shown in (Papiamentu reads the
-    /// Spanish ones, Dutch the English ones).
+    /// The notes in the language the app is shown in.
     fn notes(&self) -> &[String] {
-        let es = matches!(crate::i18n::get(), Lang::Es | Lang::Pap);
-        let (first, other) =
-            if es { (&self.release.notes_es, &self.release.notes_en) } else { (&self.release.notes_en, &self.release.notes_es) };
-        if first.is_empty() { other } else { first }
+        update::notes_in_language(&self.release.notes_en, &self.release.notes_es)
     }
 
     pub fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -167,13 +175,7 @@ impl Render for UpdateForm {
                 v_flex()
                     .gap(px(space::S))
                     .child(div().typeset(text::HEADING).text_color(p.text).child(t("What's new", "Novedades")))
-                    .children(notes.into_iter().map(|line| {
-                        h_flex()
-                            .items_start()
-                            .gap(px(space::S))
-                            .child(div().pt(px(9.)).flex_none().child(div().size(px(5.)).rounded_full().bg(p.accent)))
-                            .child(div().flex_1().min_w_0().typeset(text::BODY).text_color(p.muted).child(line))
-                    })),
+                    .children(notes_list(&p, notes)),
             )
             .children(bar)
             .child(div().typeset(text::CAPTION).text_color(p.faint).child(t(

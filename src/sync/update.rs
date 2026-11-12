@@ -68,6 +68,25 @@ fn newer(info: Info, current: &str) -> Option<Release> {
     Some(Release { version, sha256: info.sha256.map(|s| s.to_lowercase()), notes_en, notes_es })
 }
 
+/// This version's own notes, built in from `whats-new.json` (English,
+/// Spanish): Settings › About's "See the latest release notes".
+pub fn this_version_notes() -> (Vec<String>, Vec<String>) {
+    #[derive(Deserialize)]
+    struct File {
+        en: Vec<String>,
+        es: Vec<String>,
+    }
+    serde_json::from_str::<File>(include_str!("../../whats-new.json")).map(|f| (f.en, f.es)).unwrap_or_default()
+}
+
+/// The notes in the language the app is shown in (Papiamentu reads the
+/// Spanish ones, Dutch the English ones), the other when that one is empty.
+pub fn notes_in_language<'a>(en: &'a [String], es: &'a [String]) -> &'a [String] {
+    let spanish = matches!(crate::i18n::get(), crate::i18n::Lang::Es | crate::i18n::Lang::Pap);
+    let (first, other) = if spanish { (es, en) } else { (en, es) };
+    if first.is_empty() { other } else { first }
+}
+
 /// What went wrong with a download.
 #[derive(Debug, PartialEq, Eq)]
 pub enum DownloadError {
@@ -130,6 +149,12 @@ mod tests {
         assert!(!is_newer("0.12.1", "0.12.2"));
         assert!(!is_newer("0.13.0-beta", "0.12.2"));
         assert!(!is_newer("garbage", "0.12.2"));
+    }
+
+    #[test]
+    fn this_versions_notes_are_built_in_in_both_languages() {
+        let (en, es) = this_version_notes();
+        assert!(!en.is_empty() && en.len() == es.len());
     }
 
     fn info(available: bool, version: &str) -> Info {

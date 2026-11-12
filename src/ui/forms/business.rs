@@ -221,8 +221,10 @@ impl Render for BusinessDetailsForm {
     }
 }
 
-/// Deleting your own account (Settings › Cloud sync): it waits 7 days and
-/// can be cancelled meanwhile, here or in the phone app.
+/// Deleting your own account (Settings › Cloud sync): it waits 30 days, with
+/// emails at the request, 7 days and 1 day before (S22, 2026-11-12), and can
+/// be cancelled meanwhile, here or in the web app (which also downloads the
+/// person's own data).
 pub struct DeleteAccountForm {
     app: WeakEntity<VzApp>,
     /// What the cloud said: when it deletes, and where the person is the only admin.
@@ -250,7 +252,7 @@ impl DeleteAccountForm {
             let _ = this.update_in(cx, |form, _, cx| {
                 match &outcome {
                     Outcome::Accepted(v) => {
-                        form.deletes_at = v["deletesAt"].as_i64();
+                        form.deletes_at = v["deletesAt"].as_f64().map(|ms| ms as i64);
                         form.sole_admin_of =
                             v["soleAdminOf"].as_array().into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
                         form.loaded = true;
@@ -308,13 +310,13 @@ impl Render for DeleteAccountForm {
         if !self.sole_admin_of.is_empty() {
             let names = self.sole_admin_of.join(", ");
             return body.child(div().typeset(text::BODY).child(tr!(
-                "You're the only admin of {names}. Make someone else an admin or delete the business before deleting your account.",
-                "Eres el único administrador de {names}. Haz administrador a otra persona o borra el negocio antes de borrar tu cuenta."
+                "You own {names}. Hand it to one of its Admins (Settings › Team) or delete it before deleting your account.",
+                "Eres el dueño de {names}. Entrégalo a uno de sus administradores (Ajustes › Equipo) o bórralo antes de borrar tu cuenta."
             )));
         }
         body.child(div().typeset(text::BODY).text_color(p.muted).child(t(
-            "After 7 days your sign-in and personal details are deleted and you leave every business. The records you made stay with each business, shown as “Former team member”. Encrypted backups expire within 90 days. Until then, you can cancel.",
-            "Después de 7 días se borran tu acceso y tus datos personales y sales de todos los negocios. Los registros que hiciste quedan en cada negocio, como “Antiguo miembro del equipo”. Los respaldos cifrados vencen en 90 días. Hasta entonces, puedes cancelar.",
+            "After 30 days your sign-in and personal details are deleted and you leave every business. We email you when you ask, 7 days before and 1 day before; until then, signing in lets you keep your account or download your data. The records you made stay with each business, shown as “Former team member”. Encrypted backups expire within 90 days.",
+            "Después de 30 días se borran tu acceso y tus datos personales y sales de todos los negocios. Te escribimos al pedirlo, 7 días antes y 1 día antes; hasta entonces, al iniciar sesión puedes conservar tu cuenta o descargar tus datos. Los registros que hiciste quedan en cada negocio, como “Antiguo miembro del equipo”. Los respaldos cifrados vencen en 90 días.",
         )))
         .child(danger_footer("delete-account", t("Delete my account", "Borrar mi cuenta"), !self.busy, cx.listener(|this, _, w, cx| this.submit(w, cx))))
     }

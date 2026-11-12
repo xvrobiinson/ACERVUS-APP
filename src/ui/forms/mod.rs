@@ -7,6 +7,7 @@ pub mod capital;
 pub mod client;
 pub mod date_field;
 pub mod entry;
+pub mod filter;
 pub mod loan;
 pub mod move_books;
 pub mod payment;

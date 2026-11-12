@@ -348,6 +348,13 @@ pub struct Settings {
     pub show_interest_line: bool,
     /// What the Overview shows and in what order (this PC's own).
     pub overview_layout: OverviewLayout,
+    /// Filter by on Payments, Loans and Clients (this PC's own, kept until
+    /// cleared; 2026-11-11).
+    pub payments_filter: super::list_filters::PaymentsBy,
+    pub loans_filter: super::list_filters::LoansBy,
+    pub clients_filter: super::list_filters::ClientsBy,
+    /// The Team column folded to a strip of faces (this PC's own; 2026-11-11).
+    pub team_folded: bool,
     /// The period Interest earned shows on the Overview (the person's,
     /// kept with their account; this is this PC's copy).
     pub interest_period: crate::domain::periods::Period,
@@ -391,6 +398,10 @@ impl Default for Settings {
             chart_range: ChartRange::SixMonths,
             show_interest_line: true,
             overview_layout: OverviewLayout::default(),
+            payments_filter: Default::default(),
+            loans_filter: Default::default(),
+            clients_filter: Default::default(),
+            team_folded: false,
             interest_period: crate::domain::periods::Period::Month,
             hero_figures: String::new(),
             wa_sent: Vec::new(),
@@ -451,6 +462,10 @@ impl Settings {
             chart_range: get("chart_range").map(ChartRange::from_key).unwrap_or(d.chart_range),
             show_interest_line: flag("show_interest_line", d.show_interest_line),
             overview_layout: get("overview_layout2").map(OverviewLayout::from_key).unwrap_or_default(),
+            payments_filter: super::list_filters::from_setting(get("filters_payments").unwrap_or_default()),
+            loans_filter: super::list_filters::from_setting(get("filters_loans").unwrap_or_default()),
+            clients_filter: super::list_filters::from_setting(get("filters_clients").unwrap_or_default()),
+            team_folded: flag("team_folded", d.team_folded),
             interest_period: get("interest_period").map(crate::domain::periods::Period::from_key).unwrap_or_default(),
             hero_figures: get("hero_figures").unwrap_or_default().to_string(),
             wa_sent: get("wa_sent").map(|v| v.split(',').filter(|x| !x.is_empty()).map(str::to_string).collect()).unwrap_or_default(),
@@ -490,6 +505,10 @@ impl Settings {
             ("show_interest_line", b(self.show_interest_line)),
             // "2": the clean look's blocks (2026-11-09) start everyone on its arrangement.
             ("overview_layout2", self.overview_layout.key()),
+            ("filters_payments", super::list_filters::to_setting(&self.payments_filter)),
+            ("filters_loans", super::list_filters::to_setting(&self.loans_filter)),
+            ("filters_clients", super::list_filters::to_setting(&self.clients_filter)),
+            ("team_folded", b(self.team_folded)),
             ("interest_period", self.interest_period.key().into()),
             ("hero_figures", self.hero_figures.clone()),
             ("wa_sent", self.wa_sent.join(",")),

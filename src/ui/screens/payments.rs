@@ -10,6 +10,7 @@ use crate::i18n::{count, t};
 use crate::sync::wire::Need;
 use crate::tr;
 use crate::ui::components::{Tone, avatar, empty_state, icon, page_header, pill, sel, table_header, table_row, th};
+use crate::ui::forms::filter::FilterPage;
 use crate::ui::forms::reason::ReasonKind;
 use crate::ui::kit::{Button, Card, CountUp};
 use crate::ui::theme::{Typeset as _, Width, palette, space, tabular, text};
@@ -26,7 +27,25 @@ impl VzApp {
         let ds = self.settings().date_style;
         let q = self.payment_search.read(cx).value().to_lowercase();
         let q = q.trim().to_string();
-        let live: Vec<_> = self.snap.payments.iter().filter(|x| !x.is_reversed()).collect();
+        // Filter (period, method, who brought it in, what it paid), kept on
+        // this PC (2026-11-11).
+        let by = self.settings().payments_filter.clone();
+        let recorders = self.payment_recorders();
+        let today = self.today;
+        let passes = |x: &crate::database::repositories::payments::Payment| {
+            by.passes(
+                &crate::services::list_filters::PaymentRow {
+                    paid_on: x.paid_on,
+                    method: x.paid_with.map(|m| m.key()),
+                    by: recorders.get(&x.id).map_or("", String::as_str),
+                    principal: x.principal,
+                    interest: x.interest,
+                    fee: x.fee,
+                },
+                today,
+            )
+        };
+        let live: Vec<_> = self.snap.payments.iter().filter(|x| !x.is_reversed() && passes(x)).collect();
         let received: i64 = live.iter().map(|x| x.amount).sum();
         let income: i64 = live.iter().map(|x| x.interest + x.fee).sum();
         let rows: Vec<_> = self
@@ -34,6 +53,7 @@ impl VzApp {
             .payments
             .iter()
             .rev()
+            .filter(|x| passes(x))
             .filter(|x| {
                 if q.is_empty() {
                     return true;
@@ -48,7 +68,7 @@ impl VzApp {
             &p,
             t("Payments", "Pagos"),
             // The business's totals are for admins (collectors see their work).
-            Some(if self.can(Need::Manage) {
+            Some(if self.can(Need::Books) {
                 h_flex()
                     .flex_wrap()
                     .gap(px(4.))
@@ -76,7 +96,7 @@ impl VzApp {
             } else {
                 sel(n).into_any_element()
             }),
-            self.can(Need::Record)
+            self.can(Need::PaymentsRecord)
                 .then(|| {
                     Button::new("pay-new")
                         .primary()
@@ -93,7 +113,7 @@ impl VzApp {
         // Wide rows label the receipt button and show the reversed pill;
         // narrower ones keep three icon buttons.
         let actions_w = if wide { 272. } else { 128. };
-        let manage = self.can(Need::Manage);
+        let manage = self.can(Need::PaymentsEdit);
         let view = self.view();
         let body = if !view.history {
             super::collect::history_hidden(&p)
@@ -106,7 +126,7 @@ impl VzApp {
                     "Record what a client pays you. Each payment is split into interest (your income) and capital (your money coming back).",
                     "Registra lo que te paga un cliente. Cada pago se divide en interés (tu ganancia) y capital (tu dinero que regresa).",
                 ),
-                (!self.snap.loans.is_empty() && self.can(Need::Record)).then(|| {
+                (!self.snap.loans.is_empty() && self.can(Need::PaymentsRecord)).then(|| {
                     Button::new("pay-empty")
                         .primary()
                         .label(t("Record payment", "Registrar pago"))
@@ -239,13 +259,19 @@ impl VzApp {
             .child(header)
             .children(to_confirm.map(|c| div().pb(px(space::L)).child(c)))
             .child(
-                div().pb(px(space::L)).child(
-                    div()
-                        .w_full()
-                        .max_w(px(380.))
-                        .child(Input::new(&self.payment_search).prefix(icon(IconName::Search, p.faint, 14.)).cleanable(true)),
-                ),
+                h_flex()
+                    .pb(px(space::L))
+                    .gap(px(space::M))
+                    .flex_wrap()
+                    .child(
+                        div()
+                            .w_full()
+                            .max_w(px(380.))
+                            .child(Input::new(&self.payment_search).prefix(icon(IconName::Search, p.faint, 14.)).cleanable(true)),
+                    )
+                    .child(div().flex_none().child(self.filter_button(FilterPage::Payments, cx))),
             )
+            .children(self.filter_chips(FilterPage::Payments, cx))
             .child(Card::new().overflow_hidden().child(body))
             .into_any_element()
     }

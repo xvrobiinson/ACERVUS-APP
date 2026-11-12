@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use anyhow::{Context as _, Result, bail};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
-use super::wire::{Role, Snapshot};
+use super::wire::{Need, Role, Snapshot};
 use crate::database::now_timestamp;
 
 /// Kinds of records with a cloud id.
@@ -44,11 +44,7 @@ impl Entity {
 }
 
 fn role_key(r: Role) -> &'static str {
-    match r {
-        Role::Admin => "admin",
-        Role::Collector => "collector",
-        Role::Viewer => "viewer",
-    }
+    r.key()
 }
 
 /// The linked business this database follows.
@@ -75,11 +71,7 @@ pub fn path_for(business_id: &str) -> Result<PathBuf> {
 /// The business this database is linked to, if any.
 pub fn link(conn: &Connection) -> Result<Option<Link>> {
     conn.query_row("SELECT business_id, business_name, role, today FROM sync_state WHERE id = 1", [], |r| {
-        let role = match r.get_ref(2)?.as_str()? {
-            "admin" => Role::Admin,
-            "collector" => Role::Collector,
-            _ => Role::Viewer,
-        };
+        let role = Role::from_key(r.get_ref(2)?.as_str()?).unwrap_or(Role::Accountant);
         let today: crate::database::repositories::Day = r.get(3)?;
         Ok(Link { business_id: r.get(0)?, business_name: r.get(1)?, role, today: today.0 })
     })
@@ -138,7 +130,7 @@ fn file_tag(conn: &Connection, key: &str) -> Result<Option<String>> {
 /// The photos and logo this database doesn't have in their latest version.
 pub fn downloads(conn: &Connection, snap: &Snapshot) -> Result<Vec<Download>> {
     let mut out = Vec::new();
-    if snap.me.role == Role::Admin {
+    if snap.me.role.allows(Need::Clients) {
         for c in snap.clients.iter().filter(|c| c.has_photo) {
             let kept: bool =
                 conn.query_row("SELECT EXISTS(SELECT 1 FROM client_photos WHERE client_id = ?1)", [c.record_no], |r| r.get(0))?;
@@ -164,7 +156,7 @@ pub fn save_download(conn: &Connection, d: &Download, bytes: &[u8]) -> Result<()
     match d {
         Download::Photo { client, version } => {
             let Some(id) = local(conn, Entity::Client, client)? else { return Ok(()) };
-            if link(conn)?.is_none_or(|l| l.role != Role::Admin) {
+            if link(conn)?.is_none_or(|l| !l.role.allows(Need::Clients)) {
                 return Ok(());
             }
             let jpeg = picture::Photo::from_upload(bytes).map_err(|e| anyhow::anyhow!(e.message()))?;
@@ -255,8 +247,8 @@ pub fn apply(conn: &mut Connection, snap: &Snapshot) -> Result<()> {
     tx.execute("DELETE FROM clients WHERE id NOT IN (SELECT value FROM json_each(?1))", [&keep])?;
     let photoless: Vec<i64> = snap.clients.iter().filter(|c| !c.has_photo).map(|c| c.record_no).collect();
     tx.execute("DELETE FROM client_photos WHERE client_id IN (SELECT value FROM json_each(?1))", [serde_json::to_string(&photoless)?])?;
-    if snap.me.role != Role::Admin {
-        // ID photos stay only on admins' PCs.
+    if !snap.me.role.allows(Need::Clients) {
+        // ID photos stay only on the PCs of those who handle clients.
         forget_photos(&tx)?;
     }
     if snap.settings.as_ref().is_none_or(|s| s.logo_url.is_none()) {

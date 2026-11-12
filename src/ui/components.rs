@@ -75,7 +75,11 @@ pub fn tone_colors(p: &Palette, tone: Tone) -> (Hsla, Hsla) {
 /// A status or count in its tone's color: colored words only, no fill
 /// (the hero look, as on the web, 2026-11-06).
 pub fn pill(p: &Palette, text: impl Into<SharedString>, tone: Tone) -> Div {
-    let (_, fg) = tone_colors(p, tone);
+    pill_in(text, tone_colors(p, tone).1)
+}
+
+/// Colored words in `fg`, the pill's shape.
+pub fn pill_in(text: impl Into<SharedString>, fg: Hsla) -> Div {
     h_flex()
         .flex_none()
         .h(px(22.))
@@ -86,19 +90,22 @@ pub fn pill(p: &Palette, text: impl Into<SharedString>, tone: Tone) -> Div {
         .child(text.into())
 }
 
-pub fn status_tone(s: DisplayStatus) -> Tone {
-    match s {
-        DisplayStatus::Active => Tone::Neutral,
-        DisplayStatus::DueSoon => Tone::Warning,
-        DisplayStatus::Overdue => Tone::Negative,
-        DisplayStatus::PaidOff => Tone::Positive,
-        DisplayStatus::Defaulted => Tone::Negative,
-        DisplayStatus::Restructured => Tone::Neutral,
-    }
-}
+/// Late for more days than this is "late over 30 days" (red); up to it,
+/// orange. The Overview's "Loans by status" splits late loans the same way.
+pub const LATE_OVER_DAYS: i64 = 30;
 
-pub fn status_pill(p: &Palette, s: DisplayStatus) -> Div {
-    pill(p, s.label(), status_tone(s))
+/// A status's word color, the chart's color for it: on time graphite, due
+/// soon amber, late orange or red by `days_late` (red when unknown), paid
+/// off green, defaulted grey.
+pub fn status_color(p: &Palette, s: DisplayStatus, days_late: Option<i64>) -> Hsla {
+    match s {
+        DisplayStatus::Active | DisplayStatus::Restructured => p.st_ok_ink,
+        DisplayStatus::DueSoon => p.st_soon_ink,
+        DisplayStatus::Overdue if days_late.is_some_and(|d| d <= LATE_OVER_DAYS) => p.st_late_ink,
+        DisplayStatus::Overdue => p.st_later_ink,
+        DisplayStatus::PaidOff => p.positive,
+        DisplayStatus::Defaulted => p.st_gone_ink,
+    }
 }
 
 /// Initials in a pale tint whose hue is stable per client id.
@@ -152,11 +159,14 @@ pub fn table_header(p: &Palette) -> Div {
     h_flex().h(px(36.)).px(px(space::XL)).gap(px(space::L)).border_b_1().border_color(p.border)
 }
 
+/// A table row's least height (px).
+pub const TABLE_ROW_HEIGHT: f32 = 52.;
+
 pub fn table_row(p: &Palette, id: impl Into<ElementId>, clickable: bool) -> Stateful<Div> {
     let hover = p.hover;
     h_flex()
         .id(id)
-        .min_h(px(52.))
+        .min_h(px(TABLE_ROW_HEIGHT))
         .px(px(space::XL))
         .gap(px(space::L))
         .border_b_1()
@@ -223,4 +233,24 @@ pub fn filling_bar(p: &Palette, id: impl Into<ElementId>, ratio: f32, color: Hsl
         crate::ui::kit::motion::arrival(delay + std::time::Duration::from_millis(120)),
         move |d, t| d.w(relative(ratio * t.clamp(0.0, 1.0))),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    #[test]
+    fn each_status_has_the_charts_color_late_loans_by_days() {
+        let p = Palette::light();
+        assert_eq!(status_color(&p, DisplayStatus::Active, None), p.st_ok_ink);
+        assert_eq!(status_color(&p, DisplayStatus::Restructured, None), p.st_ok_ink);
+        assert_eq!(status_color(&p, DisplayStatus::DueSoon, None), p.st_soon_ink);
+        assert_eq!(status_color(&p, DisplayStatus::Overdue, Some(1)), p.st_late_ink);
+        assert_eq!(status_color(&p, DisplayStatus::Overdue, Some(LATE_OVER_DAYS)), p.st_late_ink);
+        assert_eq!(status_color(&p, DisplayStatus::Overdue, Some(LATE_OVER_DAYS + 1)), p.st_later_ink);
+        assert_eq!(status_color(&p, DisplayStatus::Overdue, None), p.st_later_ink);
+        assert_eq!(status_color(&p, DisplayStatus::PaidOff, None), p.positive);
+        assert_eq!(status_color(&p, DisplayStatus::Defaulted, None), p.st_gone_ink);
+    }
 }

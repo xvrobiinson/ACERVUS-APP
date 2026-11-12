@@ -1,5 +1,5 @@
 //! Splash: "Orbit", the launch splash (picked by the owner 2026-11-05, the
-//! same as the web app's). Over the hero's picture the black tile pops in,
+//! same as the web app's). Over white (light) or the streaks (dark) the black tile pops in,
 //! the dot circles the faint ring and lands in its gap as the ring lights
 //! up, the name rises letter by letter and a line fills. Then it opens
 //! "through the ring": the ring grows toward you, past the window's
@@ -118,7 +118,7 @@ impl RenderOnce for Splash {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = palette(cx);
         let c = p.splash;
-        let picture = crate::ui::pictures::hero(p.dark);
+        let picture = p.dark.then(|| crate::ui::pictures::hero(true));
         let (word, sub) = crate::APP_NAME.split_once(' ').unwrap_or((crate::APP_NAME, ""));
         let (word, sub): (Vec<char>, Vec<char>) = (word.chars().collect(), sub.to_uppercase().chars().collect());
         let total = Self::SHOWN.as_secs_f32();
@@ -178,7 +178,8 @@ impl RenderOnce for Splash {
                         .inset_0()
                         .bg(c.base)
                         .opacity(ground)
-                        .child(img(picture.clone()).absolute().inset_0().size_full().object_fit(ObjectFit::Cover)),
+                        // Light mode is plain white (2026-11-11); dark keeps its picture.
+                        .children(picture.clone().map(|pic| img(pic).absolute().inset_0().size_full().object_fit(ObjectFit::Cover))),
                 )
                 .child(v_flex().size_full().items_center().justify_center().gap(px(4.)).child(mark(c, s)).child(below))
             },

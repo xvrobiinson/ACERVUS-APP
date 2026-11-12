@@ -19,16 +19,6 @@ use crate::ui::forms::reason::ReasonKind;
 use crate::ui::kit::{Button, Card, Dropdown, DropdownItem};
 use crate::ui::theme::{Palette, RADIUS_CONTROL, Typeset as _, Width, palette, space, tabular, text};
 
-/// Which clients the Clients list shows, by collector.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum CollectorFilter {
-    #[default]
-    All,
-    /// Clients nobody collects from yet.
-    Nobody,
-    Person(String),
-}
-
 /// A waiting payment with this PC's loan and client numbers.
 struct Row {
     pending: Pending,
@@ -61,7 +51,7 @@ impl VzApp {
 
     /// Admins see and change who collects from each client.
     pub(crate) fn manages_collectors(&self) -> bool {
-        self.has_collectors() && self.can(Need::Manage)
+        self.has_collectors() && self.can(Need::Clients)
     }
 
     /// A collector's or admin's name as the lists show it.
@@ -78,17 +68,19 @@ impl VzApp {
     }
 
     /// The people who can be given clients, the person here first.
-    fn takers(&self) -> Vec<(String, String)> {
+    pub(crate) fn takers(&self) -> Vec<(String, String)> {
         let Some(s) = self.cloud_copy() else { return Vec::new() };
         let mut list: Vec<(String, String)> = s
             .people
             .iter()
-            .filter(|x| x.active && matches!(x.role, Some(Role::Admin | Role::Collector)))
+            // Anyone who records payments can be given clients.
+            .filter(|x| x.active && x.role.is_some_and(|r| r.allows(Need::PaymentsRecord)))
             .map(|x| {
+                let role = x.role.map(|r| super::sync::role_label(r).to_lowercase()).unwrap_or_default();
                 let label = if x.user_id == s.me.user_id {
-                    t("You (admin)", "Tú (administrador)").to_string()
-                } else if x.role == Some(Role::Admin) {
-                    format!("{} ({})", x.name, t("admin", "administrador"))
+                    format!("{} ({role})", t("You", "Tú"))
+                } else if x.role != Some(Role::Collector) {
+                    format!("{} ({role})", x.name)
                 } else {
                     x.name.clone()
                 };
@@ -119,46 +111,6 @@ impl VzApp {
             .selected(current.is_none()),
         );
         Dropdown::new(id).small().label(self.collector_label(current.as_deref())).items(items).into_any_element()
-    }
-
-    /// The Clients list's filter by collector.
-    pub(crate) fn collector_filter_menu(&self, cx: &mut Context<Self>) -> AnyElement {
-        let label = match &self.collector_filter {
-            CollectorFilter::All => t("Every collector", "Todos los cobradores").to_string(),
-            CollectorFilter::Nobody => t("No collector", "Sin cobrador").to_string(),
-            CollectorFilter::Person(u) => self.collector_label(Some(u)),
-        };
-        let mut choices = vec![(CollectorFilter::All, t("Every collector", "Todos los cobradores").to_string())];
-        for (user, _) in self.takers() {
-            let name = self.collector_label(Some(&user));
-            choices.push((CollectorFilter::Person(user), name));
-        }
-        choices.push((CollectorFilter::Nobody, t("No collector", "Sin cobrador").to_string()));
-        let items: Vec<DropdownItem> = choices
-            .into_iter()
-            .map(|(f, name)| {
-                let selected = self.collector_filter == f;
-                DropdownItem::new(
-                    name,
-                    cx.listener(move |this, _, _, cx| {
-                        this.collector_filter = f.clone();
-                        cx.notify();
-                    }),
-                )
-                .selected(selected)
-            })
-            .collect();
-        Dropdown::new("collector-filter").label(label).items(items).into_any_element()
-    }
-
-    /// Whether a client passes the Clients list's collector filter.
-    pub(crate) fn passes_collector_filter(&self, client: i64) -> bool {
-        let who = self.cloud_copy().and_then(|s| s.collector_of(client));
-        match &self.collector_filter {
-            CollectorFilter::All => true,
-            CollectorFilter::Nobody => who.is_none(),
-            CollectorFilter::Person(u) => who == Some(u.as_str()),
-        }
     }
 
     pub(crate) fn assign_clients(&mut self, clients: Vec<i64>, collector: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
@@ -334,7 +286,7 @@ impl VzApp {
             return None;
         }
         waiting.sort_by_key(|r| r.pending.created_at);
-        let decide = self.can(Need::Manage) && self.cloud.as_ref().is_some_and(|c| c.online);
+        let decide = self.can(Need::PaymentsConfirm) && self.cloud.as_ref().is_some_and(|c| c.online);
         let mut people: Vec<String> = Vec::new();
         for r in &waiting {
             if !people.contains(&r.pending.collected_by) {
@@ -398,7 +350,7 @@ impl VzApp {
             return None;
         }
         let p = palette(cx);
-        let decide = self.can(Need::Manage) && self.cloud.as_ref().is_some_and(|c| c.online);
+        let decide = self.can(Need::PaymentsConfirm) && self.cloud.as_ref().is_some_and(|c| c.online);
         let items: Vec<_> = list.iter().enumerate().map(|(i, r)| self.pending_row_in(&p, r, decide, compact, i, &folding, cx)).collect();
         Some(
             v_flex()
@@ -538,7 +490,7 @@ impl Render for Bell {
         let p = palette(cx);
         let Some(app) = self.app.upgrade() else { return div().into_any_element() };
         let a = app.read(cx);
-        let manage = a.can(Need::Manage);
+        let manage = a.can(Need::PaymentsConfirm);
         let ds = a.settings().date_style;
         let waiting: Vec<String> = a.cloud_copy().map(|s| s.waiting().map(|x| x.id.clone()).collect()).unwrap_or_default();
         let messages = a.messages().to_vec();
@@ -602,7 +554,16 @@ impl Render for Bell {
                                         window.close_dialog(cx);
                                         let _ = weak.update(cx, |app, cx| {
                                             if nobody {
-                                                app.collector_filter = CollectorFilter::Nobody;
+                                                app.update_settings(
+                                                    |s| {
+                                                        s.clients_filter = crate::services::list_filters::ClientsBy {
+                                                            collectors: vec!["none".into()],
+                                                            ..Default::default()
+                                                        }
+                                                    },
+                                                    window,
+                                                    cx,
+                                                );
                                             }
                                             app.navigate(route, window, cx);
                                         });
@@ -613,6 +574,12 @@ impl Render for Bell {
                     .into_any_element()
             })
             .collect();
-        v_flex().id("bell-list").gap(px(space::XS)).max_h(px(520.)).overflow_y_scroll().children(items).into_any_element()
+        v_flex()
+            .id("bell-list")
+            .gap(px(space::XS))
+            .max_h(px(520.))
+            .overflow_y_scroll()
+            .children(crate::ui::kit::motion::rise_rows("bell-in", items))
+            .into_any_element()
     }
 }

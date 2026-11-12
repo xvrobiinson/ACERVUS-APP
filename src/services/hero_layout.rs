@@ -114,15 +114,15 @@ pub enum Spot {
 
 pub type Layout = [Slot; 4];
 
-/// What a role may see. Collectors and viewers never see the business's
-/// totals (portfolio, capital, interest), the same rule as the rest of the
-/// app. No role means this PC's own books: everything but To confirm.
+/// What a role may see. Collectors never see the business's totals
+/// (portfolio, capital, interest), the same rule as the rest of the app;
+/// every other role sees the books. No role means this PC's own books:
+/// everything but To confirm.
 pub fn allowed(role: Option<Role>) -> Vec<Figure> {
     let team = [Figure::Overdue, Figure::OverdueLoans, Figure::Receivable, Figure::DueNext7, Figure::ActiveLoans];
     match role {
-        None | Some(Role::Admin) => Figure::ALL.into_iter().filter(|f| *f != Figure::ToConfirm).collect(),
         Some(Role::Collector) => team.into_iter().chain([Figure::ToConfirm]).collect(),
-        Some(Role::Viewer) => team.to_vec(),
+        _ => Figure::ALL.into_iter().filter(|f| *f != Figure::ToConfirm).collect(),
     }
 }
 
@@ -131,17 +131,17 @@ pub fn default_for(role: Option<Role>) -> Layout {
     let s = |big: Pick, a: Pick, b: Pick| Slot { big, rows: [a, b] };
     use Figure::*;
     match role {
-        None | Some(Role::Admin) => [
+        Some(Role::Collector) => [
+            s(Some(Overdue), Some(OverdueLoans), None),
+            s(Some(DueNext7), Some(ActiveLoans), None),
+            s(Some(Receivable), None, None),
+            s(Some(ToConfirm), None, None),
+        ],
+        _ => [
             s(Some(Portfolio), Some(Gain6m), Some(ExpectedInterest)),
             s(Some(LentOut), Some(ActiveLoans), Some(DueNext7)),
             s(Some(InterestEarned), Some(AvailableInterest), Some(CollectedMonth)),
             s(Some(AvailableCapital), Some(Overdue), Some(OverdueLoans)),
-        ],
-        Some(r) => [
-            s(Some(Overdue), Some(OverdueLoans), None),
-            s(Some(DueNext7), Some(ActiveLoans), None),
-            s(Some(Receivable), None, None),
-            if r == Role::Collector { s(Some(ToConfirm), None, None) } else { s(None, None, None) },
         ],
     }
 }
@@ -217,23 +217,24 @@ mod tests {
         let text = to_text(&l);
         assert!(text.starts_with(r#"[{"big":"portfolio","rows":["gain6m","expectedInterest"]}"#), "{text}");
         assert_eq!(parse(&text, Some(Role::Admin)), l);
-        let viewer = to_text(&default_for(Some(Role::Viewer)));
-        assert!(viewer.contains(r#"{"big":"none","rows":["none","none"]}"#));
+        let collector = to_text(&default_for(Some(Role::Collector)));
+        assert!(collector.contains(r#"{"big":"overdue","rows":["overdueLoans","none"]}"#));
     }
 
     #[test]
     fn a_role_never_gets_a_total_it_may_not_see() {
         let mine = set(default_for(Some(Role::Admin)), 0, Spot::Row(1), Some(Figure::Overdue));
-        // Read as a viewer: the totals fall back to the viewer's defaults,
-        // the overdue row (allowed) stays.
-        let as_viewer = parse(&to_text(&mine), Some(Role::Viewer));
-        let ok = allowed(Some(Role::Viewer));
-        for s in as_viewer {
+        // Read as a collector: the totals fall back to the collector's
+        // defaults, the overdue row (allowed) stays.
+        let as_collector = parse(&to_text(&mine), Some(Role::Collector));
+        let ok = allowed(Some(Role::Collector));
+        for s in as_collector {
             for f in [s.big].into_iter().chain(s.rows).flatten() {
                 assert!(ok.contains(&f), "{f:?}");
             }
         }
-        assert_eq!(as_viewer[0].rows[1], Some(Figure::Overdue));
+        assert_eq!(as_collector[0].rows[1], Some(Figure::Overdue));
+        assert_eq!(allowed(Some(Role::Manager)), allowed(Some(Role::Owner)));
         assert!(!allowed(Some(Role::Admin)).contains(&Figure::ToConfirm));
         assert!(allowed(Some(Role::Collector)).contains(&Figure::ToConfirm));
     }
@@ -250,7 +251,8 @@ mod tests {
 
     #[test]
     fn empty_places_are_not_shown() {
-        let l = default_for(Some(Role::Viewer));
+        let mut l = default_for(Some(Role::Collector));
+        l[3] = Slot { big: None, rows: [None, None] };
         let shown = shown(&l);
         assert_eq!(shown.len(), 3);
         assert_eq!(shown[2], (Some(Figure::Receivable), vec![]));

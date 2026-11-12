@@ -1,8 +1,10 @@
-//! Settings › Team: an admin's view of who works in the business. The list
-//! groups people by role; a person's page changes their role, removes them,
-//! and for a collector chooses what they see of the clients assigned to
-//! them. Invitations are made from the list. It talks to the cloud directly
-//! (these aren't changes to the books), so it needs a connection.
+//! Settings › Team: who works in the business. The list groups people by
+//! role; a person's page changes their role, hands the business over (the
+//! Owner, to an Admin), removes them, and for a collector chooses what they
+//! see of the clients assigned to them. The Owner and Admins manage everyone
+//! but the Owner; a Manager only collectors. Invitations are made from the
+//! list. It talks to the cloud directly (these aren't changes to the books),
+//! so it needs a connection; the cloud checks every call.
 
 use futures::channel::oneshot;
 use gpui_kit::assets::IconName;
@@ -16,9 +18,11 @@ use serde_json::{Value, json};
 use crate::app::VzApp;
 use crate::i18n::t;
 use crate::sync::outbox::Outcome;
+use crate::sync::wire::{Need, Role};
 use crate::tr;
 use crate::ui::components::{Tone, icon, pill, sel};
 use crate::ui::kit::{Button, Dropdown, DropdownItem, ListRow};
+use crate::ui::screens::{role_hint, role_icon, role_label};
 use crate::ui::theme::{Palette, Typeset as _, palette, space, text};
 
 /// A person in the business (`businesses:members`).
@@ -30,7 +34,7 @@ pub struct Member {
     pub user_id: String,
     pub name: String,
     pub email: String,
-    pub role: String,
+    pub role: Role,
     pub active: bool,
     #[serde(default)]
     pub collector_view: Option<serde_json::Map<String, Value>>,
@@ -43,7 +47,7 @@ pub struct Invite {
     #[serde(rename = "_id")]
     pub id: String,
     pub email: String,
-    pub role: String,
+    pub role: Role,
 }
 
 /// A collector's switches: the cloud's key and its label.
@@ -71,22 +75,14 @@ fn view_with(m: &Member, key: &str, on: bool) -> Value {
     Value::Object(all)
 }
 
-fn role_label(role: &str) -> &'static str {
+/// A role's group heading and its pill's tone on the list.
+fn role_look(role: Role) -> (&'static str, Tone) {
     match role {
-        "admin" => t("Admin", "Administrador"),
-        "collector" => t("Collector", "Cobrador"),
-        _ => t("Viewer", "Solo lectura"),
-    }
-}
-
-const ROLES: [&str; 3] = ["admin", "collector", "viewer"];
-
-/// A role's group heading, its pill's tone and its icon on the list.
-fn role_look(role: &str) -> (&'static str, Tone, IconName) {
-    match role {
-        "admin" => (t("Admins", "Administradores"), Tone::Accent, IconName::ShieldCheck),
-        "collector" => (t("Collectors", "Cobradores"), Tone::Positive, IconName::HandCoins),
-        _ => (t("Viewers", "Solo lectura"), Tone::Neutral, IconName::Eye),
+        Role::Owner => (t("Owner", "Dueño"), Tone::Accent),
+        Role::Admin => (t("Admins", "Administradores"), Tone::Accent),
+        Role::Manager => (t("Managers", "Gerentes"), Tone::Neutral),
+        Role::Accountant => (t("Accountants", "Contadores"), Tone::Neutral),
+        Role::Collector => (t("Collectors", "Cobradores"), Tone::Positive),
     }
 }
 
@@ -102,13 +98,18 @@ pub struct TeamView {
     members: Option<Vec<Member>>,
     invites: Vec<Invite>,
     email: Entity<InputState>,
-    role: &'static str,
+    role: Role,
     /// The invitation just made: its link, and whether it was emailed.
     link: Option<(String, bool)>,
     /// The person whose page is open.
     open: Option<String>,
+    /// Opens this person's page once the team arrives (user id; the Team
+    /// section's "Team settings").
+    wanted: Option<String>,
     /// The person being asked about before removing them.
     removing: Option<String>,
+    /// The Admin being asked about before handing them the business.
+    handing: Option<String>,
     busy: bool,
     error: Option<String>,
 }
@@ -116,7 +117,14 @@ pub struct TeamView {
 impl TeamView {
     /// Built while the app draws, so what it needs from the app comes as
     /// arguments and the first read of the team waits until after that.
-    pub fn new(app: WeakEntity<VzApp>, business: Option<String>, me: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        app: WeakEntity<VzApp>,
+        business: Option<String>,
+        me: String,
+        wanted: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let email = cx.new(|cx| InputState::new(window, cx).placeholder(t("Email address", "Correo electrónico")));
         cx.defer_in(window, |view, window, cx| view.load(window, cx));
         Self {
@@ -126,10 +134,12 @@ impl TeamView {
             members: None,
             invites: Vec::new(),
             email,
-            role: "collector",
+            role: Role::Collector,
             link: None,
             open: None,
+            wanted,
             removing: None,
+            handing: None,
             busy: false,
             error: None,
         }
@@ -147,9 +157,21 @@ impl TeamView {
             return false;
         }
         self.removing = None;
+        self.handing = None;
         self.error = None;
         cx.notify();
         true
+    }
+
+    /// Whether the person here may do `need` (the cloud checks again).
+    fn may(&self, need: Need, cx: &App) -> bool {
+        self.app_read(cx, |a| a.can(need)).unwrap_or(false)
+    }
+
+    /// Whether the person here manages someone with `role`: never the
+    /// Owner; a Manager only collectors.
+    fn manages(&self, role: Role, cx: &App) -> bool {
+        role != Role::Owner && (role == Role::Collector || self.may(Need::Team, cx))
     }
 
     fn app_read<R>(&self, cx: &App, f: impl FnOnce(&VzApp) -> R) -> Option<R> {
@@ -174,6 +196,9 @@ impl TeamView {
                         let gone = |id: &String| !view.members.iter().flatten().any(|m| &m.id == id && m.active);
                         if view.open.as_ref().is_some_and(gone) {
                             view.open = None;
+                        }
+                        if let Some(user) = view.wanted.take() {
+                            view.open = view.members.iter().flatten().find(|m| m.user_id == user && m.active).map(|m| m.id.clone());
                         }
                     }
                     (other, _) => view.error = view.app_read(cx, |a| a.call_failed(&other)),
@@ -226,7 +251,8 @@ impl TeamView {
             cx.notify();
             return;
         }
-        let args = json!({ "businessId": self.business, "email": email, "role": self.role });
+        let role = if self.may(Need::Team, cx) { self.role } else { Role::Collector };
+        let args = json!({ "businessId": self.business, "email": email, "role": role.key() });
         let answer = self.app_read(cx, |a| a.cloud_action("invites:create", args)).flatten();
         self.send(
             answer,
@@ -243,38 +269,42 @@ impl TeamView {
     fn person_row(&self, p: &Palette, m: &Member, cx: &mut Context<Self>) -> ListRow {
         let me = m.user_id == self.me;
         let name = if me { format!("{} · {}", m.name, t("you", "tú")) } else { m.name.clone() };
-        let (_, tone, mark) = role_look(&m.role);
+        let (_, tone) = role_look(m.role);
         let id = m.id.clone();
         ListRow::new(SharedString::from(format!("team-person-{}", m.id)))
             .boxed(true)
-            .leading(icon(mark, p.muted, 18.))
+            .leading(icon(role_icon(m.role), p.muted, 18.))
             .title(name)
             .subtitle(m.email.clone())
-            .trailing(h_flex().gap(px(space::S)).child(pill(p, role_label(&m.role), tone)).child(icon(
-                IconName::ChevronRight,
-                p.muted,
-                16.,
-            )))
+            .trailing(h_flex().gap(px(space::S)).child(pill(p, role_label(m.role), tone)).child(icon(IconName::ChevronRight, p.muted, 16.)))
             .on_click(cx.listener(move |view, _, _, cx| {
                 view.open = Some(id.clone());
                 view.removing = None;
+                view.handing = None;
                 view.error = None;
                 cx.notify();
             }))
     }
 
-    /// A person's page: their role, what a collector sees, and removing them.
+    /// A person's page: their role, what a collector sees, handing the
+    /// business over and removing them, as far as the person here may.
     fn person_page(&self, p: &Palette, m: &Member, cx: &mut Context<Self>) -> Div {
         let member = m.id.clone();
-        let menu =
-            Dropdown::new(SharedString::from(format!("team-role-{}", m.id))).label(role_label(&m.role)).align_end().items(ROLES.map(|r| {
-                let id = member.clone();
-                DropdownItem::new(
-                    role_label(r),
-                    cx.listener(move |view, _, w, cx| view.mutate("businesses:setRole", json!({ "memberId": id, "role": r }), w, cx)),
-                )
-                .selected(m.role == r)
-            }));
+        let mine = self.manages(m.role, cx);
+        let menu = (mine && self.may(Need::Team, cx)).then(|| {
+            Dropdown::new(SharedString::from(format!("team-role-{}", m.id))).label(role_label(m.role)).align_end().items(Role::GIVEN.map(
+                |r| {
+                    let id = member.clone();
+                    DropdownItem::new(
+                        role_label(r),
+                        cx.listener(move |view, _, w, cx| {
+                            view.mutate("businesses:setRole", json!({ "memberId": id, "role": r.key() }), w, cx)
+                        }),
+                    )
+                    .selected(m.role == r)
+                },
+            ))
+        });
         let asking = self.removing.as_deref() == Some(m.id.as_str());
         let (remove_id, confirm_id) = (member.clone(), member.clone());
         v_flex()
@@ -291,50 +321,102 @@ impl TeamView {
                             .min_w(px(240.))
                             .gap(px(2.))
                             .child(div().typeset(text::BODY_STRONG).child(t("Role", "Rol")))
-                            .child(div().typeset(text::CAPTION).text_color(p.muted).child(t(
-                                "Admin: everything. Collector: their assigned clients, payments, expenses, income and receipts. Viewer: read only.",
-                                "Administrador: todo. Cobrador: sus clientes asignados, pagos, gastos, ingresos y recibos. Solo lectura: ver.",
-                            ))),
+                            .child(div().typeset(text::CAPTION).text_color(p.muted).child(role_hint(m.role))),
                     )
-                    .child(menu),
+                    .children(menu),
             )
-            .when(m.role == "collector", |d| d.child(self.permissions(p, m, cx)))
+            .when(m.role == Role::Collector && mine, |d| d.child(self.permissions(p, m, cx)))
+            .when(m.role == Role::Admin && self.may(Need::Owner, cx), |d| d.child(self.hand_over(p, m, cx)))
+            .when(mine, |d| {
+                d.child(
+                    v_flex()
+                        .gap(px(space::S))
+                        .pt(px(space::M))
+                        .border_t_1()
+                        .border_color(p.rule)
+                        .child(div().typeset(text::CAPTION).text_color(p.muted).child(t(
+                            "They lose access to this business at once. Their past changes stay in the history.",
+                            "Pierde el acceso al negocio de inmediato. Sus cambios anteriores siguen en el historial.",
+                        )))
+                        .child(if asking {
+                            h_flex()
+                                .gap(px(space::S))
+                                .child(Button::new("team-remove-no").label(t("Cancel", "Cancelar")).on_click(cx.listener(
+                                    |view, _, _, cx| {
+                                        view.removing = None;
+                                        cx.notify();
+                                    },
+                                )))
+                                .child(
+                                    Button::new("team-remove-yes")
+                                        .danger()
+                                        .icon(IconName::Trash)
+                                        .label(t("Remove", "Quitar"))
+                                        .loading(self.busy)
+                                        .on_click(cx.listener(move |view, _, w, cx| {
+                                            view.removing = None;
+                                            view.mutate("businesses:removeMember", json!({ "memberId": confirm_id, "reason": "" }), w, cx);
+                                        })),
+                                )
+                        } else {
+                            h_flex().child(
+                                Button::new("team-remove")
+                                    .danger_ghost()
+                                    .icon(IconName::Trash)
+                                    .label(t("Remove from the team", "Quitar del equipo"))
+                                    .on_click(cx.listener(move |view, _, _, cx| {
+                                        view.removing = Some(remove_id.clone());
+                                        cx.notify();
+                                    })),
+                            )
+                        }),
+                )
+            })
+    }
+
+    /// The Owner hands the business to this Admin, after asking once.
+    fn hand_over(&self, p: &Palette, m: &Member, cx: &mut Context<Self>) -> Div {
+        let asking = self.handing.as_deref() == Some(m.id.as_str());
+        let (ask_id, yes_id) = (m.id.clone(), m.id.clone());
+        v_flex()
+            .gap(px(space::S))
+            .pt(px(space::M))
+            .border_t_1()
+            .border_color(p.rule)
             .child(
-                v_flex()
-                    .gap(px(space::S))
-                    .pt(px(space::M))
-                    .border_t_1()
-                    .border_color(p.rule)
-                    .child(div().typeset(text::CAPTION).text_color(p.muted).child(t(
-                        "They lose access to this business at once. Their past changes stay in the history.",
-                        "Pierde el acceso al negocio de inmediato. Sus cambios anteriores siguen en el historial.",
-                    )))
-                    .child(if asking {
-                        h_flex()
-                            .gap(px(space::S))
-                            .child(Button::new("team-remove-no").label(t("Cancel", "Cancelar")).on_click(cx.listener(|view, _, _, cx| {
-                                view.removing = None;
-                                cx.notify();
-                            })))
-                            .child(Button::new("team-remove-yes").danger().icon(IconName::Trash).label(t("Remove", "Quitar")).loading(self.busy).on_click(
-                                cx.listener(move |view, _, w, cx| {
-                                    view.removing = None;
-                                    view.mutate("businesses:removeMember", json!({ "memberId": confirm_id, "reason": "" }), w, cx);
-                                }),
-                            ))
-                    } else {
-                        h_flex().child(
-                            Button::new("team-remove")
-                                .danger_ghost()
-                                .icon(IconName::Trash)
-                                .label(t("Remove from the team", "Quitar del equipo"))
-                                .on_click(cx.listener(move |view, _, _, cx| {
-                                    view.removing = Some(remove_id.clone());
-                                    cx.notify();
-                                })),
-                        )
-                    }),
+                div()
+                    .typeset(text::CAPTION)
+                    .text_color(p.muted)
+                    .child(t("They become the Owner and you stay on as an Admin.", "Pasa a ser el dueño y tú sigues como administrador.")),
             )
+            .child(if asking {
+                h_flex()
+                    .gap(px(space::S))
+                    .child(Button::new("team-hand-no").label(t("Cancel", "Cancelar")).on_click(cx.listener(|view, _, _, cx| {
+                        view.handing = None;
+                        cx.notify();
+                    })))
+                    .child(
+                        Button::new("team-hand-yes")
+                            .primary()
+                            .icon(IconName::KeyRound)
+                            .label(t("Hand it over", "Entregarlo"))
+                            .loading(self.busy)
+                            .on_click(cx.listener(move |view, _, w, cx| {
+                                view.handing = None;
+                                view.mutate("businesses:transferOwnership", json!({ "memberId": yes_id }), w, cx);
+                            })),
+                    )
+            } else {
+                h_flex().child(
+                    Button::new("team-hand").icon(IconName::KeyRound).label(t("Hand the business over", "Entregar el negocio")).on_click(
+                        cx.listener(move |view, _, _, cx| {
+                            view.handing = Some(ask_id.clone());
+                            cx.notify();
+                        }),
+                    ),
+                )
+            })
     }
 
     /// What a collector sees of their assigned clients, one checkbox each.
@@ -362,36 +444,46 @@ impl TeamView {
     /// Everyone by role, then inviting and the open invitations.
     fn list(&self, p: &Palette, members: &[Member], cx: &mut Context<Self>) -> Div {
         let mut groups = v_flex().gap(px(space::S));
-        for role in ROLES {
+        for role in Role::ALL {
             let people: Vec<&Member> = members.iter().filter(|m| m.role == role).collect();
-            // Every business has an admin; collectors and viewers show even when empty.
-            if people.is_empty() && role == "admin" {
+            // Collectors show even when there are none yet.
+            if people.is_empty() && role != Role::Collector {
                 continue;
             }
             groups = groups.child(group_title(p, role_look(role).0));
             groups = if people.is_empty() {
                 groups.child(div().typeset(text::CAPTION).text_color(p.faint).child(t("No one yet", "Nadie todavía")))
             } else {
-                groups.children(people.into_iter().map(|m| self.person_row(p, m, cx)))
+                groups.children(people.into_iter().enumerate().map(|(i, m)| self.person_row(p, m, cx).rise(i)))
             };
         }
         let invites = self.invites.clone();
-        let role_menu = Dropdown::new("team-new-role").label(role_label(self.role)).items(ROLES.map(|r| {
-            DropdownItem::new(
-                role_label(r),
-                cx.listener(move |view, _, _, cx| {
-                    view.role = r;
-                    cx.notify();
-                }),
-            )
-            .selected(self.role == r)
-        }));
+        // A Manager invites collectors only.
+        let anyone = self.may(Need::Team, cx);
+        let role = if anyone { self.role } else { Role::Collector };
+        let role_menu = anyone.then(|| {
+            Dropdown::new("team-new-role").label(role_label(role)).items(Role::GIVEN.map(|r| {
+                DropdownItem::new(
+                    role_label(r),
+                    cx.listener(move |view, _, _, cx| {
+                        view.role = r;
+                        cx.notify();
+                    }),
+                )
+                .selected(role == r)
+            }))
+        });
         v_flex()
             .gap(px(space::M))
             .child(groups)
-            .child(div().pt(px(space::S)).typeset(text::BODY_STRONG).child(t("Invite someone", "Invitar a alguien")))
+            .child(div().pt(px(space::S)).typeset(text::BODY_STRONG).child(if anyone {
+                t("Invite someone", "Invitar a alguien")
+            } else {
+                t("Invite a collector", "Invitar a un cobrador")
+            }))
+            .when(anyone, |d| d.child(div().typeset(text::CAPTION).text_color(p.muted).child(role_hint(role))))
             .child(
-                h_flex().gap(px(space::S)).child(div().flex_1().min_w_0().child(Input::new(&self.email))).child(role_menu).child(
+                h_flex().gap(px(space::S)).child(div().flex_1().min_w_0().child(Input::new(&self.email))).children(role_menu).child(
                     Button::new("team-invite")
                         .primary()
                         .icon(IconName::Mail)
@@ -423,7 +515,8 @@ impl TeamView {
                 )
             })
             .children(invites.into_iter().map(|i| {
-                let (id, role) = (i.id.clone(), role_label(&i.role));
+                let revokes = self.manages(i.role, cx);
+                let (id, role) = (i.id.clone(), role_label(i.role));
                 let line = tr!("{role}, invited", "{role}, invitado");
                 h_flex()
                     .py(px(space::S))
@@ -438,13 +531,17 @@ impl TeamView {
                             .child(div().typeset(text::CAPTION).text_color(p.muted).child(line)),
                     )
                     .child(pill(p, t("Invited", "Invitado"), Tone::Neutral))
-                    .child(
-                        Button::new(SharedString::from(format!("team-revoke-{}", i.id)))
-                            .ghost()
-                            .small()
-                            .label(t("Revoke", "Revocar"))
-                            .on_click(cx.listener(move |view, _, w, cx| view.mutate("invites:revoke", json!({ "inviteId": id }), w, cx))),
-                    )
+                    .when(revokes, |d| {
+                        d.child(
+                            Button::new(SharedString::from(format!("team-revoke-{}", i.id)))
+                                .ghost()
+                                .small()
+                                .label(t("Revoke", "Revocar"))
+                                .on_click(
+                                    cx.listener(move |view, _, w, cx| view.mutate("invites:revoke", json!({ "inviteId": id }), w, cx)),
+                                ),
+                        )
+                    })
             }))
     }
 }

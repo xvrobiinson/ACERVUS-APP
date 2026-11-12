@@ -7,6 +7,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use super::{column, crumb, ncolumn, status_detail_pill};
+use crate::app::links::CardLink;
 use crate::app::{Route, VzApp};
 use crate::database::repositories::clients::Client;
 use crate::domain::ledger::{ContractStatus, DisplayStatus};
@@ -14,7 +15,10 @@ use crate::domain::money::Cents;
 use crate::i18n::{count, t};
 use crate::sync::wire::Need;
 use crate::tr;
-use crate::ui::components::{Tone, avatar, empty_state, icon, kv, page_header, pill, sel, table_header, table_row, th};
+use crate::ui::components::{
+    Tone, avatar, empty_state, icon, kv, page_header, pill, pill_in, sel, status_color, table_header, table_row, th,
+};
+use crate::ui::forms::filter::FilterPage;
 use crate::ui::forms::reason::ReasonKind;
 use crate::ui::kit::{Button, Card, Dropdown, DropdownItem, ListRow, SortHeader, Stat, StatCards};
 use crate::ui::lists::{self, Key};
@@ -60,6 +64,8 @@ pub struct ClientStats {
     pub paid: Cents,
     pub interest_paid: Cents,
     pub worst: Option<DisplayStatus>,
+    /// The most days any of their loans is late (0 when none is).
+    pub worst_days: i64,
 }
 
 impl VzApp {
@@ -72,6 +78,9 @@ impl VzApp {
             s.paid += pos.paid_total;
             s.interest_paid += pos.interest_paid;
             let st = l.display_status(self.today);
+            if st == DisplayStatus::Overdue {
+                s.worst_days = s.worst_days.max(l.delinquency(self.today).days_overdue);
+            }
             if l.facts.status == ContractStatus::Active {
                 s.active_loans += 1;
                 s.outstanding += pos.payoff();
@@ -92,10 +101,10 @@ impl VzApp {
             return pill(p, t("Archived", "Archivado"), Tone::Neutral);
         }
         match stats.worst {
-            Some(DisplayStatus::Overdue) => pill(p, DisplayStatus::Overdue.label(), Tone::Negative),
-            Some(DisplayStatus::Defaulted) => pill(p, DisplayStatus::Defaulted.label(), Tone::Negative),
-            Some(DisplayStatus::DueSoon) => pill(p, DisplayStatus::DueSoon.label(), Tone::Warning),
-            _ if stats.active_loans > 0 => pill(p, DisplayStatus::Active.label(), Tone::Positive),
+            Some(s @ (DisplayStatus::Overdue | DisplayStatus::Defaulted | DisplayStatus::DueSoon)) => {
+                pill_in(s.label(), status_color(p, s, Some(stats.worst_days)))
+            }
+            _ if stats.active_loans > 0 => pill_in(DisplayStatus::Active.label(), status_color(p, DisplayStatus::Active, None)),
             _ => pill(p, t("No active loans", "Sin préstamos activos"), Tone::Neutral),
         }
     }
@@ -109,6 +118,9 @@ impl VzApp {
         let money = self.settings().money();
         let query = self.client_search.read(cx).value().to_lowercase();
         let archived_count = self.snap.clients.iter().filter(|c| c.is_archived()).count();
+        // Filter (status, collector, archived), kept on this PC (2026-11-11).
+        let by = self.settings().clients_filter.clone();
+        let cloud = self.cloud_copy();
         // Who collects from each client, when the business has collectors.
         let team = self.manages_collectors();
         let show_collector = team && w >= Width::Medium;
@@ -118,8 +130,13 @@ impl VzApp {
             .snap
             .clients
             .iter()
-            .filter(|c| self.show_archived || !c.is_archived())
-            .filter(|c| !team || self.passes_collector_filter(c.id))
+            .filter(|c| {
+                let loans: Vec<_> =
+                    self.snap.book.loans.iter().filter(|l| l.client_id == c.id).map(|l| l.display_status(self.today)).collect();
+                let collector = if team { cloud.and_then(|s| s.collector_of(c.id)) } else { None };
+                let by = if team { by.clone() } else { crate::services::list_filters::ClientsBy { collectors: Vec::new(), ..by.clone() } };
+                by.passes(crate::services::list_filters::client_status_key(&loans), collector, c.is_archived())
+            })
             .filter(|c| {
                 let opt = |v: &Option<String>| v.clone().unwrap_or_default();
                 lists::matches(&query, &[&c.full_name, &opt(&c.phone), &opt(&c.email), &opt(&c.id_number), &opt(&c.address), &c.notes])
@@ -151,7 +168,7 @@ impl VzApp {
             &p,
             t("Clients", "Clientes"),
             Some(sel(subtitle).into_any_element()),
-            self.can(Need::Record)
+            self.can(Need::ClientsAdd)
                 .then(|| {
                     Button::new("new-client")
                         .primary()
@@ -175,23 +192,8 @@ impl VzApp {
                     .max_w(px(380.))
                     .child(Input::new(&self.client_search).prefix(icon(IconName::Search, p.faint, 14.)).cleanable(true)),
             )
-            .when(team, |d| d.child(div().flex_none().child(self.collector_filter_menu(cx))))
-            .when(archived_count > 0, |d| {
-                d.child(
-                    Button::new("toggle-archived")
-                        .ghost()
-                        .small()
-                        .label(if self.show_archived {
-                            tr!("Hide archived ({archived_count})", "Ocultar archivados ({archived_count})")
-                        } else {
-                            tr!("Show archived ({archived_count})", "Ver archivados ({archived_count})")
-                        })
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.show_archived = !this.show_archived;
-                            cx.notify();
-                        })),
-                )
-            });
+            .child(div().flex_none().child(self.filter_button(FilterPage::Clients, cx)));
+        let chips = self.filter_chips(FilterPage::Clients, cx);
 
         let body =
             if self.snap.clients.is_empty() {
@@ -203,7 +205,7 @@ impl VzApp {
                         "Add the people you lend to. Each client keeps their loans, payments and notes together.",
                         "Agrega a las personas a quienes prestas. Cada cliente guarda juntos sus préstamos, pagos y notas.",
                     ),
-                    self.can(Need::Record).then(|| {
+                    self.can(Need::ClientsAdd).then(|| {
                         Button::new("empty-new-client")
                             .primary()
                             .label(t("Add your first client", "Agrega tu primer cliente"))
@@ -319,7 +321,12 @@ impl VzApp {
                     .into_any_element()
             };
 
-        v_flex().child(header).child(toolbar.pb(px(space::L))).child(Card::new().overflow_hidden().child(body)).into_any_element()
+        v_flex()
+            .child(header)
+            .child(toolbar.pb(px(space::L)))
+            .children(chips)
+            .child(Card::new().overflow_hidden().child(body))
+            .into_any_element()
     }
 
     pub(crate) fn render_client(&mut self, id: i64, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -390,20 +397,24 @@ impl VzApp {
         let cells = vec![
             Stat::new(t("Owes", "Debe"), money.format(st.outstanding))
                 .counting_money(n("owes"), st.outstanding, &money)
+                .opens(self.link(CardLink::Section(None, "loans"), cx))
                 .icon(IconName::HandCoins)
                 .chip(p.info, p.info_tint)
                 .caption(sel(count(st.active_loans, "active loan", "active loans", "préstamo activo", "préstamos activos"))),
             Stat::new(t("Total paid", "Total pagado"), money.format(st.paid))
                 .counting_money(n("paid"), st.paid, &money)
+                .opens(self.link(CardLink::Section(None, "payments"), cx))
                 .icon(IconName::Wallet)
                 .chip(p.accent_text, p.accent_tint)
                 .caption(sel(t("Capital, interest and fees", "Capital, interés y cargos"))),
             Stat::new(t("Interest paid", "Interés pagado"), money.format(st.interest_paid))
                 .counting_money(n("interest"), st.interest_paid, &money)
+                .opens(self.link(CardLink::Section(None, "payments"), cx))
                 .icon(IconName::TrendingUp)
                 .chip(p.positive, p.positive_tint)
                 .caption(sel(t("Income from this client", "Ganancia con este cliente"))),
             Stat::new(t("Total borrowed", "Total prestado"), if view.amount_lent { money.format(st.borrowed) } else { "—".to_string() })
+                .opens(self.link(CardLink::Section(None, "loans"), cx))
                 .when(view.amount_lent, |s| s.counting_money(n("borrowed"), st.borrowed, &money))
                 .icon(IconName::Landmark)
                 .chip(p.accent_text, p.accent_tint)
@@ -463,7 +474,7 @@ impl VzApp {
                 IconName::HandCoins,
                 t("No loans yet", "Aún no hay préstamos"),
                 t("Create a loan to track its interest and payments here.", "Crea un préstamo para seguir aquí sus intereses y pagos."),
-                (!archived && self.can(Need::Manage)).then(|| {
+                (!archived && self.can(Need::Loans)).then(|| {
                     Button::new("cl-empty-loan")
                         .primary()
                         .label(t("New loan", "Nuevo préstamo"))
@@ -551,7 +562,7 @@ impl VzApp {
 
         let notes_card = Card::new()
             .title(t("Notes", "Notas"))
-            .when(self.can(Need::Manage), |c| {
+            .when(self.can(Need::Clients), |c| {
                 c.action(
                     Button::new("edit-notes")
                         .ghost()
@@ -573,6 +584,9 @@ impl VzApp {
 
         // Loans and history beside the details and notes when wide (2 : 1,
         // that column held between 340 and 480px); stacked below that.
+        // Its cards scroll to these (2026-11-11).
+        let loans_card = self.anchor("loans", loans_card);
+        let timeline_card = self.anchor("payments", timeline_card);
         let body = if side_by_side {
             h_flex()
                 .items_start()
@@ -679,7 +693,7 @@ impl VzApp {
     fn client_actions(&self, id: i64, archived: bool, st: &ClientStats, w: Width, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let has_loans = st.total_loans > 0;
         let first_active = self.snap.loans_for_client(id).find(|l| l.status == ContractStatus::Active).map(|l| l.id);
-        let pay = (st.active_loans > 0 && self.can(Need::Record)).then(|| {
+        let pay = (st.active_loans > 0 && self.can(Need::PaymentsRecord)).then(|| {
             Button::new("client-pay")
                 .primary()
                 .icon(IconName::Plus)
@@ -696,7 +710,7 @@ impl VzApp {
         let new_loan = cx.listener(move |this, _, w, cx| this.open_loan_form(Some(id), w, cx));
         let archive_icon = if archived { IconName::ArchiveRestore } else { IconName::Archive };
         let archive_label = if archived { t("Restore", "Restaurar") } else { t("Archive", "Archivar") };
-        if !self.can(Need::Manage) {
+        if !self.can(Need::Clients) {
             return pay.into_iter().collect();
         }
 

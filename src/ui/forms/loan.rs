@@ -839,7 +839,10 @@ impl Render for LoanForm {
         let available = book.available_from(on, None);
         let principal_now = parse_money(&value(&self.principal, cx)).ok();
         let over_cash = principal_now.is_some_and(|a| a > available);
-        let short = principal_now.filter(|_| over_cash).map(|a| a - available.max(0));
+        // Adding capital is the Owner's and Admins' (Need::Money): Managers lend
+        // only from what is there, and never see the button (roadmap 45).
+        let may_add_capital = self.app.read_with(cx, |app, _| app.can(crate::sync::wire::Need::Money)).unwrap_or(false);
+        let short = principal_now.filter(|_| over_cash && may_add_capital).map(|a| a - available.max(0));
         let avail = money.format(available.max(0));
         // Loans take capital first, then interest.
         let from_capital = book.balances_on(on).get(Account::Capital).max(0);

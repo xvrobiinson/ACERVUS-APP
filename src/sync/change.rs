@@ -205,13 +205,30 @@ impl Change {
         matches!(self, Change::NewPayment { .. })
     }
 
-    /// What the change needs from the person's role: the same kinds as
-    /// `works_offline`, except that an ID photo is for admins only.
+    /// What the change needs from the person's role, as the cloud checks
+    /// each function (`shared/roles.ts` in the PWA repo).
     pub fn need(&self) -> Need {
+        use Change::*;
         match self {
-            Change::NewClient { photo: PhotoChange::Set(_), .. } => Need::Manage,
-            c if c.works_offline() => Need::Record,
-            _ => Need::Manage,
+            NewClient { photo: PhotoChange::Set(_), .. } => Need::Clients,
+            NewClient { .. } => Need::ClientsAdd,
+            AssignClients { .. } | EditClient { .. } | ArchiveClient { .. } | DeleteClient { .. } => Need::Clients,
+            ConfirmPending { .. } | RejectPending { .. } => Need::PaymentsConfirm,
+            // Adding the missing capital with a loan is for those who handle money.
+            NewLoan { choices, .. } | EditLoan { choices, .. } if choices.add_capital > 0 => Need::Money,
+            NewLoan { .. } | EditLoan { .. } | MarkDefaulted { .. } | Reinstate { .. } | WaiveLateFee { .. } => Need::Loans,
+            DeleteLoan { .. } => Need::LoansDelete,
+            NewPayment { .. } => Need::PaymentsRecord,
+            EditPayment { .. } | DeletePayment { .. } => Need::PaymentsEdit,
+            NewEntry { kind: EntryKind::Expense | EntryKind::Income, .. } => Need::EntriesRecord,
+            NewCapital { .. }
+            | EditCapital { .. }
+            | DeleteCapital { .. }
+            | NewEntry { .. }
+            | AdjustBalances { .. }
+            | EditEntry { .. }
+            | DeleteEntry { .. } => Need::Money,
+            Logo(_) | Settings(_) => Need::Settings,
         }
     }
 
@@ -698,20 +715,26 @@ mod tests {
         let new_client = |photo| Change::NewClient { input: juan(), photo };
         let photo = PhotoChange::Set(picture::Photo::from_upload(&picture::tests::png(40, 30)).unwrap());
         for (change, need) in [
-            (payment(100), Need::Record),
-            (new_client(PhotoChange::Keep), Need::Record),
-            (new_client(photo), Need::Manage),
-            (entry(EntryKind::Expense), Need::Record),
-            (entry(EntryKind::Income), Need::Record),
-            (entry(EntryKind::Transfer), Need::Manage),
-            (Change::Reinstate { id: 3 }, Need::Manage),
-            (Change::DeletePayment { id: 1, reason: "x".into() }, Need::Manage),
+            (payment(100), Need::PaymentsRecord),
+            (new_client(PhotoChange::Keep), Need::ClientsAdd),
+            (new_client(photo), Need::Clients),
+            (entry(EntryKind::Expense), Need::EntriesRecord),
+            (entry(EntryKind::Income), Need::EntriesRecord),
+            (entry(EntryKind::Transfer), Need::Money),
+            (Change::Reinstate { id: 3 }, Need::Loans),
+            (Change::DeletePayment { id: 1, reason: "x".into() }, Need::PaymentsEdit),
         ] {
             assert_eq!(change.need(), need, "{change:?}");
         }
-        assert!(Role::Collector.allows(Need::Record) && !Role::Collector.allows(Need::Manage));
-        assert!(!Role::Viewer.allows(Need::Record));
-        assert!(Role::Admin.allows(Need::Manage));
+        // The same list as the cloud's (shared/roles.ts).
+        let who = |need: Need| Role::ALL.into_iter().filter(|r| r.allows(need)).collect::<Vec<_>>();
+        assert_eq!(who(Need::PaymentsRecord), [Role::Owner, Role::Admin, Role::Manager, Role::Collector]);
+        assert_eq!(who(Need::EntriesRecord), Role::ALL);
+        assert_eq!(who(Need::Books), [Role::Owner, Role::Admin, Role::Manager, Role::Accountant]);
+        assert_eq!(who(Need::Loans), [Role::Owner, Role::Admin, Role::Manager]);
+        assert_eq!(who(Need::Money), [Role::Owner, Role::Admin]);
+        assert_eq!(who(Need::Owner), [Role::Owner]);
+        assert_eq!(Role::from_key("viewer"), Some(Role::Accountant));
     }
 
     /// The test book as a collector sees it, with one of their payments
@@ -760,8 +783,9 @@ mod tests {
         let (_, q) = s.save(&Change::RejectPending { pending: "pp1".into(), reason: "Twice".into() }, today()).unwrap();
         assert_eq!((q.as_ref().unwrap().op.mutation, &q.unwrap().op.args["reason"]), ("payments:reject", &json!("Twice")));
         assert_eq!(payments(&s), before, "the next copy from the cloud shows the result");
+        assert_eq!(assign.need(), Need::Clients);
+        assert_eq!(Change::ConfirmPending { pending: "x".into() }.need(), Need::PaymentsConfirm);
         for c in [assign, Change::ConfirmPending { pending: "x".into() }] {
-            assert_eq!(c.need(), Need::Manage);
             assert!(!c.works_offline());
         }
     }

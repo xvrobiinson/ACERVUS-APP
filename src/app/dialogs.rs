@@ -20,6 +20,7 @@ use crate::ui::forms::focus_once;
 use crate::ui::forms::loan::LoanForm;
 use crate::ui::forms::payment::PaymentForm;
 use crate::ui::forms::reason::{ReasonForm, ReasonKind};
+use crate::ui::theme::{palette, space};
 
 /// Whether anything was typed into a form. Escape or a click outside then
 /// asks before the typing is thrown away; the form's own Cancel button and
@@ -170,7 +171,7 @@ impl VzApp {
             }
         });
         let app = cx.entity().downgrade();
-        let photos = self.can(crate::sync::wire::Need::Manage);
+        let photos = self.can(crate::sync::wire::Need::Clients);
         let form = cx.new(|cx| ClientForm::new(app, existing.clone(), photo, on_created, window, cx).photos(photos));
         let title = if existing.is_some() { t("Edit client", "Editar cliente") } else { t("New client", "Nuevo cliente") };
         let first = Cell::new(true);
@@ -781,11 +782,15 @@ impl VzApp {
         });
     }
 
-    /// Only admins restore a cloud business. Returns true when refused.
+    /// Only the Owner and Admins restore a cloud business. Returns true when refused.
     fn refuse_restore(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let refused = self.is_linked() && !self.can(crate::sync::wire::Need::Manage);
+        let refused = self.is_linked() && !self.can(crate::sync::wire::Need::Restore);
         if refused {
-            self.notify_error(t("Only admins can restore a backup.", "Solo los administradores pueden restaurar una copia."), window, cx);
+            self.notify_error(
+                t("Only the Owner and Admins can restore a backup.", "Solo el dueño y los administradores pueden restaurar una copia."),
+                window,
+                cx,
+            );
         }
         refused
     }
@@ -872,6 +877,29 @@ impl VzApp {
                 .w(px(560.))
                 .child(form.clone())
                 .on_ok(confirm(&form))
+        });
+    }
+
+    /// "See the latest release notes": what's new in this version, from the
+    /// notes built into the app (`whats-new.json`).
+    pub(crate) fn open_release_notes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (en, es) = crate::sync::update::this_version_notes();
+        let notes = crate::sync::update::notes_in_language(&en, &es).to_vec();
+        let version = env!("CARGO_PKG_VERSION");
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let p = palette(cx);
+            dialog
+                .entrance(DialogEntrance::FadeSlide)
+                .title(tr!("What's new in version {version}", "Novedades de la versión {version}"))
+                .w(px(560.))
+                .child(
+                    v_flex()
+                        .id("release-notes")
+                        .max_h(px(520.))
+                        .overflow_y_scroll()
+                        .gap(px(space::S))
+                        .children(crate::ui::forms::update::notes_list(&p, notes.clone())),
+                )
         });
     }
 

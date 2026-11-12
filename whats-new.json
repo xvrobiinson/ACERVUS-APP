@@ -1,17 +1,19 @@
 {
-  "version": "0.15",
+  "version": "0.16",
   "en": [
-    "Choose how late fees are charged (Settings › Lending defaults): once on the late installment as before, again each month it stays late, on everything overdue, or on what is left of the loan. Each loan keeps the way it was made with.",
-    "Decide what happens to the interest you collect, on each loan: keep it as profit, reinvest it into your capital, or split it. The Portfolio shows how much was reinvested this month.",
-    "Short of capital for a loan? \"Lend and add capital\" saves the capital and the loan together, in one step.",
-    "Receipts and the loan page say how each loan's late fee is charged.",
-    "A security update for the database the app uses."
+    "Five team roles: Owner, Admin, Manager, Accountant and Collector. Each business has one Owner, the person it belongs to; the person who created it is its Owner now, and Viewers became Accountants.",
+    "Managers run the day-to-day lending: clients, loans and payments, confirming collectors' payments and managing the collectors, without capital or settings.",
+    "Accountants see all the books, totals and reports, and record expenses and income.",
+    "Only the Owner can delete the business, and they can hand it to one of its Admins (Settings › Team).",
+    "Each client's loans are numbered #01, #02 and so on, so a client never sees how many loans the business has made.",
+    "The figures on a client's page, a loan's page and the Portfolio count up when the page opens."
   ],
   "es": [
-    "Elige cómo se cobra la mora (Configuración › Valores de préstamos): una vez sobre la cuota atrasada como antes, otra vez cada mes que siga atrasada, sobre todo lo atrasado o sobre lo que queda del préstamo. Cada préstamo conserva la forma con que se hizo.",
-    "Decide qué pasa con el interés que cobras, en cada préstamo: dejarlo como ganancia, reinvertirlo en tu capital o dividirlo. El Portafolio muestra cuánto se reinvirtió este mes.",
-    "¿Falta capital para un préstamo? \"Prestar y agregar capital\" guarda el capital y el préstamo juntos, en un solo paso.",
-    "Los recibos y la página del préstamo dicen cómo se cobra la mora de cada préstamo.",
-    "Una actualización de seguridad de la base de datos que usa la app."
+    "Cinco roles en el equipo: Dueño, Administrador, Gerente, Contador y Cobrador. Cada negocio tiene un dueño, la persona a quien pertenece; quien lo creó es ahora su dueño, y los de solo lectura pasaron a ser contadores.",
+    "Los gerentes llevan el día a día de los préstamos: clientes, préstamos y pagos, confirman los pagos de los cobradores y manejan a los cobradores, sin capital ni ajustes.",
+    "Los contadores ven todos los registros, los totales y los reportes, y registran gastos e ingresos.",
+    "Solo el dueño puede eliminar el negocio, y puede entregarlo a uno de sus administradores (Configuración › Equipo).",
+    "Los préstamos de cada cliente se numeran #01, #02 y así, para que un cliente nunca vea cuántos préstamos ha hecho el negocio.",
+    "Las cifras de la página de un cliente, de un préstamo y del Portafolio cuentan hacia arriba al abrirse."
   ]
 }
