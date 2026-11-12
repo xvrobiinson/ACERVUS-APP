@@ -154,7 +154,7 @@ migration 9 and synced (`lateFeeMode`, `reinvest`, the settings'
 (`LoanChoices::add_capital`, `addCapital` to the cloud). The web engine
 (shared/domain) is cross-checked against these files by
 tools/engine-oracle in the PWA repo: regenerate its vectors after any engine
-change. MIN_DESKTOP_VERSION is 0.15.0.
+change.
 
 Loan numbers and count-up (2026-11-10, the owner's call; for the next
 update, both apps): a loan is named by its number among its client's loans
@@ -164,6 +164,50 @@ business has. Worked out on the device, nothing stored; the loan id stays
 the key everywhere else (routes, sync, the data export). The figures on the
 client and loan pages, Portfolio, and the Loans and Payments headers count
 up like the Overview's (`Stat::counting_money`, `CountUp`).
+
+Team roles (0.16, roadmap 45, the owner approved all eight decisions
+2026-11-11: https://claude.ai/artifact/NSuCXjhMTVrkb2BfhG8Pp3): Owner,
+Admin, Manager, Accountant, Collector (`wire::Role`; a stored "viewer" reads
+as Accountant). What each may do is `Role::allows(Need)`, the same list as
+the PWA's `shared/roles.ts` (change both together; the cloud checks every
+function, the apps only hide). Exactly one Owner: only they delete the
+business or hand it to an Admin (`businesses:transferOwnership`, Settings ›
+Team); nobody can remove or demote them. Managers lend, confirm collectors'
+payments and manage collectors, without capital (not even "Lend and add
+capital"), settings or deletions; Accountants see the books and record
+expenses and income. Screens ask `self.can(Need::…)` for the specific thing.
+Existing teams move once (`migrations:roles`, run by the PWA's deploy
+workflow). MIN_DESKTOP_VERSION is 0.16.0.
+
+Team section (roadmap 58, step 1, the owner approved the proposal and the
+web look 2026-11-11: https://claude.ai/artifact/JbAJr5H8wxLFWmujp8SQDe):
+businesses with more than one person get a Team column on the right of
+every screen in windows 1,600px and wider (`app/team.rs`, folds to faces,
+this PC's `team_folded`; the page beside it is up to 1,640px,
+`hero::page_pad`), else a people button by the bell opening the same list.
+The list is `team:list` (worker subscription, `Event::Team`; collectors
+see only the Owner, Admins and Managers), ordered and worded by
+`services::team`. "I'm here" (`team:beat`) once a minute while the window
+is in front, `team:leave` when it goes to the back. Edit profile has the
+phone teams see (Copy number, WhatsApp) and "Show my team when I'm online".
+The web's twin is src/ui/team.tsx. Debug starts: `team` (made-up people),
+`team-open`, `team-sheet`.
+
+Platform administrators (roadmap 46, the owner approved all six decisions
+2026-11-11: https://claude.ai/artifact/6vSuRTf7kHk6C6cPiLX33Q): VZ Labs'
+people live only in the cloud (the PWA's `convex/platform.ts` and
+`docs/PLATFORM-ADMINS.md`). The desktop's part is the Owner's row in
+Settings › Business, "Let Acervus support see your books": 1 hour unless
+they pick 24 hours or 7 days, granted by "Allow for …" (the button names the
+length, P1 of 2026-11-12), "End support access", what support will see, and
+the latest opening; plus a notice on the Overview for the Owner and Admins
+while it lasts, with "End now" for the Owner (`app/support.rs`, asked again
+every 5 minutes; `platform:supportAccess`/`grantSupport`/`endSupport`).
+
+Phase A on Windows: the support row and
+notice above, and account deletion waits 30 days (`ui/forms/business.rs`);
+when `account:profile` says a deletion is waiting, the app says so once per
+session with "Keep my account" (`app/profile.rs`, `tell_deletion`).
 
 Motion and Customize (2026-11-03, approved and rolled out): the Overview can
 be arranged (blocks shown, hidden, reordered, half or full width; figures
