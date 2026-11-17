@@ -17,6 +17,10 @@ name: Release
 # existing v* tags (see scripts/ci/next-version.sh). Nothing is committed back.
 # A draft does not create the git tag, so a second manual run for the same
 # commit reuses the same version and updates the same draft.
+#
+# Only the newest commit on main is built, so re-running an old manual run
+# never builds older code. A manual run with the wrong text, or from another
+# branch, fails visibly ("Nothing was built"); it never ends green.
 
 on:
   push:
@@ -33,11 +37,13 @@ on:
         required: true
         type: string
 
-# The event is part of the group so a push to main never cancels a manual
-# release build that is running on the same branch.
+# Pushes still cancel older push checks. Confirmed manual runs share one group
+# and never cancel a running build: a later one waits (GitHub keeps only the
+# newest waiting run). A manual run without the exact text gets a group of its
+# own, so it can never cancel or replace an authorized build.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && 'push' || (inputs.confirm == 'build release draft' && 'release' || github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 permissions:
   contents: read
@@ -49,6 +55,21 @@ env:
   RUST_BACKTRACE: short
 
 jobs:
+  # A wrong or missing confirmation must end red. A green run with the build
+  # skipped can make the owner think a release was made.
+  refuse:
+    name: Refuse an unconfirmed release
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (github.ref != 'refs/heads/main' || inputs.confirm != 'build release draft')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Nothing was built
+        run: |
+          echo "::error::Nothing was built. Run the workflow on main and type exactly: build release draft"
+          exit 1
+
   version:
     name: Version
     runs-on: ubuntu-24.04
@@ -59,6 +80,19 @@ jobs:
       previous_tag: ${{ steps.next.outputs.previous_tag }}
       exists: ${{ steps.next.outputs.exists }}
     steps:
+      # A re-run keeps its first run's commit. Failing here stops build and
+      # publish before the 60-minute Windows build starts.
+      - name: Build only the newest commit on main
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "::error::This run is for $GITHUB_SHA but main is now at $head. Start a new run instead of re-running an old one."
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0

@@ -190,7 +190,9 @@ gh release edit vX.Y.Z --draft=false --latest
 ```
 
 Drafts are invisible to GitHub's `releases/latest`, so the website and the app's
-update check see nothing until that command runs. The workflow has been disabled
+update check see nothing until that command runs. A run with the wrong text, or
+from another branch, ends red with "Nothing was built". A re-run builds only while
+its commit is still the newest on `main`. The workflow has been disabled
 since 2026-11-17 until the owner re-enables it. Commits that only change
 `README.md` or screenshots don't run it.
 
