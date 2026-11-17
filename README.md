@@ -99,7 +99,7 @@ Requirements: Windows 10 version 1809 (October 2018) or later, or Windows 11,
 back to software rendering on PCs without a DirectX 11 graphics driver.
 
 1. Download `AcervusFinance-Setup-<version>.exe` from the latest
-   [GitHub Release](https://github.com/xvrobiinson/VZ-Finance/releases).
+   [GitHub Release](https://github.com/xvrobiinson/ACERVUS-APP/releases).
 2. Run it. It installs for the current user without asking for admin rights.
    The app isn't code-signed yet, so SmartScreen may warn: choose
    *More info* → *Run anyway*.
@@ -176,12 +176,23 @@ user-level `~/.cargo/config.toml` (`linker`, `CC`, `AR`, `INCLUDE`, `LIB`,
 
 ### Releases
 
-Every push to `main` runs [`.github/workflows/release.yml`](.github/workflows/release.yml),
-which formats, audits dependencies (RustSec), lints with Clippy, tests, builds the
-installer on Windows and publishes it as a GitHub Release with its SHA-256. A
-newer push to `main` cancels the run in progress, so only the latest commit is
-released. Commits that only change `README.md` or screenshots, or whose message
-contains `[skip ci]`, don't release.
+A push to `main` runs [`.github/workflows/release.yml`](.github/workflows/release.yml)
+as checks only: version, format, dependency audit (RustSec), Clippy and tests.
+It never builds or publishes a release.
+
+To release, the owner runs the workflow by hand: Actions › Release › Run workflow,
+branch `main`, and type `build release draft`. It builds the installer on Windows
+and creates a **draft** GitHub Release with its SHA-256. The owner tests the draft
+installer, then publishes it:
+
+```
+gh release edit vX.Y.Z --draft=false --latest
+```
+
+Drafts are invisible to GitHub's `releases/latest`, so the website and the app's
+update check see nothing until that command runs. The workflow has been disabled
+since 2026-11-17 until the owner re-enables it. Commits that only change
+`README.md` or screenshots don't run it.
 
 Versions: `Cargo.toml` sets `MAJOR.MINOR`; CI picks the next free patch from the
 `v*` tags (0.2.0, 0.2.1, …) and stamps it into the build. Nothing is committed

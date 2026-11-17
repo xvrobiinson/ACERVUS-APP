@@ -1,12 +1,22 @@
 name: Release
 
-# Every push to main is a release candidate: version it, check it, build the
-# Windows installer and publish it as a GitHub Release. A newer push to main
-# cancels the run in progress, so only the latest main is ever released.
+# A push to main only runs checks: version (summary), format, dependency audit,
+# clippy and tests. It never builds the installer and never publishes.
+#
+# A release is made only by hand: Actions > Release > Run workflow, branch
+# main, and type "build release draft" in the confirm box. That builds the
+# Windows installer and creates a DRAFT GitHub Release. The owner tests the
+# draft installer, then publishes it with:
+#   gh release edit vX.Y.Z --draft=false --latest
+#
+# Why a draft is safe: the website worker and the app's update check read
+# GitHub's releases/latest, which ignores drafts (worker/index.ts in the PWA
+# repo). Nothing reaches users until the owner publishes the draft.
 #
 # Versioning: Cargo.toml sets MAJOR.MINOR; CI assigns the next PATCH from the
 # existing v* tags (see scripts/ci/next-version.sh). Nothing is committed back.
-# Add [skip ci] to a commit message to push without releasing.
+# A draft does not create the git tag, so a second manual run for the same
+# commit reuses the same version and updates the same draft.
 
 on:
   push:
@@ -16,9 +26,17 @@ on:
       - "README.md"
       - "docs/screenshots/**"
       - ".gitignore"
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "build release draft" to build the installer and create a draft release from main.'
+        required: true
+        type: string
 
+# The event is part of the group so a push to main never cancels a manual
+# release build that is running on the same branch.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions:
@@ -60,6 +78,7 @@ jobs:
             echo "### Acervus Finance ${VERSION}"
             echo "Previous release: ${PREVIOUS:-none}"
             if [[ "$EXISTS" == "true" ]]; then echo "This commit is already released; build and publish are skipped."; fi
+            echo "A push only runs checks. To make a draft release, run this workflow by hand on main."
           } >> "$GITHUB_STEP_SUMMARY"
 
   lint:
@@ -93,10 +112,48 @@ jobs:
       - name: Check RustSec advisories
         run: cargo audit
 
+  # Pushes are still checked with clippy and tests. A manual release runs the
+  # same two steps inside the build job instead, so they are not run twice.
+  test:
+    name: Clippy and tests
+    needs: version
+    if: github.event_name == 'push'
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install $env:RUST_TOOLCHAIN --profile minimal --component clippy
+          rustup default $env:RUST_TOOLCHAIN
+
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+
+      - name: Stamp version ${{ env.VERSION }}
+        run: ./scripts/ci/set-version.ps1 -Version $env:VERSION
+
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Test
+        run: cargo test --release --locked
+
   build:
     name: Build Windows installer
     needs: version
-    if: needs.version.outputs.exists != 'true'
+    if: >-
+      needs.version.outputs.exists != 'true' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.confirm == 'build release draft'
     runs-on: windows-2025
     timeout-minutes: 60
     env:
@@ -181,12 +238,16 @@ jobs:
             dist/AcervusFinance-Setup.exe
             dist/SHA256SUMS.txt
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 1
 
   publish:
-    name: Publish GitHub Release
+    name: Create draft GitHub Release
     needs: [version, lint, audit, build]
-    if: needs.version.outputs.exists != 'true'
+    if: >-
+      needs.version.outputs.exists != 'true' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.confirm == 'build release draft'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -248,24 +309,41 @@ jobs:
           } > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
 
-      # Creating the release also creates the tag on this exact commit. A run
-      # cancelled mid-upload leaves at most a draft, which the next run finishes.
+      # Always a draft, never "latest". Drafts are invisible to releases/latest,
+      # which the website worker and the app's update check read. The owner
+      # tests the installer, then publishes with
+      # `gh release edit vX.Y.Z --draft=false --latest`.
+      # A draft has no git tag yet, so a re-run may find the draft of an earlier
+      # manual run: it is updated and stays a draft.
       - id: publish
-        name: Create release ${{ env.TAG }}
+        name: Create draft release ${{ env.TAG }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if gh release view "$TAG" >/dev/null 2>&1; then
+            # A draft has no git tag yet, so a later manual run gets the same
+            # version. Never touch a release that is already public, and move
+            # the draft to this commit so its tag will match the new installer.
+            if [[ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != "true" ]]; then
+              echo "::error::Release $TAG is already published. Bump the version instead."
+              exit 1
+            fi
             gh release upload "$TAG" dist/* --clobber
-            gh release edit "$TAG" --draft=false --latest --notes-file "$RUNNER_TEMP/notes.md"
+            gh release edit "$TAG" --draft=true --target "$GITHUB_SHA" --notes-file "$RUNNER_TEMP/notes.md"
           else
             gh release create "$TAG" dist/* \
               --target "$GITHUB_SHA" \
               --title "Acervus Finance ${VERSION}" \
               --notes-file "$RUNNER_TEMP/notes.md" \
-              --latest
+              --draft
           fi
           url="$(gh release view "$TAG" --json url --jq .url)"
           echo "url=$url" >> "$GITHUB_OUTPUT"
-          echo "Released [Acervus Finance ${VERSION}](${url})" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "Draft release created: [Acervus Finance ${VERSION}](${url})"
+            echo
+            echo "It is not public yet. Test the draft installer, then publish it with:"
+            echo
+            echo "\`gh release edit ${TAG} --draft=false --latest\`"
+          } >> "$GITHUB_STEP_SUMMARY"

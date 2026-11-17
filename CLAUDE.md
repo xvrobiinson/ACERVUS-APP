@@ -55,7 +55,7 @@ Updates: signed in and online, the app asks the Acervus site
 account panel (the avatar's ring turns to it) and opens what's new with "Update now" (download, SHA-256
 check, run the installer, quit). Each version's plain-words notes live in
 `whats-new.json` (English and Spanish, MAJOR.MINOR); a test fails until they
-match Cargo.toml, and the release workflow publishes them.
+match Cargo.toml, and the release workflow includes them in the draft release (a push only runs checks; the owner runs Release by hand with `build release draft`, tests the draft installer, then publishes it with `gh release edit vX.Y.Z --draft=false --latest`; the workflow is disabled since 2026-11-17 until the owner re-enables it).
 Restore on a cloud business (admins, `ui/forms/restore.rs`) replaces the
 business's books in the cloud for everyone (`imports:restoreBook`) after a
 safety copy and the typed business name; Reset is refused there.
