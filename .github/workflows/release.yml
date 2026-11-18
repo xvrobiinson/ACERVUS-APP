@@ -3,10 +3,12 @@ name: Release
 # A push to main only runs checks: version (summary), format, dependency audit,
 # clippy and tests. It never builds the installer and never publishes.
 #
-# A release is made only by hand: Actions > Release > Run workflow, branch
-# main, and type "build release draft" in the confirm box. That builds the
-# Windows installer and creates a DRAFT GitHub Release. The owner tests the
-# draft installer, then publishes it with:
+# A release is made only by hand, for one exact commit the owner approved:
+# Actions > Release > Run workflow, branch main, then fill in two boxes:
+#   sha:     the approved commit, all 40 characters
+#   confirm: "build release draft " followed by the first 7 characters of sha
+# That builds the Windows installer and creates a DRAFT GitHub Release. The
+# owner tests the draft installer, then publishes it with:
 #   gh release edit vX.Y.Z --draft=false --latest
 #
 # Why a draft is safe: the website worker and the app's update check read
@@ -18,9 +20,13 @@ name: Release
 # A draft does not create the git tag, so a second manual run for the same
 # commit reuses the same version and updates the same draft.
 #
-# Only the newest commit on main is built, so re-running an old manual run
-# never builds older code. A manual run with the wrong text, or from another
-# branch, fails visibly ("Nothing was built"); it never ends green.
+# The first step of the manual run checks everything before any code is
+# fetched. Nothing is built unless: the run is on main, the owner started it
+# (and the owner re-ran it, if it is a re-run), sha is 40 lowercase hex
+# characters, confirm matches it, the run's commit is that sha, and main still
+# points at that sha. If anything is off, the run ends red with "Nothing was
+# built". If main moved after the approval, renew the approval with the new
+# sha; an old run or an old sha never builds newer or older code.
 
 on:
   push:
@@ -32,17 +38,22 @@ on:
       - ".gitignore"
   workflow_dispatch:
     inputs:
+      sha:
+        description: "The approved commit, all 40 characters"
+        required: true
+        type: string
       confirm:
-        description: 'Type "build release draft" to build the installer and create a draft release from main.'
+        description: 'Type "build release draft " and the first 7 characters of sha, to build the installer and create a draft release from main.'
         required: true
         type: string
 
 # Pushes still cancel older push checks. Confirmed manual runs share one group
 # and never cancel a running build: a later one waits (GitHub keeps only the
-# newest waiting run). A manual run without the exact text gets a group of its
-# own, so it can never cancel or replace an authorized build.
+# newest waiting run). A manual run without the confirm prefix gets a group of
+# its own, so it can never cancel or replace an authorized build (the gate step
+# does the exact check).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && 'push' || (inputs.confirm == 'build release draft' && 'release' || github.run_id) }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && 'push' || (startsWith(inputs.confirm, 'build release draft ') && 'release' || github.run_id) }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
 permissions:
@@ -55,21 +66,6 @@ env:
   RUST_BACKTRACE: short
 
 jobs:
-  # A wrong or missing confirmation must end red. A green run with the build
-  # skipped can make the owner think a release was made.
-  refuse:
-    name: Refuse an unconfirmed release
-    if: >-
-      github.event_name == 'workflow_dispatch' &&
-      (github.ref != 'refs/heads/main' || inputs.confirm != 'build release draft')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Nothing was built
-        run: |
-          echo "::error::Nothing was built. Run the workflow on main and type exactly: build release draft"
-          exit 1
-
   version:
     name: Version
     runs-on: ubuntu-24.04
@@ -79,19 +75,39 @@ jobs:
       tag: ${{ steps.next.outputs.tag }}
       previous_tag: ${{ steps.next.outputs.previous_tag }}
       exists: ${{ steps.next.outputs.exists }}
+      approved: ${{ steps.gate.outputs.approved }}
     steps:
-      # A re-run keeps its first run's commit. Failing here stops build and
-      # publish before the 60-minute Windows build starts.
-      - name: Build only the newest commit on main
+      # Fails red, before any checkout, unless this manual run is for the exact
+      # commit the owner approved. All inputs reach the script as environment
+      # variables, never pasted into the script text.
+      - id: gate
+        name: Build only the approved commit
         if: github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ github.token }}
+          REF: ${{ github.ref }}
+          ACTOR: ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+          OWNER: ${{ github.repository_owner }}
+          RUN_SHA: ${{ github.sha }}
+          APPROVED_SHA: ${{ inputs.sha }}
+          CONFIRM: ${{ inputs.confirm }}
         run: |
-          head="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
-          if [ "$head" != "$GITHUB_SHA" ]; then
-            echo "::error::This run is for $GITHUB_SHA but main is now at $head. Start a new run instead of re-running an old one."
-            exit 1
-          fi
+          fail() { echo "::error::Nothing was built. $1"; exit 1; }
+          [[ "$REF" == "refs/heads/main" ]] || fail "Run the workflow on the main branch."
+          [[ "$ACTOR" == "$OWNER" && "$TRIGGERING_ACTOR" == "$OWNER" ]] \
+            || fail "Only the repository owner may start or re-run a release."
+          [[ "$APPROVED_SHA" =~ ^[0-9a-f]{40}$ ]] \
+            || fail "sha must be the approved commit: all 40 characters, lowercase."
+          [[ "$CONFIRM" == "build release draft ${APPROVED_SHA:0:7}" ]] \
+            || fail "Type exactly: build release draft ${APPROVED_SHA:0:7}"
+          [[ "$RUN_SHA" == "$APPROVED_SHA" ]] \
+            || fail "This run is for commit ${RUN_SHA}, not the approved ${APPROVED_SHA}."
+          head="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" \
+            || fail "Could not read the head of main."
+          [[ "$head" == "$APPROVED_SHA" ]] \
+            || fail "main changed after approval: renew the approval. main is at ${head}."
+          echo "approved=true" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -117,6 +133,7 @@ jobs:
 
   lint:
     name: Format
+    needs: version
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -132,6 +149,7 @@ jobs:
 
   audit:
     name: Dependency audit
+    needs: version
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -184,10 +202,9 @@ jobs:
     name: Build Windows installer
     needs: version
     if: >-
-      needs.version.outputs.exists != 'true' &&
       github.event_name == 'workflow_dispatch' &&
-      github.ref == 'refs/heads/main' &&
-      inputs.confirm == 'build release draft'
+      needs.version.outputs.approved == 'true' &&
+      needs.version.outputs.exists != 'true'
     runs-on: windows-2025
     timeout-minutes: 60
     env:
@@ -278,10 +295,9 @@ jobs:
     name: Create draft GitHub Release
     needs: [version, lint, audit, build]
     if: >-
-      needs.version.outputs.exists != 'true' &&
       github.event_name == 'workflow_dispatch' &&
-      github.ref == 'refs/heads/main' &&
-      inputs.confirm == 'build release draft'
+      needs.version.outputs.approved == 'true' &&
+      needs.version.outputs.exists != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
