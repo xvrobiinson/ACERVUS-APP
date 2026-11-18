@@ -1651,7 +1651,7 @@
 "Charged once on what is unpaid, the day after a due date.":["Ta kobra un biaha riba loke falta, e dia despues di vensimentu.","Eén keer berekend op wat openstaat, de dag na de vervaldatum."],
 "Use \"Lend and add capital\" above.":["Usa \"Fia i agregá kapital\" ariba.","Gebruik \"Uitlenen en kapitaal toevoegen\" hierboven."],
 "Interest reinvested this month":["Interes reinvertí e luna aki","Herbelegde rente deze maand"],
-"Only the Owner and Admins can restore a backup.":["Solamente e doño i e atministradónan por restorá un kopia.","Alleen de eigenaar en beheerders kunnen een back-up terugzetten."],
+"Only the Owner can restore a backup.":["Solamente e doño por restorá un kopia.","Alleen de eigenaar kan een back-up terugzetten."],
 "Owner":["Doño","Eigenaar"],
 "Manager":["Gerente","Manager"],
 "Accountant":["Kontadó","Boekhouder"],

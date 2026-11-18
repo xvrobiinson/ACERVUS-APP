@@ -77,11 +77,11 @@ impl Role {
             Need::Books => self != Collector,
             Need::ClientsAdd | Need::PaymentsRecord => self != Accountant,
             Need::Clients | Need::Loans | Need::PaymentsConfirm | Need::TeamCollectors => matches!(self, Owner | Admin | Manager),
-            Need::LoansDelete | Need::PaymentsEdit | Need::Money | Need::Settings | Need::Team | Need::Restore => {
+            Need::LoansDelete | Need::PaymentsEdit | Need::Money | Need::Settings | Need::Team => {
                 matches!(self, Owner | Admin)
             }
             Need::EntriesRecord => true,
-            Need::Owner => self == Owner,
+            Need::Owner | Need::Restore => self == Owner,
         }
     }
 }
@@ -569,5 +569,13 @@ mod tests {
         })))
         .unwrap();
         assert_eq!((m.kind.as_str(), m.amount, m.read_at), ("collected", Some(250000), None));
+    }
+
+    #[test]
+    fn only_the_owner_restores_a_backup() {
+        // Same as `restore` in shared/roles.ts of the PWA repo.
+        let allowed: Vec<Role> = Role::ALL.into_iter().filter(|r| r.allows(Need::Restore)).collect();
+        assert_eq!(allowed, vec![Role::Owner]);
+        assert!(Role::Admin.allows(Need::Money) && Role::Admin.allows(Need::Team));
     }
 }

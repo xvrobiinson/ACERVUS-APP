@@ -782,15 +782,11 @@ impl VzApp {
         });
     }
 
-    /// Only the Owner and Admins restore a cloud business. Returns true when refused.
+    /// Only the Owner restores a cloud business. Returns true when refused.
     fn refuse_restore(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let refused = self.is_linked() && !self.can(crate::sync::wire::Need::Restore);
         if refused {
-            self.notify_error(
-                t("Only the Owner and Admins can restore a backup.", "Solo el dueño y los administradores pueden restaurar una copia."),
-                window,
-                cx,
-            );
+            self.notify_error(t("Only the Owner can restore a backup.", "Solo el dueño puede restaurar una copia."), window, cx);
         }
         refused
     }
