@@ -5,6 +5,12 @@
     "Managers run the day-to-day lending: clients, loans and payments, confirming collectors' payments and managing the collectors, without capital or settings.",
     "Accountants see all the books, totals and reports, and record expenses and income.",
     "Only the Owner can delete the business, and they can hand it to one of its Admins (Settings › Team).",
+    "The Team section shows who works in the business, their role and who is online now, with a WhatsApp button: a column on wide windows, a people button otherwise.",
+    "The cards on the Overview open what they explain, already filtered: a card or a \"Loans by status\" line opens those loans.",
+    "Loans, Payments and Clients have filters, and this PC remembers them.",
+    "The Owner can let Acervus support see the books for a limited time (1 hour unless they choose longer) in Settings › Business. The Owner and Admins see a notice on the Overview with the latest opening, and End now stops it at once.",
+    "Deleting your account now waits 30 days, with emails before it happens. Until then, Keep my account cancels it.",
+    "Your profile can have a phone number for your team, and you can choose not to show when you're online.",
     "Each client's loans are numbered #01, #02 and so on, so a client never sees how many loans the business has made.",
     "The figures on a client's page, a loan's page and the Portfolio count up when the page opens."
   ],
@@ -13,6 +19,12 @@
     "Los gerentes llevan el día a día de los préstamos: clientes, préstamos y pagos, confirman los pagos de los cobradores y manejan a los cobradores, sin capital ni ajustes.",
     "Los contadores ven todos los registros, los totales y los reportes, y registran gastos e ingresos.",
     "Solo el dueño puede eliminar el negocio, y puede entregarlo a uno de sus administradores (Configuración › Equipo).",
+    "La sección Equipo muestra quién trabaja en el negocio, su rol y quién está en línea ahora, con un botón de WhatsApp: una columna en ventanas anchas y un botón de personas en las demás.",
+    "Las tarjetas del Resumen abren lo que explican, ya filtrado: una tarjeta o una línea de \"Préstamos por estado\" abre esos préstamos.",
+    "Préstamos, Pagos y Clientes tienen filtros, y esta PC los recuerda.",
+    "El dueño puede dejar que el soporte de Acervus vea los registros por un tiempo limitado (1 hora, salvo que elija más) en Configuración › Negocio. El dueño y los administradores ven un aviso en el Resumen con la última apertura, y Terminar ahora lo detiene al instante.",
+    "Eliminar tu cuenta ahora espera 30 días, con correos antes de que ocurra. Hasta entonces, Conservar mi cuenta lo cancela.",
+    "Tu perfil puede tener un teléfono para tu equipo, y puedes elegir no mostrar cuándo estás en línea.",
     "Los préstamos de cada cliente se numeran #01, #02 y así, para que un cliente nunca vea cuántos préstamos ha hecho el negocio.",
     "Las cifras de la página de un cliente, de un préstamo y del Portafolio cuentan hacia arriba al abrirse."
   ]
