@@ -701,4 +701,26 @@ pub(crate) mod tests {
         assert_eq!(store.client_photo(7).unwrap(), None);
         assert_eq!(store.cloud_downloads(&s).unwrap().len(), 1);
     }
+
+    fn book_as(role: &str) -> Snapshot {
+        let mut b = book();
+        b["me"]["role"] = json!(role);
+        snap(b)
+    }
+
+    #[test]
+    fn every_role_can_be_stored_and_read_back() {
+        for role in Role::ALL {
+            let mut conn = crate::database::open_in_memory().unwrap();
+            apply(&mut conn, &book_as(role.key())).unwrap_or_else(|e| panic!("{}: {e:#}", role.key()));
+            assert_eq!(link(&conn).unwrap().unwrap().role, role, "{}", role.key());
+        }
+    }
+
+    #[test]
+    fn a_copy_that_says_viewer_reads_as_accountant() {
+        let mut conn = crate::database::open_in_memory().unwrap();
+        apply(&mut conn, &book_as("viewer")).unwrap();
+        assert_eq!(link(&conn).unwrap().unwrap().role, Role::Accountant);
+    }
 }

@@ -19,12 +19,13 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (7, include_str!("migrations/0007_cloud_sync.sql")),
     (8, include_str!("migrations/0008_paid_with.sql")),
     (9, include_str!("migrations/0009_loan_choices.sql")),
+    (10, include_str!("migrations/0010_sync_roles.sql")),
 ];
 
 /// Migrations that rebuild tables and must run with foreign keys disabled.
 const REBUILDS: &[i64] = &[2, 4, 6];
 
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 
 /// The tables every Acervus database has had since version 1 (backups
 /// from older versions are upgraded after they are restored).
@@ -508,6 +509,54 @@ mod tests {
         let n: i64 = conn.query_row("SELECT COUNT(*) FROM clients", [], |r| r.get(0)).unwrap();
         assert_eq!(n, 1);
         assert_eq!(validate_backup(&safety).unwrap().clients, 2);
+    }
+
+    #[test]
+    fn upgrades_a_version_9_database_so_every_role_can_be_stored() {
+        use crate::sync::{replica, wire::Role};
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "ON").unwrap();
+        conn.execute_batch("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY NOT NULL, applied_at TEXT NOT NULL) STRICT;")
+            .unwrap();
+        for (v, sql) in &MIGRATIONS[..9] {
+            conn.execute_batch(sql).unwrap();
+            conn.execute("INSERT INTO schema_migrations VALUES (?1, 'x')", [v]).unwrap();
+        }
+        conn.execute_batch(
+            "INSERT INTO sync_state (id, business_id, business_name, timezone, user_id, role, today, settings_version, language, applied_at)
+               VALUES (1, 'biz1', 'Uno', 'America/Santo_Domingo', 'u1', 'viewer', '2026-03-10', 7, 'en', '2026-03-10T10:00:00Z');
+             INSERT INTO clients (id, full_name, created_at) VALUES (7, 'Juan', 'x');
+             INSERT INTO remote_ids (entity, local_id, seq, remote_id, version) VALUES ('client', 7, 0, 'c7', 2);",
+        )
+        .unwrap();
+        let state = |conn: &Connection| -> String {
+            conn.query_row(
+                "SELECT id || '|' || business_id || '|' || business_name || '|' || timezone || '|' || user_id || '|' || role || '|' || today
+                        || '|' || settings_version || '|' || language || '|' || applied_at FROM sync_state",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let before = state(&conn);
+        migrate(&mut conn).unwrap();
+        assert_eq!(schema_version(&conn).unwrap(), 10);
+        assert_eq!(SCHEMA_VERSION, 10);
+        assert_eq!(state(&conn), before);
+        let remote: (String, i64) = conn
+            .query_row("SELECT remote_id, version FROM remote_ids WHERE entity = 'client' AND local_id = 7", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(remote, ("c7".into(), 2));
+        assert_eq!(repositories::clients::get(&conn, 7).unwrap().unwrap().full_name, "Juan");
+        assert_eq!(replica::link(&conn).unwrap().unwrap().role, Role::Accountant);
+
+        let mut owner = replica::tests::book();
+        owner["me"]["role"] = serde_json::json!("owner");
+        replica::apply(&mut conn, &replica::tests::snap(owner)).unwrap();
+        assert_eq!(replica::link(&conn).unwrap().unwrap().role, Role::Owner);
+        assert!(conn.execute("UPDATE sync_state SET role = 'boss'", []).is_err(), "unknown roles are still refused");
     }
 
     #[test]

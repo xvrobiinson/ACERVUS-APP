@@ -16,6 +16,7 @@ pub mod diagnostics;
 pub mod domain;
 pub mod file_picker;
 pub mod i18n;
+pub mod instance;
 pub mod services;
 pub mod shell;
 pub mod sync;

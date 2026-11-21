@@ -292,6 +292,8 @@ the same springs. Searching and sorting rules live in `ui::lists`.
   `shell` (not `open_with_system`/`reveal_path`, which fail silently).
   `cargo test -- --ignored file_windows_open` shows and closes every kind of
   Open window for a moment.
+- The app runs once per database (`instance`): a second start brings the open
+  window forward and exits, and a demo database (`ACERVUS_DB`) still runs beside it.
 - For screenshots use a demo database, never the user's data:
   `cargo run --example seed_demo -- <new.db>` and launch with
   `ACERVUS_DB=<new.db>`; in debug builds `ACERVUS_START` opens a screen

@@ -10,7 +10,7 @@ use gpui_kit::*;
 use acervus::app::{self, VzApp};
 use acervus::services::Store;
 use acervus::ui::theme::Typeset as _;
-use acervus::{database, ui};
+use acervus::{database, instance, ui};
 
 gpui_kit::assets::icon_assets!(
     AppIcons,
@@ -232,6 +232,13 @@ fn window_options(cx: &mut App) -> WindowOptions {
 }
 
 fn main() {
+    // First of all: a second copy must not touch the data folder, the database
+    // or the log. The guard lives to the end of main, so the lock does too.
+    let custom_db = database::uses_custom_db().then(|| database::default_db_path().ok()).flatten();
+    let Some(_one_copy) = instance::claim(&instance::lock_name(custom_db.as_deref())) else {
+        instance::show_open_copy();
+        return;
+    };
     // Before anything writes to it: bring the pre-0.9 folder to its new place.
     // Never when pointed at another database (demos, tests): the person's
     // real folder is not this run's business.
