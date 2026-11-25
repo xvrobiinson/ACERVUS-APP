@@ -1,6 +1,7 @@
 {
   "version": "0.16",
   "en": [
+    "A new look for signing in: the sign-in screen, the business welcome and the browser page after signing in with Google now match the Acervus website, in light and dark.",
     "Owners, Managers and Accountants receive the latest books from the cloud again. In 0.16.0 this PC showed \"The latest books from the cloud couldn't be shown\" and kept the older copy.",
     "Acervus opens only once on this PC: opening it again brings the open window to the front.",
     "Five team roles: Owner, Admin, Manager, Accountant and Collector. Each business has one Owner, the person it belongs to; the person who created it is its Owner now, and Viewers became Accountants.",
@@ -18,6 +19,7 @@
     "The figures on a client's page, a loan's page and the Portfolio count up when the page opens."
   ],
   "es": [
+    "Un nuevo aspecto al iniciar sesión: la pantalla de inicio de sesión, la bienvenida del negocio y la página del navegador después de entrar con Google ahora combinan con el sitio de Acervus, en modo claro y oscuro.",
     "Los dueños, gerentes y contadores vuelven a recibir los registros más recientes de la nube. En 0.16.0 esta PC mostraba \"No se pudieron mostrar los registros más recientes de la nube\" y conservaba la copia anterior.",
     "Acervus se abre una sola vez en esta PC: al abrirlo de nuevo, pasa al frente la ventana que ya está abierta.",
     "Cinco roles en el equipo: Dueño, Administrador, Gerente, Contador y Cobrador. Cada negocio tiene un dueño, la persona a quien pertenece; quien lo creó es ahora su dueño, y los de solo lectura pasaron a ser contadores.",
