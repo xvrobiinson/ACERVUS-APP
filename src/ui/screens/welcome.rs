@@ -1,8 +1,8 @@
 //! The business welcome: what the app shows when signed in with no business
 //! open on this PC (the app always shows a cloud business, never books kept
 //! only here). Waiting for the list of businesses, creating the first one
-//! or accepting an invitation, or choosing among several. The same sky and
-//! glass card as the sign-in screen.
+//! or accepting an invitation, or choosing among several. The same wash,
+//! card and signed-out colors as the sign-in screen.
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{h_flex, v_flex};
@@ -13,16 +13,17 @@ use crate::app::{Gate, VzApp};
 use crate::i18n::t;
 use crate::tr;
 use crate::ui::kit::Button;
-use crate::ui::theme::{RADIUS_CONTROL, Typeset as _, palette, space, text};
+use crate::ui::theme::{Palette, RADIUS_CONTROL, Typeset as _, palette, space, text};
 
 impl VzApp {
     pub(crate) fn render_gate(&mut self, gate: Gate, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let p = palette(cx);
+        let p = Palette::signed_out(palette(cx).dark);
         let size = window.viewport_size();
         let w = f32::from(size.width);
         let Some(c) = &self.cloud else { return div().into_any_element() };
         let email = c.email.clone();
         let sign_out = Button::new("gate-sign-out")
+            .palette(p)
             .ghost()
             .label(t("Sign out", "Cerrar sesión"))
             .on_click(cx.listener(|this, _, w, cx| this.sign_out(w, cx)))
@@ -38,7 +39,7 @@ impl VzApp {
                 .border_1()
                 .border_color(p.border)
                 .child(div().flex_1().min_w_0().child(words))
-                .child(button)
+                .child(button.palette(p))
                 .into_any_element()
         };
 
@@ -86,6 +87,7 @@ impl VzApp {
                         .children(invites)
                         .child(
                             Button::new("gate-new-business")
+                                .palette(p)
                                 .primary()
                                 .icon(IconName::Plus)
                                 .label(t("Create your business", "Crea tu negocio"))

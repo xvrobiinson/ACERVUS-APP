@@ -118,7 +118,7 @@ impl RenderOnce for Splash {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let p = palette(cx);
         let c = p.splash;
-        let picture = p.dark.then(|| crate::ui::pictures::hero(true));
+        let picture = p.dark.then(crate::ui::pictures::streaks);
         let (word, sub) = crate::APP_NAME.split_once(' ').unwrap_or((crate::APP_NAME, ""));
         let (word, sub): (Vec<char>, Vec<char>) = (word.chars().collect(), sub.to_uppercase().chars().collect());
         let total = Self::SHOWN.as_secs_f32();

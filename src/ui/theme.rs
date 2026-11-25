@@ -67,6 +67,9 @@ pub struct Palette {
     pub overlay: Hsla,
     /// The launch splash (kit::Splash).
     pub splash: SplashColors,
+    /// A soft two-color wash under the signed-out screens (from, to); none
+    /// draws the plain ground.
+    pub wash: Option<(Hsla, Hsla)>,
     pub dark: bool,
 }
 
@@ -259,6 +262,7 @@ impl Palette {
             highlight: hexa(0xFFFFFF, 0.0),
             overlay: hexa(0x0B1020, 0.32),
             splash: SplashColors::light(),
+            wash: None,
             dark: false,
         }
     }
@@ -311,7 +315,68 @@ impl Palette {
             highlight: hexa(0xFFFFFF, 0.045),
             overlay: hexa(0x000000, 0.5),
             splash: SplashColors::dark(),
+            wash: None,
             dark: true,
+        }
+    }
+
+    /// The signed-out screens: sign-in and the business welcome (V1,
+    /// 2026-11-25, the owner's D51). The web sign-in's Deep Emerald on a
+    /// sage wash. Built on today's colors, so anything not named here
+    /// (statuses, red errors) stays as it is. The signed-in app keeps its
+    /// own colors until the app's redesign; only these screens and their
+    /// buttons (`Button::palette`) draw from this set.
+    pub fn signed_out(dark: bool) -> Self {
+        if dark {
+            let base = Self::dark();
+            Self {
+                ground: hex(0x0A0C0B),
+                surface: hex(0x141716),
+                surface_top: hex(0x141716),
+                raised: hex(0x1B1F1D),
+                hover: hex(0x1F2321),
+                active: hex(0x252A27),
+                border: hex(0x222725),
+                rule: hex(0x1F2321),
+                control: hex(0x39413D),
+                text: hex(0xF5F5F0),
+                muted: hex(0xA3ABA7),
+                faint: hex(0x8D9692),
+                accent: hex(0xA3E9C9),
+                accent_hover: hex(0xBDF0D8),
+                accent_tint: hex(0x1B2A24),
+                accent_text: hex(0xA3E9C9),
+                on_accent: hex(0x0F3329),
+                neutral_tint: hex(0x1B1F1D),
+                splash: SplashColors { tile: hex(0x1B4A3D), tile_line: None, ring: hex(0xF5F5F0), ..base.splash },
+                wash: Some((hex(0x0C1311), hex(0x0C0B0A))),
+                ..base
+            }
+        } else {
+            let base = Self::light();
+            Self {
+                ground: hex(0xEDF0EC),
+                raised: hex(0xF2F5F3),
+                hover: hex(0xEEF3F0),
+                active: hex(0xE6EDE9),
+                border: hex(0xE1E8E4),
+                rule: hex(0xEEF3F0),
+                control: hex(0xC9D5CF),
+                text: hex(0x0D1F19),
+                muted: hex(0x4A5B54),
+                faint: hex(0x5D6E67),
+                accent: hex(0x0F3329),
+                accent_hover: hex(0x174A3C),
+                accent_tint: hex(0xE3F1EA),
+                accent_text: hex(0x1F6B52),
+                on_accent: hex(0xFFFFFF),
+                neutral_tint: hex(0xEDF1EE),
+                // Shadows tinted with the green, as the web's card.
+                shadow_ink: hex(0x0E3A30),
+                splash: SplashColors { tile: hex(0x0F3329), ring: hex(0xF5F5F0), ..base.splash },
+                wash: Some((hex(0xE0EBE5), hex(0xF5EFE8))),
+                ..base
+            }
         }
     }
 
@@ -664,4 +729,83 @@ pub fn apply(pref: ThemePref, cx: &mut App) {
         c.link = p.accent_text;
         c.link_hover = p.accent;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    /// WCAG contrast between two opaque colors.
+    fn contrast(a: Hsla, b: Hsla) -> f32 {
+        let lum = |c: Hsla| {
+            let c = Rgba::from(c);
+            let ch = |v: f32| if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+            0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b)
+        };
+        let (x, y) = (lum(a), lum(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    #[test]
+    fn the_signed_out_screens_take_the_approved_web_colors() {
+        // The web sign-in (V1, live 2026-11-25) and the lab's drawing of this screen (D51).
+        let l = Palette::signed_out(false);
+        assert_eq!(
+            [l.ground, l.surface, l.text, l.muted, l.faint, l.accent, l.on_accent, l.accent_text, l.accent_tint],
+            [0xEDF0EC, 0xFFFFFF, 0x0D1F19, 0x4A5B54, 0x5D6E67, 0x0F3329, 0xFFFFFF, 0x1F6B52, 0xE3F1EA].map(hex)
+        );
+        assert_eq!(
+            [l.neutral_tint, l.border, l.control, l.splash.tile, l.splash.ring],
+            [0xEDF1EE, 0xE1E8E4, 0xC9D5CF, 0x0F3329, 0xF5F5F0].map(hex)
+        );
+        assert_eq!(l.wash, Some((hex(0xE0EBE5), hex(0xF5EFE8))));
+        assert!(!l.dark);
+
+        let d = Palette::signed_out(true);
+        assert_eq!(
+            [d.ground, d.surface, d.text, d.muted, d.faint, d.accent, d.on_accent, d.accent_text, d.accent_tint],
+            [0x0A0C0B, 0x141716, 0xF5F5F0, 0xA3ABA7, 0x8D9692, 0xA3E9C9, 0x0F3329, 0xA3E9C9, 0x1B2A24].map(hex)
+        );
+        assert_eq!(
+            [d.neutral_tint, d.border, d.control, d.splash.tile, d.splash.ring],
+            [0x1B1F1D, 0x222725, 0x39413D, 0x1B4A3D, 0xF5F5F0].map(hex)
+        );
+        assert_eq!(d.wash, Some((hex(0x0C1311), hex(0x0C0B0A))));
+        assert!(d.dark);
+    }
+
+    #[test]
+    fn signed_out_words_stay_readable() {
+        for p in [Palette::signed_out(false), Palette::signed_out(true)] {
+            let pairs = [
+                ("text on the card", p.text, p.surface),
+                ("text on the page", p.text, p.ground),
+                ("muted on the card", p.muted, p.surface),
+                ("muted on the page", p.muted, p.ground),
+                ("faint on the card", p.faint, p.surface),
+                ("placeholder in a field", p.faint, p.neutral_tint),
+                ("button words", p.on_accent, p.accent),
+                ("links on the card", p.accent_text, p.surface),
+                ("errors on the card", p.negative, p.surface),
+                ("the step's icon on its tile", p.accent, p.accent_tint),
+            ];
+            for (what, ink, under) in pairs {
+                let c = contrast(ink, under);
+                assert!(c >= 4.5, "{what} ({}): {c:.2}:1", if p.dark { "dark" } else { "light" });
+            }
+            // The mark's ring against its tile, and the tile against the page.
+            assert!(contrast(p.splash.ring, p.splash.tile) >= 4.5);
+            assert!(contrast(p.splash.tile, p.ground) >= if p.dark { 1.3 } else { 3.0 });
+        }
+    }
+
+    #[test]
+    fn the_signed_in_app_keeps_its_graphite_colors() {
+        // Only the signed-out screens are green until the app's own redesign.
+        let (l, d) = (Palette::light(), Palette::dark());
+        assert_eq!([l.accent, l.ground, l.splash.tile], [0x1C1E21, 0xF2F2F0, 0x000000].map(hex));
+        assert_eq!([d.accent, d.ground, d.splash.tile], [0xECEEF0, 0x0E1012, 0x000000].map(hex));
+        assert_eq!((l.wash, d.wash), (None, None));
+    }
 }

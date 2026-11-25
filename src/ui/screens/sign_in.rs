@@ -1,6 +1,6 @@
-//! The sign-in screen (the web app's look, 2026-11-07): the hero's picture
-//! (fog in light, streaks in dark), the brand in the corner and one solid
-//! card in the panel's colors holding the email
+//! The sign-in screen (the web sign-in's look, V1 2026-11-25, D51): a sage
+//! wash, the Deep Emerald mark in the corner and one solid card in the
+//! signed-out colors (`Palette::signed_out`) holding the email
 //! code steps (signing in, or making an account with a name) and "Continue
 //! with Google". It takes the whole window while open. The app needs an
 //! account, so it opens at launch and after signing out with no way back;
@@ -11,8 +11,9 @@ use std::sync::{Arc, LazyLock};
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::Sizable as _;
-use gpui_kit::component::input::Input;
+use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 
 use crate::app::VzApp;
@@ -28,12 +29,8 @@ const CARD_W: f32 = 380.0;
 static GOOGLE_G: LazyLock<Arc<Image>> =
     LazyLock::new(|| Arc::new(Image::from_bytes(ImageFormat::Svg, include_bytes!("../../../assets/google-g.svg").to_vec())));
 
-/// Under the picture while it loads: its own average tone.
-fn h_base(p: &Palette) -> Hsla {
-    p.splash.base
-}
-
-/// The square tile with the step's icon at the top of the card.
+/// The square tile with the step's icon at the top of the card: a mint
+/// tint with the icon in the accent; it sits flat in dark.
 fn tile(p: &Palette, name: IconName) -> Div {
     div()
         .size(px(52.))
@@ -41,16 +38,27 @@ fn tile(p: &Palette, name: IconName) -> Div {
         .items_center()
         .justify_center()
         .rounded(px(14.))
-        .bg(p.surface)
-        .border_1()
-        .border_color(p.border)
-        .shadow(elevation(p, Elevation::Raised))
-        .child(icon(name, p.text, 22.))
+        .bg(p.accent_tint)
+        .when(!p.dark, |d| d.shadow(elevation(p, Elevation::Raised)))
+        .child(icon(name, p.accent, 22.))
+}
+
+/// A text field on the card: a soft fill with no frame, and a ring in the
+/// link green while it has the cursor (the web's field).
+fn field(p: &Palette, state: &Entity<InputState>, glyph: IconName, window: &Window, cx: &App) -> Input {
+    let focused = state.read(cx).focus_handle(cx).is_focused(window);
+    Input::new(state)
+        .large()
+        .bordered(false)
+        .bg(p.neutral_tint)
+        .border_2()
+        .border_color(if focused { p.accent_text } else { transparent_black() })
+        .prefix(icon(glyph, p.faint, 16.))
 }
 
 impl VzApp {
     pub(crate) fn render_sign_in(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let p = palette(cx);
+        let p = Palette::signed_out(palette(cx).dark);
         let size = window.viewport_size();
         let w = f32::from(size.width);
         let s = &self.sign_in;
@@ -61,6 +69,7 @@ impl VzApp {
             None => {
                 let google = match &s.google {
                     None => Button::new("sign-in-google")
+                        .palette(p)
                         .prefix(img(GOOGLE_G.clone()).size(px(18.)))
                         .label(t("Continue with Google", "Continuar con Google"))
                         .wide()
@@ -71,6 +80,7 @@ impl VzApp {
                         .items_center()
                         .child(
                             Button::new("sign-in-google-waiting")
+                                .palette(p)
                                 .prefix(img(GOOGLE_G.clone()).size(px(18.)))
                                 .label(t("Waiting for your browser…", "Esperando el navegador…"))
                                 .loading(true)
@@ -78,6 +88,8 @@ impl VzApp {
                         )
                         .child(
                             Button::new("sign-in-google-cancel")
+                                .palette(p)
+                                .rest_ink(p.accent_text)
                                 .ghost()
                                 .small()
                                 .label(t("Cancel", "Cancelar"))
@@ -94,6 +106,8 @@ impl VzApp {
                 let switch =
                     h_flex().justify_center().items_center().gap(px(2.)).typeset(text::CAPTION).text_color(p.muted).child(question).child(
                         Button::new("sign-in-switch")
+                            .palette(p)
+                            .rest_ink(p.accent_text)
                             .ghost()
                             .small()
                             .label(other)
@@ -101,11 +115,12 @@ impl VzApp {
                     );
                 let form = v_flex()
                     .gap(px(space::M))
-                    .children(creating.then(|| Input::new(&s.name).large().prefix(icon(IconName::UserPlus, p.faint, 16.))))
-                    .child(Input::new(&s.email).large().prefix(icon(IconName::Mail, p.faint, 16.)))
+                    .children(creating.then(|| field(&p, &s.name, IconName::UserPlus, window, cx)))
+                    .child(field(&p, &s.email, IconName::Mail, window, cx))
                     .children(error)
                     .child(
                         Button::new("sign-in-send-code")
+                            .palette(p)
                             .primary()
                             .label(t("Send code", "Enviar código"))
                             .loading(s.busy)
@@ -147,7 +162,7 @@ impl VzApp {
             Some(email) => {
                 let form = v_flex()
                     .gap(px(space::M))
-                    .child(Input::new(&s.code).large().prefix(icon(IconName::KeyRound, p.faint, 16.)))
+                    .child(field(&p, &s.code, IconName::KeyRound, window, cx))
                     .child(div().typeset(text::CAPTION).text_color(p.muted).child(t(
                         "It expires in 10 minutes. Check your spam folder too.",
                         "Vence en 10 minutos. Revisa también el correo no deseado.",
@@ -155,6 +170,7 @@ impl VzApp {
                     .children(error)
                     .child(
                         Button::new("sign-in-finish")
+                            .palette(p)
                             .primary()
                             .label(t("Sign in", "Iniciar sesión"))
                             .loading(s.busy)
@@ -164,6 +180,8 @@ impl VzApp {
                     .child(
                         h_flex().justify_center().child(
                             Button::new("sign-in-other-email")
+                                .palette(p)
+                                .rest_ink(p.accent_text)
                                 .ghost()
                                 .small()
                                 .label(t("Use a different email", "Usar otro correo"))
@@ -193,6 +211,7 @@ impl VzApp {
         // Only when the app can be used without an account.
         let back = (!required).then(|| {
             Button::new("sign-in-back")
+                .palette(p)
                 .ghost()
                 .icon(IconName::ArrowLeft)
                 .label(t("Back to the app", "Volver a la app"))
@@ -213,9 +232,9 @@ pub(crate) struct GlassCard {
     pub note: Option<AnyElement>,
 }
 
-/// The sign-in look: the hero's picture with the brand in the corner, an
-/// optional button in the other corner, and one solid card in the middle.
-/// The business welcome uses it too.
+/// The signed-out look: the wash with the brand in the corner, an optional
+/// button in the other corner, and one solid card in the middle. The
+/// business welcome uses it too; both pass `Palette::signed_out`.
 pub(crate) fn glass_screen(p: &Palette, w: f32, id: &'static str, card: GlassCard, corner: Option<AnyElement>) -> AnyElement {
     let GlassCard { glyph, title, sub, body, note } = card;
     let h = p.hero();
@@ -226,8 +245,6 @@ pub(crate) fn glass_screen(p: &Palette, w: f32, id: &'static str, card: GlassCar
         .pb(px(28.))
         .gap(px(space::L))
         .rounded(px(22.))
-        .border_1()
-        .border_color(p.border)
         .bg(p.surface)
         .shadow(elevation(p, Elevation::Floating))
         .child(
@@ -256,8 +273,10 @@ pub(crate) fn glass_screen(p: &Palette, w: f32, id: &'static str, card: GlassCar
         .relative()
         .text_color(p.text)
         .typeset(text::BODY)
-        .bg(h_base(p))
-        .child(img(crate::ui::pictures::hero(p.dark)).absolute().inset_0().size_full().object_fit(ObjectFit::Cover))
+        .map(|d| match p.wash {
+            Some((from, to)) => d.bg(linear_gradient(110., linear_color_stop(from, 0.), linear_color_stop(to, 1.))),
+            None => d.bg(p.ground),
+        })
         .child(
             v_flex().absolute().inset_0().child(top).child(
                 div()

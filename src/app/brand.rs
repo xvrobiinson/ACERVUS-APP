@@ -11,9 +11,10 @@ use crate::i18n::t;
 use crate::ui::components::icon;
 use crate::ui::theme::{Palette, RADIUS_CONTROL, Typeset as _, space, text};
 
-/// The product mark: the ring and dot on its black tile (`kit::Logo`).
+/// The product mark: the ring and dot on the palette's tile (`kit::Logo`):
+/// black in the app, Deep Emerald on the signed-out screens.
 pub(crate) fn mark(p: &Palette) -> crate::ui::kit::Logo {
-    let logo = crate::ui::kit::Logo::new(24.);
+    let logo = crate::ui::kit::Logo::new(24.).colors(p.splash.tile, p.splash.ring);
     match p.splash.tile_line {
         Some(edge) => logo.edge(edge),
         None => logo,
@@ -108,5 +109,20 @@ impl VzApp {
             .children(rows)
         });
         (title, switchable, biz_menu)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    #[test]
+    fn the_corner_mark_is_deep_emerald_only_while_signed_out() {
+        let emerald: Hsla = rgb(0x0F3329).into();
+        let black: Hsla = rgb(0x000000).into();
+        assert_eq!(mark(&Palette::signed_out(false)).look().tile, emerald);
+        assert_eq!(mark(&Palette::light()).look().tile, black);
+        assert_eq!(mark(&Palette::dark()).look().tile, black);
     }
 }

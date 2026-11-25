@@ -85,8 +85,18 @@ icon `assets/icons/acervus.ico` is made from that SVG (the installer's own
 artwork stays VZ Labs'). The launch splash is "Orbit" over the hero's
 picture: the dot circles the ring and lands, the name rises, then the ring
 grows past the window's corners while the picture fades ("through the
-ring"). The sign-in screen and the business welcome show the hero's
-picture (`ui::pictures`) behind one solid card.
+ring"). The sign-in screen and the business welcome show one solid card
+on a wash (below).
+
+Signed-out look (V1, 2026-11-25, the owner's D51; ships as 0.16.2): the
+sign-in screen and the business welcome take the web sign-in's colors,
+`Palette::signed_out(dark)` (Deep Emerald on a sage wash, `Palette::wash`;
+mint in dark), the mark on a Deep Emerald tile (`Logo::colors`), soft
+fields with a green focus ring (`sign_in.rs` `field`). Their buttons draw
+from that set with `Button::palette`. The owner approved trying these two
+builders on the sign-in screen instead of the Overview, which must stay
+graphite. The signed-in app keeps its colors until its own redesign. The
+fields' caret and selection still come from the app theme.
 
 Clean look (2026-11-09, the owner's pick from a drawing; replaces the
 hero picture and glass): a plain grey page (#F2F2F0; #0E1012 in dark) with
@@ -221,12 +231,14 @@ optimize dependencies (`[profile.dev.package."*"]`) so motion stays smooth.
 Kit contents: `Button` (Primary, Secondary, Ghost, Danger, DangerGhost;
 Mini/Small/Medium; `.loading`, `.selected`, `.suffix`, `.prefix` for a mark
 in its own colors, `.wide` for a full-width button, `.rest_ink` for a
-button's ink at rest on a picture or a card; approved 2026-10-30),
+button's ink at rest on a picture or a card; approved 2026-10-30;
+`.palette` for the signed-out screens' colors, 2026-11-25),
 `Card` (+ `face` for its shaded fill), `Stat` (`.chip`), `GlassFigure`
 (the hero's figures: `.big`, `.row` with a `FigureTone`, `.action`,
 `.body` for other content, `.compact` for the six small cards), `Badge`
 (a count with a `BadgeTone`: Alert, Waiting, Info; placed on an icon's
-corner), `Logo` (the mark, `.edge` on dark backgrounds),
+corner), `Logo` (the mark, `.edge` on dark backgrounds, `.colors` for
+another tile and ink),
 `StatCards` (`.lifting` lifts cards under the pointer, `.keys`, `.frame`,
 `.glide`), `ListRow` (`.muted`, `.boxed`, `.rise(i)`, `.fresh`), `Chip`
 (`.spinning`, `.done`), `CountUp`, `Glide` (slides a block to its new place

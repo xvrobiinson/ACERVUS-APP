@@ -76,11 +76,12 @@ pub fn paint_mark(window: &mut Window, tile: Bounds<Pixels>, look: MarkLook) {
 pub struct Logo {
     size: f32,
     edge: Option<Hsla>,
+    colors: Option<(Hsla, Hsla)>,
 }
 
 impl Logo {
     pub fn new(size: f32) -> Self {
-        Self { size, edge: None }
+        Self { size, edge: None, colors: None }
     }
 
     /// A thin line around the tile, so it shows on a dark background.
@@ -88,11 +89,40 @@ impl Logo {
         self.edge = Some(color);
         self
     }
+
+    /// The tile's fill and the ring and dot's ink, where the black tile
+    /// isn't the screen's (the signed-out screens' Deep Emerald).
+    pub fn colors(mut self, tile: Hsla, ink: Hsla) -> Self {
+        self.colors = Some((tile, ink));
+        self
+    }
+
+    pub(crate) fn look(&self) -> MarkLook {
+        let still = MarkLook::still();
+        let (tile, ink) = self.colors.unwrap_or((still.tile, still.ring));
+        MarkLook { edge: self.edge, tile, ring: ink, dot: ink, ..still }
+    }
 }
 
 impl RenderOnce for Logo {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let look = MarkLook { edge: self.edge, ..MarkLook::still() };
+        let look = self.look();
         canvas(|_, _, _| {}, move |b, _, window, _| paint_mark(window, b, look)).flex_none().size(px(self.size))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::prelude::v1::test;
+
+    #[test]
+    fn the_mark_takes_the_colors_it_is_given() {
+        let (tile, ink): (Hsla, Hsla) = (rgb(0x0F3329).into(), rgb(0xF5F5F0).into());
+        let look = Logo::new(24.).colors(tile, ink).look();
+        assert_eq!((look.tile, look.ring, look.dot, look.edge), (tile, ink, ink, None));
+        let still = MarkLook::still();
+        let plain = Logo::new(24.).look();
+        assert_eq!((plain.tile, plain.ring, plain.dot), (still.tile, still.ring, still.dot));
     }
 }

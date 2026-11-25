@@ -146,6 +146,7 @@ pub struct Button {
     loading: bool,
     selected: bool,
     rest_ink: Option<Hsla>,
+    palette: Option<Palette>,
     on_click: Option<ClickHandler>,
 }
 
@@ -165,6 +166,7 @@ impl Button {
             loading: false,
             selected: false,
             rest_ink: None,
+            palette: None,
             on_click: None,
         }
     }
@@ -244,6 +246,13 @@ impl Button {
         self
     }
 
+    /// Draws from these colors instead of the app's: the signed-out
+    /// screens' own (`Palette::signed_out`), so the signed-in app keeps its look.
+    pub fn palette(mut self, p: Palette) -> Self {
+        self.palette = Some(p);
+        self
+    }
+
     /// Shown after the pointer rests; put the shortcut here ("Ctrl+P").
     /// Disabled buttons keep it, so it can say why.
     pub fn tooltip(mut self, tip: impl Into<SharedString>) -> Self {
@@ -271,7 +280,7 @@ impl Button {
 
 impl RenderOnce for Button {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let p = palette(cx);
+        let p = self.palette.unwrap_or_else(|| palette(cx));
         let c = colors(&p, self.kind);
         let (hovered, on_hover) = hover_state(&self.id, window, cx);
         let focus = focus_state(&self.id, window, cx);
