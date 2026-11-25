@@ -536,6 +536,7 @@ impl VzApp {
         self.sign_in.error = None;
         cx.notify();
         let ep = endpoints();
+        let dark = crate::ui::theme::palette(cx).dark;
         cx.spawn_in(window, async move |this, cx| {
             let (tx, rx) = futures::channel::oneshot::channel();
             let (ep2, stop2) = (ep.clone(), stop.clone());
@@ -548,7 +549,7 @@ impl VzApp {
                         log::warn!("browser not opened: {why}");
                         return Err(auth::AuthError::Refused(t("The browser could not be opened", "No se pudo abrir el navegador").into()));
                     }
-                    auth::finish_google(&ep2, g, &stop2).and_then(|done| match done {
+                    auth::finish_google(&ep2, g, &stop2, dark).and_then(|done| match done {
                         auth::GoogleDone::SignedIn(email, session) => Ok((email, session)),
                         auth::GoogleDone::Linked => Err(auth::AuthError::GoogleNotFinished),
                     })

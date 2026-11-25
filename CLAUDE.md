@@ -96,7 +96,11 @@ fields with a green focus ring (`sign_in.rs` `field`). Their buttons draw
 from that set with `Button::palette`. The owner approved trying these two
 builders on the sign-in screen instead of the Overview, which must stay
 graphite. The signed-in app keeps its colors until its own redesign. The
-fields' caret and selection still come from the app theme.
+fields' caret and selection still come from the app theme. The browser
+page after Google (`sync::google_page`, D48) has the same look in the app's
+light or dark: one self-contained page, a check that draws once (amber when
+it didn't finish), and every reply from the local port carries a CSP that
+loads nothing else (`auth::CSP`).
 
 Clean look (2026-11-09, the owner's pick from a drawing; replaces the
 hero picture and glass): a plain grey page (#F2F2F0; #0E1012 in dark) with

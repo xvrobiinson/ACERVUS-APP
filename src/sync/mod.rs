@@ -17,6 +17,7 @@ pub mod auth;
 pub mod change;
 pub mod drive;
 pub mod figures;
+mod google_page;
 pub mod import;
 pub mod outbox;
 pub mod refusal;

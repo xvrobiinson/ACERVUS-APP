@@ -18,6 +18,7 @@ use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig, TlsProvider};
 
 use crate::i18n::t;
+use crate::sync::google_page::{Tone, page};
 use crate::sync::vault;
 
 /// Where a deployment answers.
@@ -334,8 +335,9 @@ fn start_round_trip(ep: &Endpoints, path: &str, session: Option<&Session>, scope
 }
 
 /// Waits for the browser to come back, then finishes: signs in, or confirms
-/// the link. `stop` ends the wait early (the person cancelled).
-pub fn finish_google(ep: &Endpoints, g: GoogleSignIn, stop: &AtomicBool) -> Result<GoogleDone, AuthError> {
+/// the link. `stop` ends the wait early (the person cancelled). The page the
+/// browser then shows follows the app's light or dark (`dark`).
+pub fn finish_google(ep: &Endpoints, g: GoogleSignIn, stop: &AtomicBool, dark: bool) -> Result<GoogleDone, AuthError> {
     g.listener.set_nonblocking(true).map_err(|e| AuthError::Refused(e.to_string()))?;
     let deadline = Instant::now() + GOOGLE_WAIT;
     loop {
@@ -361,16 +363,11 @@ pub fn finish_google(ep: &Endpoints, g: GoogleSignIn, stop: &AtomicBool) -> Resu
             Return::Failed(why) if why.starts_with("email_doesn") => Err(AuthError::GoogleOtherEmail),
             Return::Failed(_) => Err(AuthError::GoogleNotFinished),
         };
+        let back = t("Go back to Acervus Finance. You can close this tab.", "Vuelve a Acervus Finance. Puedes cerrar esta pestaña.");
         let page = match &result {
-            Ok(GoogleDone::SignedIn(..)) => page(
-                t("You're signed in", "Sesión iniciada"),
-                t("Go back to Acervus Finance. You can close this tab.", "Vuelve a Acervus Finance. Puedes cerrar esta pestaña."),
-            ),
-            Ok(GoogleDone::Linked) => page(
-                t("Google is connected", "Google está conectado"),
-                t("Go back to Acervus Finance. You can close this tab.", "Vuelve a Acervus Finance. Puedes cerrar esta pestaña."),
-            ),
-            Err(e) => page(t("Sign-in didn't finish", "No se completó el inicio de sesión"), &e.to_string()),
+            Ok(GoogleDone::SignedIn(..)) => page(Tone::Done, t("You're signed in", "Sesión iniciada"), back, dark),
+            Ok(GoogleDone::Linked) => page(Tone::Done, t("Google is connected", "Google está conectado"), back, dark),
+            Err(e) => page(Tone::NotFinished, t("Sign-in didn't finish", "No se completó el inicio de sesión"), &e.to_string(), dark),
         };
         answer(&mut stream, "200 OK", &page);
         return result;
@@ -424,26 +421,19 @@ fn read_request(stream: &mut TcpStream) -> Option<String> {
     parts.next().map(str::to_string)
 }
 
+/// The browser loads nothing the page doesn't carry itself (its inline
+/// styles and drawing), even if a later edit adds a link or a script.
+/// `default-src` doesn't cover framing, the base address or forms, so those
+/// are shut too.
+const CSP: &str =
+    "Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+
 fn answer(stream: &mut TcpStream, status: &str, html: &str) {
     let reply = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nConnection: close\r\n\r\n{html}",
+        "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\n{CSP}\r\nConnection: close\r\n\r\n{html}",
         html.len()
     );
     let _ = stream.write_all(reply.as_bytes());
-}
-
-/// The small page the browser shows when it comes back.
-fn page(title: &str, text: &str) -> String {
-    let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-    format!(
-        "<!doctype html><meta charset=utf-8><meta name=viewport content=\"width=device-width\"><title>Acervus Finance</title>\
-         <body style=\"margin:0;min-height:100vh;display:grid;place-items:center;font:15px/22px system-ui,sans-serif;\
-         background:linear-gradient(#9fc9f1,#f1f6fc);color:#17191c\"><main style=\"max-width:340px;margin:16px;padding:32px 28px;\
-         border-radius:22px;background:#fffd;text-align:center\"><h1 style=\"margin:0 0 6px;font-size:20px\">{}</h1>\
-         <p style=\"margin:0;color:#666c77\">{}</p></main>",
-        esc(title),
-        esc(text)
-    )
 }
 
 /// Trades the one-time token for a session.
@@ -583,10 +573,17 @@ mod tests {
             (stray, back)
         });
         let ep = Endpoints::new("http://127.0.0.1:9", "http://localhost:5173");
-        assert_eq!(finish_google(&ep, g, &AtomicBool::new(false)).unwrap_err(), AuthError::GoogleNotFinished);
+        assert_eq!(finish_google(&ep, g, &AtomicBool::new(false), true).unwrap_err(), AuthError::GoogleNotFinished);
         let (stray, back) = browser.join().unwrap();
         assert!(stray.starts_with("HTTP/1.1 404"));
         assert!(back.starts_with("HTTP/1.1 200") && back.contains("<h1"));
+        // The page that didn't finish, in the app's dark, and nothing loads from elsewhere.
+        assert!(back.contains("class=\"ico warn\"") && back.contains("data-theme=\"dark\""));
+        for reply in [&stray, &back] {
+            assert!(reply.contains(
+                "\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\n"
+            ));
+        }
     }
 
     /// Every test above talks to plain-http local servers; this one reaches a
